@@ -1,4 +1,4 @@
-package org.jetbrains.plugins.template
+package com.github.bumblebee202111.intellijcontextbridge
 
 import com.intellij.DynamicBundle
 import org.jetbrains.annotations.NonNls
