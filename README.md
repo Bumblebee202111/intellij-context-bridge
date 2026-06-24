@@ -1,5 +1,20 @@
 # intellij-context-bridge
 
+# Project: AI Studio Bridge Plugin (Code Name: IntelliJContextSync)
+
+## Overview
+A native IntelliJ/Android Studio plugin designed to bridge the IDE with web-based LLM playgrounds (specifically Google AI Studio). It acts as a highly optimized, stateful context manager that compiles project context into LLM-friendly payloads via Clipboard or WebSocket, bypassing the need for paid API integrations.
+
+## Core Philosophy
+1. **Absolute User Control:** The AI cannot autonomously read or write files. The user explicitly grants context and approves diffs.
+2. **Context Economy:** Prioritize "Skeleton" (signatures/structure) over "Full" (bodies) to save context window and maintain LLM focus.
+3. **Zero API Dependency:** The system relies on bridging to browser-based web interfaces, eliminating API costs and geographical restrictions.
+4. **Anti-Hallucination:** Prevent AI looping and "slop" by using strict protocol prompts and local state deduplication.
+
+## Development Setup Requirements
+* IntelliJ Platform Plugin Template (Kotlin)
+* Gradle
+
 ![Build](https://github.com/Bumblebee202111/intellij-context-bridge/workflows/Build/badge.svg)
 [![Version](https://img.shields.io/jetbrains/plugin/v/MARKETPLACE_ID.svg)](https://plugins.jetbrains.com/plugin/MARKETPLACE_ID)
 [![Downloads](https://img.shields.io/jetbrains/plugin/d/MARKETPLACE_ID.svg)](https://plugins.jetbrains.com/plugin/MARKETPLACE_ID)
