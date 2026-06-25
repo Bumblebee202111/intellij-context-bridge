@@ -1,11 +1,10 @@
 <!-- Plugin Configuration File. Read more: https://plugins.jetbrains.com/docs/intellij/plugin-configuration-file.html -->
 <idea-plugin>
     <id>com.github.bumblebee202111.intellijcontextbridge</id>
-    <name>intellij-context-bridge</name>
+    <name>IntelliJ Context Bridge</name>
     <vendor>bumblebee202111</vendor>
     <description><![CDATA[
-        <p><b>intellij-context-bridge</b> is a repository that provides a pure template to make it easier to create a new plugin project.</p>
-        <p>The main goal of this template is to speed up the setup phase of plugin development for both new and experienced developers by preconfiguring the project scaffold and CI, linking to the proper documentation pages, and keeping everything organized.</p>
+        <p>Zero-API AI coding assistant plugin. Intelligently syncs IDE context (AST skeletons, diffs, state) with web-based AI playgrounds via Clipboard & WebSockets.</p>
     ]]></description>
 
     <depends>com.intellij.modules.platform</depends>
@@ -13,7 +12,10 @@
     <resource-bundle>messages.MyBundle</resource-bundle>
 
     <extensions defaultExtensionNs="com.intellij">
-        <toolWindow factoryClass="com.github.bumblebee202111.intellijcontextbridge.toolWindow.MyToolWindowFactory" id="MyToolWindow"/>
+        <toolWindow factoryClass="com.github.bumblebee202111.intellijcontextbridge.toolWindow.ContextBridgeToolWindowFactory"
+                    id="Context Bridge"
+                    anchor="right"/>
+
         <postStartupActivity implementation="com.github.bumblebee202111.intellijcontextbridge.startup.MyProjectActivity" />
     </extensions>
 </idea-plugin>
