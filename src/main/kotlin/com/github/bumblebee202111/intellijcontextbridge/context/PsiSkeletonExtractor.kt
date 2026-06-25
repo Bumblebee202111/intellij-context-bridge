@@ -65,15 +65,22 @@ object PsiSkeletonExtractor {
             }
             is KtNamedFunction -> {
                 var sig = declaration.text
-                declaration.bodyExpression?.let { sig = sig.replace(it.text, "") }
+                declaration.bodyExpression?.let { body ->
+                    val offset = body.textRange.startOffset - declaration.textRange.startOffset
+                    sig = sig.substring(0, offset)
+                }
                 sig = sig.trimEnd('=', ' ', '\n', '{')
                 "$doc$indent$sig"
             }
             is KtProperty -> {
                 var sig = declaration.text
-                declaration.initializer?.let { sig = sig.replace(it.text, "") }
-                declaration.delegateExpression?.let { sig = sig.replace(it.text, "") }
-                declaration.accessors.forEach { acc -> sig = sig.replace(acc.text, "") }
+                val cutElements = listOfNotNull(declaration.initializer, declaration.delegateExpression) + declaration.accessors
+                val minOffset = cutElements.minOfOrNull { it.textRange.startOffset }
+
+                if (minOffset != null) {
+                    val offset = minOffset - declaration.textRange.startOffset
+                    sig = sig.substring(0, offset)
+                }
                 sig = sig.trimEnd('=', ' ', '\n', 'b', 'y')
                 "$doc$indent$sig"
             }
@@ -120,7 +127,10 @@ object PsiSkeletonExtractor {
             if (!field.hasModifierProperty(PsiModifier.PRIVATE) && !field.hasModifierProperty(PsiModifier.PACKAGE_LOCAL)) {
                 val fDoc = field.docComment?.text?.let { "$indent    $it\n" } ?: ""
                 var fText = field.text
-                field.initializer?.let { fText = fText.replace(it.text, "") }
+                field.initializer?.let { init ->
+                    val offset = init.textRange.startOffset - field.textRange.startOffset
+                    fText = fText.substring(0, offset)
+                }
                 fText = fText.trimEnd('=', ' ')
                 if (!fText.endsWith(";")) fText += ";"
                 children.add("$fDoc$indent    $fText")
@@ -131,7 +141,10 @@ object PsiSkeletonExtractor {
             if (!method.hasModifierProperty(PsiModifier.PRIVATE) && !method.hasModifierProperty(PsiModifier.PACKAGE_LOCAL)) {
                 val mDoc = method.docComment?.text?.let { "$indent    $it\n" } ?: ""
                 var mText = method.text
-                method.body?.let { mText = mText.replace(it.text, "") }
+                method.body?.let { body ->
+                    val offset = body.textRange.startOffset - method.textRange.startOffset
+                    mText = mText.substring(0, offset)
+                }
                 mText = mText.trimEnd(' ', '\n', '{')
                 if (!mText.endsWith(";")) mText += ";"
                 children.add("$mDoc$indent    $mText")

@@ -7,8 +7,8 @@ This project is structured into distinct, sequential phases. Each phase must be 
 * [x] Initialize IntelliJ Platform Plugin Template (Kotlin).
 * [x] Build basic Tool Window UI (File Tree with `Skeleton` / `Full` toggles).
 * [x] Implement PSI Parser logic for `Skeleton` mode (extracting strictly Public API, KDoc, and required imports; stripping bodies/private members).
-* [ ] Implement basic payload generation (formatting selected files into structured Markdown).
-* [ ] Add "Copy to Clipboard" functionality.
+* [x] Implement basic payload generation (formatting selected files into structured Markdown).
+* [x] Add "Copy to Clipboard" functionality.
 
 ## Phase 2: State Management & Deduplication
 **Goal:** Prevent context bloat during long conversations.

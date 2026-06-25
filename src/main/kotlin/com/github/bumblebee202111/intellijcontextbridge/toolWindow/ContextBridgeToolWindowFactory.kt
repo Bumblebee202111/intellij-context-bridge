@@ -3,6 +3,7 @@ package com.github.bumblebee202111.intellijcontextbridge.toolWindow
 import com.github.bumblebee202111.intellijcontextbridge.context.PayloadGenerator
 import com.github.bumblebee202111.intellijcontextbridge.state.ContextLevel
 import com.github.bumblebee202111.intellijcontextbridge.state.ContextState
+import com.intellij.openapi.application.runReadAction
 import com.intellij.openapi.components.service
 import com.intellij.openapi.ide.CopyPasteManager
 import com.intellij.openapi.project.Project
@@ -27,6 +28,7 @@ import javax.swing.JTree
 import javax.swing.Timer
 import javax.swing.tree.DefaultMutableTreeNode
 import javax.swing.tree.DefaultTreeModel
+import javax.swing.tree.TreePath
 
 class ContextBridgeToolWindowFactory : ToolWindowFactory {
 
@@ -49,7 +51,11 @@ class ContextBridgeToolWindowFactory : ToolWindowFactory {
             val rootNode = if (rootDir != null) buildFileTree(rootDir) else DefaultMutableTreeNode("No Project Root")
 
             val treeModel = DefaultTreeModel(rootNode)
-            val tree = Tree(treeModel)
+            val tree = Tree(treeModel).apply {
+                showsRootHandles = true
+            }
+
+            tree.expandPath(TreePath(rootNode.path))
 
             tree.cellRenderer = object : ColoredTreeCellRenderer() {
                 override fun customizeCellRenderer(
@@ -120,7 +126,9 @@ class ContextBridgeToolWindowFactory : ToolWindowFactory {
                 val userPrompt = promptArea.text
 
                 // Generate payload
-                val payload = PayloadGenerator.generatePayload(project, contextState.fileStates, userPrompt)
+                val payload = runReadAction {
+                    PayloadGenerator.generatePayload(project, contextState.fileStates, userPrompt)
+                }
 
                 // Copy to system clipboard
                 CopyPasteManager.getInstance().setContents(StringSelection(payload))
