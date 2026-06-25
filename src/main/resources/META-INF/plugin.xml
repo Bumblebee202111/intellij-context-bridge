@@ -17,5 +17,6 @@
                     anchor="right"/>
 
         <postStartupActivity implementation="com.github.bumblebee202111.intellijcontextbridge.startup.MyProjectActivity" />
+        <projectService serviceImplementation="com.github.bumblebee202111.intellijcontextbridge.state.ContextState" />
     </extensions>
 </idea-plugin>
