@@ -5,7 +5,7 @@ This project is structured into distinct, sequential phases. Each phase must be 
 ## Phase 1: The MVP (Context & Clipboard)
 **Goal:** A working IntelliJ tool window that can extract context and copy it to the clipboard.
 * [x] Initialize IntelliJ Platform Plugin Template (Kotlin).
-* [ ] Build basic Tool Window UI (File Tree with `Skeleton` / `Full` toggles).
+* [x] Build basic Tool Window UI (File Tree with `Skeleton` / `Full` toggles).
 * [ ] Implement PSI Parser logic for `Skeleton` mode (extracting strictly Public API, KDoc, and required imports; stripping bodies/private members).
 * [ ] Implement basic payload generation (formatting selected files into structured Markdown).
 * [ ] Add "Copy to Clipboard" functionality.
