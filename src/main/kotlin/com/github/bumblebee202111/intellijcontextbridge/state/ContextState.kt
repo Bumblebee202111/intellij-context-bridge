@@ -11,11 +11,9 @@ enum class ContextLevel {
 
 @Service(Service.Level.PROJECT)
 class ContextState(private val project: Project) {
-    // Stores the selected state for each file
     val fileStates = mutableMapOf<VirtualFile, ContextLevel>()
 
-    // Stores the hash of the file content last time it was sent as FULL
-    val sentFullFileHashes = mutableMapOf<VirtualFile, String>()
+    val sentFileHashes = mutableMapOf<VirtualFile, Pair<ContextLevel, String>>()
 
     fun getLevel(file: VirtualFile): ContextLevel {
         return fileStates[file] ?: ContextLevel.NONE
@@ -29,7 +27,6 @@ class ContextState(private val project: Project) {
         }
     }
 
-    // Helper to calculate MD5 hash of file content
     fun calculateHash(content: String): String {
         val bytes = MessageDigest.getInstance("MD5").digest(content.toByteArray(Charsets.UTF_8))
         return bytes.joinToString("") { "%02x".format(it) }
@@ -37,6 +34,6 @@ class ContextState(private val project: Project) {
 
     fun clear() {
         fileStates.clear()
-        sentFullFileHashes.clear()
+        sentFileHashes.clear()
     }
 }

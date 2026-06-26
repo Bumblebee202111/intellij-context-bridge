@@ -45,6 +45,35 @@ object PayloadGenerator {
                     continue
                 }
 
+                // --- UNIVERSAL DEDUPLICATION LOGIC ---
+                var contentToAppend: String?
+
+                try {
+                    // 1. Extract the content based on the level
+                    val extractedText = if (level == ContextLevel.FULL) {
+                        VfsUtilCore.loadText(file)
+                    } else {
+                        PsiSkeletonExtractor.extract(project, file)
+                    }
+
+                    // 2. Hash the extracted text
+                    val currentHash = contextState.calculateHash(extractedText)
+                    val previousRecord = contextState.sentFileHashes[file]
+
+                    // 3. Compare Level AND Hash
+                    if (previousRecord != null && previousRecord.first == level && previousRecord.second == currentHash) {
+                        // The exact same content was already sent at this level. Omit entirely!
+                        continue
+                    } else {
+                        // It's new, or the level changed (e.g., Skeleton -> Full), or the content changed.
+                        contextState.sentFileHashes[file] = Pair(level, currentHash)
+                        contentToAppend = extractedText
+                    }
+                } catch (e: Exception) {
+                    contentToAppend = "// Error reading file: ${e.message}"
+                }
+
+                // --- APPEND TO PAYLOAD ---
                 val levelTag = if (level == ContextLevel.FULL) "(Full)" else "(Skeleton)"
                 appendLine("### \uD83D\uDCC4 `$relativePath` $levelTag")
 
@@ -52,22 +81,7 @@ object PayloadGenerator {
                 val lang = getMarkdownLang(extension)
 
                 appendLine("```$lang")
-
-                val content = try {
-                    if (level == ContextLevel.FULL) {
-                        val fullText = VfsUtilCore.loadText(file)
-                        // Calculate and store the hash so we remember it was sent
-                        val hash = contextState.calculateHash(fullText)
-                        contextState.sentFullFileHashes[file] = hash
-                        fullText
-                    } else {
-                        PsiSkeletonExtractor.extract(project, file)
-                    }
-                } catch (e: Exception) {
-                    "// Error reading file: ${e.message}"
-                }
-
-                appendLine(content)
+                appendLine(contentToAppend)
                 appendLine("```")
                 appendLine()
             }
