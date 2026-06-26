@@ -117,6 +117,21 @@ class ContextBridgeToolWindowFactory : ToolWindowFactory {
             }
             bottomPanel.add(JBScrollPane(promptArea), BorderLayout.CENTER)
 
+            // Buttons Panel (New Chat & Copy)
+            val buttonPanel = JPanel(java.awt.GridLayout(1, 2, 5, 0)).apply {
+                border = JBUI.Borders.emptyTop(5)
+            }
+
+            // Clear / New Chat Button
+            val clearButton = JButton("New Chat").apply {
+                toolTipText = "Clear all selected files and start a new session"
+            }
+            clearButton.addActionListener {
+                contextState.clear() // Wipes the file states
+                promptArea.text = "" // Clears the text area
+                tree.repaint()       // Removes the [S] and [F] tags from the UI
+            }
+
             // Copy Button
             val copyButton = JButton("Copy to Clipboard").apply {
                 toolTipText = "Generate Markdown payload and copy to clipboard"
@@ -144,7 +159,10 @@ class ContextBridgeToolWindowFactory : ToolWindowFactory {
                 }.apply { isRepeats = false }.start()
             }
 
-            bottomPanel.add(copyButton, BorderLayout.SOUTH)
+            buttonPanel.add(clearButton)
+            buttonPanel.add(copyButton)
+
+            bottomPanel.add(buttonPanel, BorderLayout.SOUTH)
             mainPanel.add(bottomPanel, BorderLayout.SOUTH)
 
             return mainPanel
