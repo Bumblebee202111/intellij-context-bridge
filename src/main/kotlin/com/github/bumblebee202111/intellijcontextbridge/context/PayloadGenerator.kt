@@ -5,7 +5,6 @@ import com.github.bumblebee202111.intellijcontextbridge.state.ContextState
 import com.intellij.openapi.project.Project
 import com.intellij.openapi.project.guessProjectDir
 import com.intellij.openapi.vfs.VfsUtilCore
-import com.intellij.openapi.vfs.VirtualFile
 
 object PayloadGenerator {
 
@@ -15,10 +14,10 @@ object PayloadGenerator {
         return buildString {
             // 1. System Directives
             appendLine("<system_directives>")
-            appendLine("You are an AI coding assistant connected via an IDE bridge.")
-            appendLine("Review the `<project_context>` below. Files are marked as either (Skeleton) or (Full).")
-            appendLine("Skeleton files contain only public APIs, signatures, and KDocs.")
-            appendLine("If you require the complete body of a Skeleton file to fulfill the user's request, you MUST halt your response and strictly output: `REQUEST_FULL: [filepath]`.")
+            appendLine("You are an AI coding assistant connected via a stateful IDE bridge. Adhere strictly to this protocol:")
+            appendLine("1. **Context Memory**: Files provided in previous prompts may be omitted from the current `<project_context>` if they are unchanged. Rely on your conversation history.")
+            appendLine("2. **Skeleton Files**: Files marked as `(Skeleton)` contain only structural APIs and comments. Internal logic and method bodies are explicitly stripped.")
+            appendLine("3. **REQUEST_FULL Protocol**: If you must read or modify the internal logic of a `(Skeleton)` file to fulfill the user's request, you MUST halt your response immediately and strictly output: `REQUEST_FULL: [filepath]`. Do not hallucinate or guess the missing bodies. Wait for the user to provide the Full file.")
             appendLine("</system_directives>")
             appendLine()
 
