@@ -13,7 +13,7 @@ This project is structured into distinct, sequential phases. Each phase must be 
 ## Phase 2: State Management & Deduplication
 **Goal:** Prevent context bloat during long conversations.
 * [x] Implement Session Tracker (start/clear conversation state).
-* [ ] Implement file hashing for files sent as `Full`.
+* [x] Implement file hashing for files sent as `Full`.
 * [ ] Update payload generator: silently downgrade `Full` to `Skeleton` (or omit) if the file hash matches the current session state.
 * [ ] Inject the invisible LLM Protocol Prompt (instructing the AI to use `REQUEST_FULL: [filepath]`) into the payload.
 

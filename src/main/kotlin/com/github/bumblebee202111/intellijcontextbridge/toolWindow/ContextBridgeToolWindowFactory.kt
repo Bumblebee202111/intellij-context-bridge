@@ -142,7 +142,7 @@ class ContextBridgeToolWindowFactory : ToolWindowFactory {
 
                 // Generate payload
                 val payload = runReadAction {
-                    PayloadGenerator.generatePayload(project, contextState.fileStates, userPrompt)
+                    PayloadGenerator.generatePayload(project, contextState, userPrompt)
                 }
 
                 // Copy to system clipboard

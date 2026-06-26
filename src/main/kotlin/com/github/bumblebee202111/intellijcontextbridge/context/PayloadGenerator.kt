@@ -1,6 +1,7 @@
 package com.github.bumblebee202111.intellijcontextbridge.context
 
 import com.github.bumblebee202111.intellijcontextbridge.state.ContextLevel
+import com.github.bumblebee202111.intellijcontextbridge.state.ContextState
 import com.intellij.openapi.project.Project
 import com.intellij.openapi.project.guessProjectDir
 import com.intellij.openapi.vfs.VfsUtilCore
@@ -8,7 +9,7 @@ import com.intellij.openapi.vfs.VirtualFile
 
 object PayloadGenerator {
 
-    fun generatePayload(project: Project, files: Map<VirtualFile, ContextLevel>, userPrompt: String): String {
+    fun generatePayload(project: Project, contextState: ContextState, userPrompt: String): String {
         val projectDir = project.guessProjectDir()
 
         return buildString {
@@ -26,12 +27,11 @@ object PayloadGenerator {
             appendLine()
 
             // Sort files alphabetically by path for deterministic output
-            val sortedFiles = files.entries
+            val sortedFiles = contextState.fileStates.entries
                 .filter { it.value != ContextLevel.NONE }
                 .sortedBy { it.key.path }
 
             for ((file, level) in sortedFiles) {
-                // Get clean relative path (e.g., "app/src/main/MainActivity.kt")
                 val relativePath = if (projectDir != null) {
                     VfsUtilCore.getRelativePath(file, projectDir) ?: file.path
                 } else {
@@ -55,7 +55,11 @@ object PayloadGenerator {
 
                 val content = try {
                     if (level == ContextLevel.FULL) {
-                        VfsUtilCore.loadText(file)
+                        val fullText = VfsUtilCore.loadText(file)
+                        // Calculate and store the hash so we remember it was sent
+                        val hash = contextState.calculateHash(fullText)
+                        contextState.sentFullFileHashes[file] = hash
+                        fullText
                     } else {
                         PsiSkeletonExtractor.extract(project, file)
                     }
