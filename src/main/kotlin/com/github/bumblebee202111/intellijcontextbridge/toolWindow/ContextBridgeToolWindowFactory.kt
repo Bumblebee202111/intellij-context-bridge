@@ -43,19 +43,24 @@ class ContextBridgeToolWindowFactory : ToolWindowFactory {
     class ContextBridgeToolWindow(private val project: Project) {
         private val contextState = project.service<ContextState>()
 
-        fun getContent(): JPanel {
-            val mainPanel = JPanel(BorderLayout())
+        fun getContent(): javax.swing.JComponent {
+            val tabbedPane = com.intellij.ui.components.JBTabbedPane()
+
+            tabbedPane.addTab("1. Send Context", createComposerPanel())
+            tabbedPane.addTab("2. Apply Diffs", createReceivePanel())
+
+            return tabbedPane
+        }
+
+        private fun createComposerPanel(): JPanel {
+            val panel = JPanel(BorderLayout())
 
             // --- 1. File Tree (Center) ---
             val rootDir = project.guessProjectDir()
             val rootNode = if (rootDir != null) buildFileTree(rootDir) else DefaultMutableTreeNode("No Project Root")
 
             val treeModel = DefaultTreeModel(rootNode)
-            val tree = Tree(treeModel).apply {
-                showsRootHandles = true
-            }
-
-            tree.expandPath(TreePath(rootNode.path))
+            val tree = Tree(treeModel)
 
             tree.cellRenderer = object : ColoredTreeCellRenderer() {
                 override fun customizeCellRenderer(
@@ -101,14 +106,13 @@ class ContextBridgeToolWindowFactory : ToolWindowFactory {
                 }
             })
 
-            mainPanel.add(JBScrollPane(tree), BorderLayout.CENTER)
+            panel.add(JBScrollPane(tree), BorderLayout.CENTER)
 
             // --- 2. Input & Action Area (Bottom) ---
             val bottomPanel = JPanel(BorderLayout()).apply {
                 border = JBUI.Borders.empty(5)
             }
 
-            // Prompt Input
             val promptArea = JBTextArea().apply {
                 rows = 4
                 lineWrap = true
@@ -117,38 +121,27 @@ class ContextBridgeToolWindowFactory : ToolWindowFactory {
             }
             bottomPanel.add(JBScrollPane(promptArea), BorderLayout.CENTER)
 
-            // Buttons Panel (New Chat & Copy)
             val buttonPanel = JPanel(java.awt.GridLayout(1, 2, 5, 0)).apply {
                 border = JBUI.Borders.emptyTop(5)
             }
 
-            // Clear / New Chat Button
             val clearButton = JButton("New Chat").apply {
                 toolTipText = "Clear all selected files and start a new session"
             }
             clearButton.addActionListener {
-                contextState.clear() // Wipes the file states
-                promptArea.text = "" // Clears the text area
-                tree.repaint()       // Removes the [S] and [F] tags from the UI
+                contextState.clear()
+                promptArea.text = ""
+                tree.repaint()
             }
 
-            // Copy Button
             val copyButton = JButton("Copy to Clipboard").apply {
                 toolTipText = "Generate Markdown payload and copy to clipboard"
             }
-
             copyButton.addActionListener {
                 val userPrompt = promptArea.text
-
-                // Generate payload
-                val payload = runReadAction {
-                    PayloadGenerator.generatePayload(project, contextState, userPrompt)
-                }
-
-                // Copy to system clipboard
+                val payload = PayloadGenerator.generatePayload(project, contextState, userPrompt)
                 CopyPasteManager.getInstance().setContents(StringSelection(payload))
 
-                // UX Feedback: Temporarily change button text
                 val originalText = copyButton.text
                 copyButton.text = "Copied!"
                 copyButton.isEnabled = false
@@ -156,16 +149,53 @@ class ContextBridgeToolWindowFactory : ToolWindowFactory {
                 Timer(1500) {
                     copyButton.text = originalText
                     copyButton.isEnabled = true
-                }.apply { isRepeats = false }.start()
+                }.apply {
+                    isRepeats = false
+                }.start()
             }
 
             buttonPanel.add(clearButton)
             buttonPanel.add(copyButton)
 
             bottomPanel.add(buttonPanel, BorderLayout.SOUTH)
-            mainPanel.add(bottomPanel, BorderLayout.SOUTH)
+            panel.add(bottomPanel, BorderLayout.SOUTH)
 
-            return mainPanel
+            return panel
+        }
+
+        private fun createReceivePanel(): JPanel {
+            val panel = JPanel(BorderLayout())
+
+            // Text area for pasting AI response
+            val responseArea = JBTextArea().apply {
+                lineWrap = true
+                wrapStyleWord = true
+                emptyText.text = "Paste the AI's Markdown response here..."
+                margin = JBUI.insets(5)
+            }
+            panel.add(JBScrollPane(responseArea), BorderLayout.CENTER)
+
+            // Parse & Apply Button
+            val applyButton = JButton("Parse & Apply Diffs").apply {
+                toolTipText = "Parse code blocks from the Markdown and open diff viewer"
+            }
+
+            applyButton.addActionListener {
+                val markdownText = responseArea.text
+                if (markdownText.isNotBlank()) {
+                    // TODO: Implement parsing and DiffManager integration in the next step
+                    println("Parsing markdown response of length: ${markdownText.length}")
+                }
+            }
+
+            val bottomPanel = JPanel(BorderLayout()).apply {
+                border = JBUI.Borders.empty(5)
+                add(applyButton, BorderLayout.CENTER)
+            }
+
+            panel.add(bottomPanel, BorderLayout.SOUTH)
+
+            return panel
         }
 
         @Suppress("UnsafeVfsRecursion")

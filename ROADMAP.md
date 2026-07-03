@@ -19,7 +19,7 @@ This project is structured into distinct, sequential phases. Each phase must be 
 
 ## Phase 3: Diff Application
 **Goal:** Safely parse AI responses and apply code back to the IDE.
-* [ ] Add UI to paste/receive AI Markdown responses.
+* [x] Add UI to paste/receive AI Markdown responses.
 * [ ] Write parser to extract code blocks and match them to local file paths based on Markdown headers.
 * [ ] Integrate IntelliJ `DiffManager` to open side-by-side diffs for user approval instead of auto-overwriting files.
 
