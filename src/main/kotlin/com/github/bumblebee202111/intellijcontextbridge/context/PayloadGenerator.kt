@@ -18,6 +18,10 @@ object PayloadGenerator {
             appendLine("1. **Context Memory**: Files provided in previous prompts may be omitted from the current `<project_context>` if they are unchanged. Rely on your conversation history.")
             appendLine("2. **Skeleton Files**: Files marked as `(Skeleton)` contain only structural APIs and comments. Internal logic and method bodies are explicitly stripped.")
             appendLine("3. **REQUEST_FULL Protocol**: If you must read or modify the internal logic of a `(Skeleton)` file to fulfill the user's request, you MUST halt your response immediately and strictly output: `REQUEST_FULL: [filepath]`. Do not hallucinate or guess the missing bodies. Wait for the user to provide the Full file.")
+            appendLine("4. **Code Generation & Formatting**: ")
+            appendLine("   - You MUST precede every code block with its exact file path as a header: `### 📄 path/to/file.ext`")
+            appendLine("   - Do NOT output the entire file unless creating a new one.")
+            appendLine("   - Output the specific methods/classes you modified. Include a few unchanged surrounding lines (the basic skeleton) to provide context for a reliable side-by-side diff.")
             appendLine("</system_directives>")
             appendLine()
 
