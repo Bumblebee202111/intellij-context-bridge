@@ -9,6 +9,12 @@ plugins {
 dependencies {
     testImplementation("junit:junit:4.13.2")
 
+    // Ktor Server & WebSockets
+    val ktorVersion = "3.0.3"
+    implementation("io.ktor:ktor-server-core-jvm:$ktorVersion")
+    implementation("io.ktor:ktor-server-cio-jvm:$ktorVersion")
+    implementation("io.ktor:ktor-server-websockets-jvm:$ktorVersion")
+
     // IntelliJ Platform Gradle Plugin Dependencies Extension - read more: https://plugins.jetbrains.com/docs/intellij/tools-intellij-platform-gradle-plugin-dependencies-extension.html
     intellijPlatform {
         intellijIdea("2025.2.6.2")
