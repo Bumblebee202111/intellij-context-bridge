@@ -1,6 +1,7 @@
 package com.github.bumblebee202111.intellijcontextbridge.toolWindow
 
 import com.github.bumblebee202111.intellijcontextbridge.context.PayloadGenerator
+import com.github.bumblebee202111.intellijcontextbridge.parser.MarkdownResponseParser
 import com.github.bumblebee202111.intellijcontextbridge.state.ContextLevel
 import com.github.bumblebee202111.intellijcontextbridge.state.ContextState
 import com.intellij.openapi.application.runReadAction
@@ -8,6 +9,7 @@ import com.intellij.openapi.components.service
 import com.intellij.openapi.ide.CopyPasteManager
 import com.intellij.openapi.project.Project
 import com.intellij.openapi.project.guessProjectDir
+import com.intellij.openapi.ui.Messages
 import com.intellij.openapi.vfs.VirtualFile
 import com.intellij.openapi.wm.ToolWindow
 import com.intellij.openapi.wm.ToolWindowFactory
@@ -183,8 +185,22 @@ class ContextBridgeToolWindowFactory : ToolWindowFactory {
             applyButton.addActionListener {
                 val markdownText = responseArea.text
                 if (markdownText.isNotBlank()) {
-                    // TODO: Implement parsing and DiffManager integration in the next step
-                    println("Parsing markdown response of length: ${markdownText.length}")
+                    val snippets = MarkdownResponseParser.parse(markdownText)
+
+                    if (snippets.isEmpty()) {
+                        Messages.showInfoMessage(
+                            "No code blocks found in the response.",
+                            "Parse Result"
+                        )
+                    } else {
+                        val resultMessage = snippets.joinToString("\n\n") {
+                            "File: ${it.filePath}\nLang: ${it.language}\nLines: ${it.code.lines().size}"
+                        }
+                        Messages.showInfoMessage(
+                            "Found ${snippets.size} snippet(s):\n\n$resultMessage",
+                            "Parse Result"
+                        )
+                    }
                 }
             }
 
