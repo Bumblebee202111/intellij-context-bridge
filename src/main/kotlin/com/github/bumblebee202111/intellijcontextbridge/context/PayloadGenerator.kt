@@ -44,15 +44,15 @@ object PayloadGenerator {
                 .sortedBy { it.key.path }
 
             for ((file, level) in sortedFiles) {
-                val relativePath = if (projectDir != null) {
-                    VfsUtilCore.getRelativePath(file, projectDir) ?: file.path
-                } else {
-                    file.path
-                }
+                val relativePath = if (projectDir != null) VfsUtilCore.getRelativePath(file, projectDir) ?: file.path else file.path
 
+                // Skip directories ONLY if they have children (non-empty).
+                // Empty directories are kept to preserve project structure intent.
                 if (file.isDirectory) {
-                    appendLine("### \uD83D\uDCC1 `$relativePath/` (Skeleton)")
-                    appendLine("*(Directory contents omitted, use as reference for paths)*\n")
+                    if (file.children.isNotEmpty()) continue
+
+                    appendLine("### \uD83D\uDCC1 `$relativePath/` (Empty Directory)")
+                    appendLine("*(This directory is empty)*\n")
                     continue
                 }
 
@@ -60,7 +60,8 @@ object PayloadGenerator {
                 val isTextFile = textExtensions.contains(extension) || !file.fileType.isBinary
 
                 if (!isTextFile) {
-                    // --- ATTACHMENT HANDLING ---
+                    val mime = getMimeType(extension)
+                    // --- ATTACHMENT & BINARY HANDLING ---
                     if (level == ContextLevel.FULL) {
                         try {
                             val bytes = file.contentsToByteArray()
@@ -69,19 +70,25 @@ object PayloadGenerator {
 
                             // Only add to attachments if it's supported by AI Studio (Images, Audio, Video, PDF)
                             if (mime != "application/octet-stream") {
+                                val bytes = file.contentsToByteArray()
+                                val base64 = java.util.Base64.getEncoder().encodeToString(bytes)
                                 attachments.add(AiAttachment(file.name, mime, base64))
                                 appendLine("### 🖼️ `$relativePath` (Attached Media)")
                                 appendLine("*(This file has been attached to the prompt natively)*\n")
                             } else {
-                                appendLine("### 📦 `$relativePath` (Unsupported Binary)")
-                                appendLine("*(Opaque binary file, cannot be read by AI)*\n")
+                                appendLine("### 📦 `$relativePath` (Binary File)")
+                                appendLine("*(Opaque binary file, contents excluded)*\n")
                             }
                         } catch (e: Exception) {
                             appendLine("### ❌ `$relativePath` (Error reading file: ${e.message})\n")
                         }
                     } else {
-                        // Skeleton mode for media files just lists the path
-                        appendLine("### 🖼️ `$relativePath` (Skeleton Media)\n")
+                        // SKELETON MODE
+                        if (mime != "application/octet-stream") {
+                            appendLine("### 🖼️ `$relativePath` (Skeleton Media)\n")
+                        } else {
+                            appendLine("### 📦 `$relativePath` (Binary File)\n")
+                        }
                     }
                     continue
                 }

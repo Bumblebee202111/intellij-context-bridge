@@ -1,10 +1,12 @@
 package com.github.bumblebee202111.intellijcontextbridge.toolWindow
 
 import com.github.bumblebee202111.intellijcontextbridge.context.PayloadGenerator
+import com.github.bumblebee202111.intellijcontextbridge.parser.MarkdownResponseParser
 import com.github.bumblebee202111.intellijcontextbridge.parser.ParsedSnippet
 import com.github.bumblebee202111.intellijcontextbridge.server.ContextBridgeServer
 import com.github.bumblebee202111.intellijcontextbridge.state.ContextLevel
 import com.github.bumblebee202111.intellijcontextbridge.state.ContextState
+import com.github.bumblebee202111.intellijcontextbridge.utils.FileFilterUtil
 import com.intellij.diff.DiffContentFactory
 import com.intellij.diff.DiffManager
 import com.intellij.diff.requests.SimpleDiffRequest
@@ -347,7 +349,7 @@ class ContextBridgeToolWindowFactory : ToolWindowFactory {
         private fun parseMarkdownAndPopulateList(markdownText: String) {
             listModel.clear()
             if (markdownText.isNotBlank()) {
-                val snippets = com.github.bumblebee202111.intellijcontextbridge.parser.MarkdownResponseParser.parse(markdownText)
+                val snippets = MarkdownResponseParser.parse(markdownText)
                 snippets.forEach { listModel.addElement(it) }
                 if (snippets.isEmpty()) {
                     Messages.showInfoMessage("No code blocks found in the response.", "Parse Result")
@@ -392,9 +394,16 @@ class ContextBridgeToolWindowFactory : ToolWindowFactory {
         private fun buildFileTree(dir: VirtualFile): DefaultMutableTreeNode {
             val node = DefaultMutableTreeNode(dir)
             val children = dir.children.sortedWith(compareBy({ !it.isDirectory }, { it.name }))
+
             for (child in children) {
-                if (child.name.startsWith(".") || child.name == "build") continue
-                if (child.isDirectory) node.add(buildFileTree(child)) else node.add(DefaultMutableTreeNode(child))
+                // UNIFIED FILTER: Exact same logic as ContextState
+                if (FileFilterUtil.isIgnored(project, child)) continue
+
+                if (child.isDirectory) {
+                    node.add(buildFileTree(child))
+                } else {
+                    node.add(DefaultMutableTreeNode(child))
+                }
             }
             return node
         }

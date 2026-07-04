@@ -74,14 +74,26 @@ object PsiSkeletonExtractor {
             }
             is KtProperty -> {
                 var sig = declaration.text
-                val cutElements = listOfNotNull(declaration.initializer, declaration.delegateExpression) + declaration.accessors
-                val minOffset = cutElements.minOfOrNull { it.textRange.startOffset }
 
-                if (minOffset != null) {
-                    val offset = minOffset - declaration.textRange.startOffset
-                    sig = sig.substring(0, offset)
+                // SMART STRIP: If the type is explicitly declared, we don't need the initializer.
+                // This prevents leaking massive blocks like `callbackFlow { ... }`
+                if (declaration.typeReference != null) {
+                    declaration.initializer?.let { sig = sig.replace(it.text, "") }
                 }
-                sig = sig.trimEnd('=', ' ', '\n', 'b', 'y')
+                // (If typeReference is null, we keep the initializer so the AI can infer the type)
+
+                // Replace delegates with "..." to save space
+                declaration.delegateExpression?.let { sig = sig.replace(it.text, "...") }
+
+                // Strip custom getter/setter bodies
+                declaration.accessors.forEach { acc ->
+                    acc.bodyExpression?.let { body ->
+                        sig = sig.replace(body.text, "")
+                    }
+                }
+
+                // Clean up trailing equals signs, spaces, or braces
+                sig = sig.trimEnd('=', ' ', '\n', '{')
                 "$doc$indent$sig"
             }
             else -> "$doc$indent${declaration.text}"

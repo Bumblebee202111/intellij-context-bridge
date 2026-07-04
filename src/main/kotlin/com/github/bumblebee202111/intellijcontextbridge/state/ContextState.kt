@@ -1,6 +1,7 @@
 package com.github.bumblebee202111.intellijcontextbridge.state
 
 import com.github.bumblebee202111.intellijcontextbridge.context.AiContextConfig
+import com.github.bumblebee202111.intellijcontextbridge.utils.FileFilterUtil
 import com.intellij.openapi.components.Service
 import com.intellij.openapi.diagnostic.thisLogger
 import com.intellij.openapi.project.Project
@@ -39,9 +40,8 @@ class ContextState(private val project: Project) {
 
     // Apply state to a file/folder and all its children
     fun applyStateRecursively(file: VirtualFile, level: ContextLevel) {
-        val name = file.name
-        // Skip hidden/build directories to prevent massive bloat
-        if (name == ".git" || name == ".idea" || name == ".gradle" || name == "build") return
+        // UNIFIED FILTER: Respect .gitignore and IDE exclusions
+        if (FileFilterUtil.isIgnored(project, file)) return
 
         setLevel(file, level)
 
