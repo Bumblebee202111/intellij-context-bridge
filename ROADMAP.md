@@ -31,6 +31,17 @@ This project is structured into distinct, sequential phases. Each phase must be 
 
 ## Phase 5: Polish & Project Configuration
 **Goal:** Improve UX and handle edge cases.
-* [ ] Implement `.aicontext` parser to auto-load default files, folders, and custom prompts on project open.
-* [ ] Implement MIME/Type checking to ignore binaries and prompt user action for images.
-* [ ] Refine UI/UX (saving prompt history, better error handling).
+* [x] Implement `.aicontext` parser to auto-load default context routing on project open.
+* [x] Implement MIME/Type checking to exclude opaque binaries and support media attachments.
+* [x] Refine UI/UX (prompt history stack, better error handling).
+
+## Phase 6: Git Integration (Planned)
+**Goal:** Leverage version control state for smarter context selection.
+* [ ] Add action to auto-select uncommitted/modified files.
+* [ ] Optimize payload by sending Git diffs for modified files already in memory.
+
+## Phase 7: Read-Only Tool Calling (Planned)
+**Goal:** Allow the AI to query the codebase safely without autonomous write access.
+* [ ] Define XML-based tool call schema for system directives.
+* [ ] Implement IDE-side execution for safe, read-only queries (e.g., global search, find usages).
+* [ ] Automate tool result transmission back to the web UI.

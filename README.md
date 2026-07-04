@@ -3,13 +3,13 @@
 # Project: AI Studio Bridge Plugin (Code Name: IntelliJContextSync)
 
 ## Overview
-A native IntelliJ/Android Studio plugin designed to bridge the IDE with web-based LLM playgrounds (specifically Google AI Studio). It acts as a highly optimized, stateful context manager that compiles project context into LLM-friendly payloads via Clipboard or WebSocket, bypassing the need for paid API integrations.
+A native IntelliJ/Android Studio plugin designed to bridge the IDE with web-based LLM playgrounds (such as Google AI Studio). Inspired by the workflow of [CodeWebChat](https://github.com/robertpiosik/CodeWebChat), it acts as a highly optimized, stateful context manager. It compiles project context into LLM-friendly payloads and syncs them via Clipboard or a local WebSocket server, bypassing the need for paid API integrations.
 
-## Core Philosophy
-1. **Absolute User Control:** The AI cannot autonomously read or write files. The user explicitly grants context and approves diffs.
-2. **Context Economy:** Prioritize "Skeleton" (signatures/structure) over "Full" (bodies) to save context window and maintain LLM focus.
-3. **Zero API Dependency:** The system relies on bridging to browser-based web interfaces, eliminating API costs and geographical restrictions.
-4. **Anti-Hallucination:** Prevent AI looping and "slop" by using strict protocol prompts and local state deduplication.
+## Core Mechanics & Philosophy
+1. **Absolute User Control:** The AI cannot autonomously read or write files. The user explicitly grants context and safely reviews/applies code changes using IntelliJ's native `DiffManager`.
+2. **Context Economy:** Prioritizes "Skeleton" mode (AST-based extraction of public signatures, class structures, and documentation) over "Full" mode to save tokens and maintain LLM focus.
+3. **Zero API Dependency:** Operates via a browser userscript bridge or clipboard, eliminating API costs and geographical restrictions.
+4. **Anti-Hallucination:** Prevents AI looping and context bloat by injecting strict protocol prompts and using silent local state deduplication (omitting unchanged files from subsequent prompts).
 
 ## Development Setup Requirements
 * IntelliJ Platform Plugin Template (Kotlin)
