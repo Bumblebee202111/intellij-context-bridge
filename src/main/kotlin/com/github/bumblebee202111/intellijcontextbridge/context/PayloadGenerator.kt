@@ -5,13 +5,22 @@ import com.github.bumblebee202111.intellijcontextbridge.state.ContextState
 import com.intellij.openapi.project.Project
 import com.intellij.openapi.project.guessProjectDir
 import com.intellij.openapi.vfs.VfsUtilCore
+import com.intellij.openapi.vfs.VirtualFile
+import java.util.Base64
 
 object PayloadGenerator {
 
-    fun generatePayload(project: Project, contextState: ContextState, userPrompt: String): String {
-        val projectDir = project.guessProjectDir()
+    // List of extensions we treat as text. Everything else is treated as a binary/attachment.
+    private val textExtensions = setOf(
+        "kt", "kts", "java", "xml", "json", "md", "gradle", "yaml", "yml",
+        "sh", "py", "js", "ts", "html", "htm", "css", "txt", "csv", "properties", "pro"
+    )
 
-        return buildString {
+    fun generatePayload(project: Project, contextState: ContextState, userPrompt: String): AiPayload {
+        val projectDir = project.guessProjectDir()
+        val attachments = mutableListOf<AiAttachment>()
+
+        val markdownText =  buildString {
             // 1. System Directives
             appendLine("<system_directives>")
             appendLine("You are an AI coding assistant connected via a stateful IDE bridge. Adhere strictly to this protocol:")
@@ -43,14 +52,42 @@ object PayloadGenerator {
 
                 if (file.isDirectory) {
                     appendLine("### \uD83D\uDCC1 `$relativePath/` (Skeleton)")
-                    appendLine("*(Directory contents omitted, use as reference for paths)*")
-                    appendLine()
+                    appendLine("*(Directory contents omitted, use as reference for paths)*\n")
                     continue
                 }
 
-                // --- UNIVERSAL DEDUPLICATION LOGIC ---
-                var contentToAppend: String?
+                val extension = file.extension?.lowercase() ?: ""
+                val isTextFile = textExtensions.contains(extension) || !file.fileType.isBinary
 
+                if (!isTextFile) {
+                    // --- ATTACHMENT HANDLING ---
+                    if (level == ContextLevel.FULL) {
+                        try {
+                            val bytes = file.contentsToByteArray()
+                            val base64 = Base64.getEncoder().encodeToString(bytes)
+                            val mime = getMimeType(extension)
+
+                            // Only add to attachments if it's supported by AI Studio (Images, Audio, Video, PDF)
+                            if (mime != "application/octet-stream") {
+                                attachments.add(AiAttachment(file.name, mime, base64))
+                                appendLine("### 🖼️ `$relativePath` (Attached Media)")
+                                appendLine("*(This file has been attached to the prompt natively)*\n")
+                            } else {
+                                appendLine("### 📦 `$relativePath` (Unsupported Binary)")
+                                appendLine("*(Opaque binary file, cannot be read by AI)*\n")
+                            }
+                        } catch (e: Exception) {
+                            appendLine("### ❌ `$relativePath` (Error reading file: ${e.message})\n")
+                        }
+                    } else {
+                        // Skeleton mode for media files just lists the path
+                        appendLine("### 🖼️ `$relativePath` (Skeleton Media)\n")
+                    }
+                    continue
+                }
+
+                // --- TEXT/CODE HANDLING (with Deduplication) ---
+                var contentToAppend: String? = null
                 try {
                     // 1. Extract the content based on the level
                     val extractedText = if (level == ContextLevel.FULL) {
@@ -65,10 +102,8 @@ object PayloadGenerator {
 
                     // 3. Compare Level AND Hash
                     if (previousRecord != null && previousRecord.first == level && previousRecord.second == currentHash) {
-                        // The exact same content was already sent at this level. Omit entirely!
-                        continue
+                        continue // Omit unchanged file
                     } else {
-                        // It's new, or the level changed (e.g., Skeleton -> Full), or the content changed.
                         contextState.sentFileHashes[file] = Pair(level, currentHash)
                         contentToAppend = extractedText
                     }
@@ -76,17 +111,13 @@ object PayloadGenerator {
                     contentToAppend = "// Error reading file: ${e.message}"
                 }
 
-                // --- APPEND TO PAYLOAD ---
+                if (contentToAppend == null) continue
+
                 val levelTag = if (level == ContextLevel.FULL) "(Full)" else "(Skeleton)"
                 appendLine("### \uD83D\uDCC4 `$relativePath` $levelTag")
-
-                val extension = file.extension?.lowercase() ?: ""
-                val lang = getMarkdownLang(extension)
-
-                appendLine("```$lang")
+                appendLine("```${getMarkdownLang(extension)}")
                 appendLine(contentToAppend)
-                appendLine("```")
-                appendLine()
+                appendLine("```\n")
             }
 
             appendLine("</project_context>")
@@ -96,6 +127,22 @@ object PayloadGenerator {
             appendLine("<user_prompt>")
             appendLine(userPrompt.trim())
             appendLine("</user_prompt>")
+        }
+
+        return AiPayload(text = markdownText, attachments = attachments)
+    }
+
+    private fun getMimeType(extension: String): String {
+        return when (extension) {
+            "png" -> "image/png"
+            "jpg", "jpeg" -> "image/jpeg"
+            "webp" -> "image/webp"
+            "heic" -> "image/heic"
+            "pdf" -> "application/pdf"
+            "mp4" -> "video/mp4"
+            "mp3" -> "audio/mpeg"
+            "wav" -> "audio/wav"
+            else -> "application/octet-stream" // Unsupported binary
         }
     }
 

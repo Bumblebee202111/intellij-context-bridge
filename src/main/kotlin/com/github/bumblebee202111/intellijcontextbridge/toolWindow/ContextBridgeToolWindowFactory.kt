@@ -32,6 +32,8 @@ import com.intellij.ui.components.JBTextArea
 import com.intellij.ui.content.ContentFactory
 import com.intellij.ui.treeStructure.Tree
 import com.intellij.util.ui.JBUI
+import kotlinx.serialization.encodeToString
+import kotlinx.serialization.json.Json
 import java.awt.BorderLayout
 import java.awt.datatransfer.StringSelection
 import java.awt.event.MouseAdapter
@@ -229,14 +231,24 @@ class ContextBridgeToolWindowFactory : ToolWindowFactory {
                     historyIndex = -1 // Reset navigator
                     draftPrompt = ""
 
-                    val payload = PayloadGenerator.generatePayload(project, contextState, promptText)
-                    CopyPasteManager.getInstance().setContents(StringSelection(payload))
-                    val originalText = text
-                    text = "Copied!"
-                    isEnabled = false
-                    Timer(1500) { text = originalText; isEnabled = true }.apply { isRepeats = false }.start()
-                }
-            }
+        val payloadObj = PayloadGenerator.generatePayload(project, contextState, promptText)
+
+        // Clipboard only gets the Markdown text (attachments can't be copied this way)
+        CopyPasteManager.getInstance().setContents(StringSelection(payloadObj.text))
+
+        if (payloadObj.attachments.isNotEmpty()) {
+            Messages.showWarningDialog(
+                "You copied ${payloadObj.attachments.size} media file(s). They cannot be copied to the clipboard. Please use 'Send to AI Studio' or attach them manually.",
+                "Media Files Skipped"
+            )
+        }
+
+        val originalText = text
+        text = "Copied!"
+        isEnabled = false
+        Timer(1500) { text = originalText; isEnabled = true }.apply { isRepeats = false }.start()
+    }
+}
 
             // Send via WebSocket Action
             sendWsButton.addActionListener {
@@ -245,8 +257,11 @@ class ContextBridgeToolWindowFactory : ToolWindowFactory {
                 historyIndex = -1 // Reset navigator
                 draftPrompt = ""
 
-                val payload = PayloadGenerator.generatePayload(project, contextState, promptText)
-                server.broadcast(payload)
+    val payloadObj = PayloadGenerator.generatePayload(project, contextState, promptText)
+
+    // Serialize the object to JSON!
+    val jsonString = Json.encodeToString(payloadObj)
+    server.broadcast(jsonString)
 
                 val originalText = sendWsButton.text
                 sendWsButton.text = "Sent!"
