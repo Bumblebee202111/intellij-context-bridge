@@ -17,7 +17,6 @@ import com.intellij.openapi.ide.CopyPasteManager
 import com.intellij.openapi.project.Project
 import com.intellij.openapi.project.guessProjectDir
 import com.intellij.openapi.ui.Messages
-import com.intellij.openapi.util.TextRange
 import com.intellij.openapi.vfs.LocalFileSystem
 import com.intellij.openapi.vfs.VirtualFile
 import com.intellij.openapi.wm.ToolWindow
@@ -76,7 +75,7 @@ class ContextBridgeToolWindowFactory : ToolWindowFactory {
 
             // Handle Browser Connect/Disconnect
             server.onConnectionChanged = { isConnected ->
-                javax.swing.SwingUtilities.invokeLater {
+                SwingUtilities.invokeLater {
                     if (isConnected) {
                         sendWsButton.text = "Send to AI Studio"
                         sendWsButton.isEnabled = true
@@ -89,7 +88,7 @@ class ContextBridgeToolWindowFactory : ToolWindowFactory {
 
             // Handle Incoming AI Responses
             server.onMessageReceived = { markdownText ->
-                javax.swing.SwingUtilities.invokeLater {
+                SwingUtilities.invokeLater {
                     // 1. Switch to the "Apply Diffs" tab
                     tabbedPane.selectedIndex = 1
 

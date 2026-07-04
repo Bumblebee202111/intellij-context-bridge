@@ -27,7 +27,7 @@ This project is structured into distinct, sequential phases. Each phase must be 
 **Goal:** Eliminate manual copy/pasting to the browser.
 * [x] Embed a lightweight local WebSocket server (`localhost:PORT`) in the plugin.
 * [x] Update UI with a "Send via WebSocket" action.
-* [ ] Write a companion browser Userscript (Tampermonkey/Violentmonkey) to receive the payload, inject it into the AI Studio web UI, and send the generated response back to the IDE.
+* [x] Write a companion browser Userscript (Tampermonkey/Violentmonkey) to receive the payload, inject it into the AI Studio web UI, and send the generated response back to the IDE.
 
 ## Phase 5: Polish & Project Configuration
 **Goal:** Improve UX and handle edge cases.
