@@ -1,8 +1,13 @@
 package com.github.bumblebee202111.intellijcontextbridge.state
 
+import com.github.bumblebee202111.intellijcontextbridge.context.AiContextConfig
 import com.intellij.openapi.components.Service
+import com.intellij.openapi.diagnostic.thisLogger
 import com.intellij.openapi.project.Project
+import com.intellij.openapi.project.guessProjectDir
+import com.intellij.openapi.vfs.VfsUtilCore
 import com.intellij.openapi.vfs.VirtualFile
+import kotlinx.serialization.json.Json
 import java.security.MessageDigest
 
 enum class ContextLevel {
@@ -18,6 +23,8 @@ class ContextState(private val project: Project) {
     // Store prompt history
     val promptHistory = mutableListOf<String>()
 
+    private val jsonParser = Json { ignoreUnknownKeys = true }
+
     fun getLevel(file: VirtualFile): ContextLevel {
         return fileStates[file] ?: ContextLevel.NONE
     }
@@ -28,6 +35,54 @@ class ContextState(private val project: Project) {
         } else {
             fileStates[file] = level
         }
+    }
+
+    // Apply state to a file/folder and all its children
+    fun applyStateRecursively(file: VirtualFile, level: ContextLevel) {
+        val name = file.name
+        // Skip hidden/build directories to prevent massive bloat
+        if (name == ".git" || name == ".idea" || name == ".gradle" || name == "build") return
+
+        setLevel(file, level)
+
+        if (file.isDirectory) {
+            file.children.forEach { child ->
+                applyStateRecursively(child, level)
+            }
+        }
+    }
+
+    // Load defaults from .aicontext
+    fun loadConfig() {
+        val projectDir = project.guessProjectDir() ?: return
+        val configFile = projectDir.findChild(".aicontext")
+
+        val config = if (configFile != null && configFile.exists()) {
+            try {
+                val configText = VfsUtilCore.loadText(configFile)
+                jsonParser.decodeFromString<AiContextConfig>(configText)
+            } catch (e: Exception) {
+                thisLogger().warn("Failed to parse .aicontext: ${e.message}")
+                // Fallback to default if their JSON is malformed
+                AiContextConfig(skeleton = listOf("."), full = listOf("README.md"))
+            }
+        } else {
+            // Out-of-the-box Default Behavior
+            AiContextConfig(skeleton = listOf("."), full = listOf("README.md"))
+        }
+
+        // 1. Apply Skeletons first
+        config.skeleton.forEach { path ->
+            val file = if (path == "." || path == "/") projectDir else projectDir.findFileByRelativePath(path)
+            if (file != null && file.exists()) applyStateRecursively(file, ContextLevel.SKELETON)
+        }
+
+        // 2. Apply Full (overrides Skeletons)
+        config.full.forEach { path ->
+            val file = if (path == "." || path == "/") projectDir else projectDir.findFileByRelativePath(path)
+            if (file != null && file.exists()) applyStateRecursively(file, ContextLevel.FULL)
+        }
+        thisLogger().info("Successfully loaded AI Context configuration.")
     }
 
     fun calculateHash(content: String): String {

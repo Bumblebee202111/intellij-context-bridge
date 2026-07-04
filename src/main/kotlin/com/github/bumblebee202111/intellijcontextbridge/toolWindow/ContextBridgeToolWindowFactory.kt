@@ -77,6 +77,9 @@ class ContextBridgeToolWindowFactory : ToolWindowFactory {
         }
 
         init {
+            // Load default config on startup
+            contextState.loadConfig()
+
             // Start the WebSocket Server
             server.start()
 
@@ -156,7 +159,7 @@ class ContextBridgeToolWindowFactory : ToolWindowFactory {
                         ContextLevel.SKELETON -> ContextLevel.FULL
                         ContextLevel.FULL -> ContextLevel.NONE
                     }
-                    applyStateRecursively(node, nextLevel)
+                    contextState.applyStateRecursively(file, nextLevel)
                     tree.repaint()
                 }
             })
@@ -217,6 +220,7 @@ class ContextBridgeToolWindowFactory : ToolWindowFactory {
             val clearButton = JButton("New Chat").apply {
                 addActionListener {
                     contextState.clear()
+                    contextState.loadConfig()
                     promptArea.text = ""
                     historyIndex = -1
                     draftPrompt = ""
@@ -393,15 +397,6 @@ class ContextBridgeToolWindowFactory : ToolWindowFactory {
                 if (child.isDirectory) node.add(buildFileTree(child)) else node.add(DefaultMutableTreeNode(child))
             }
             return node
-        }
-
-        private fun applyStateRecursively(node: DefaultMutableTreeNode, level: ContextLevel) {
-            val file = node.userObject as? VirtualFile ?: return
-            contextState.setLevel(file, level)
-            for (i in 0 until node.childCount) {
-                val childNode = node.getChildAt(i) as? DefaultMutableTreeNode
-                if (childNode != null) applyStateRecursively(childNode, level)
-            }
         }
     }
 }
