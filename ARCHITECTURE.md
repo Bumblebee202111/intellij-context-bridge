@@ -24,7 +24,7 @@ The plugin consists of four decoupled layers. Implementation details for each la
   * If a file is requested again at the exact same context level and its extracted hash is unchanged, it silently omits the file entirely from the payload to prevent context bloat.
 
 ## 4. Transport & Application Layer
-* **Payload Generator:** Compiles extracted context, system prompts, and user prompts into a structured JSON object containing Markdown text and Base64 media attachments.
+* **Payload Generator:** Compiles extracted context, system prompts,, active compiler diagnostics, and user prompts into a structured JSON object containing Markdown text and Base64 media attachments.
 * **Bridge Mechanism:**
   * *Server:* A local WebSocket server (`localhost:PORT`) embedded in the IDE.
   * *Client:* A browser userscript that receives JSON payloads, injects text, simulates drag-and-drop for media attachments, and intercepts native UI copy events to securely retrieve AI responses.

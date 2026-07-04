@@ -8,8 +8,9 @@ A native IntelliJ/Android Studio plugin designed to bridge the IDE with web-base
 ## Core Mechanics & Philosophy
 1. **Absolute User Control:** The AI cannot autonomously read or write files. The user explicitly grants context and safely reviews/applies code changes using IntelliJ's native `DiffManager`.
 2. **Context Economy:** Prioritizes "Skeleton" mode (AST-based extraction of public signatures, class structures, and documentation) over "Full" mode to save tokens and maintain LLM focus.
-3. **Zero API Dependency:** Operates via a browser userscript bridge or clipboard, eliminating API costs and geographical restrictions.
-4. **Anti-Hallucination:** Prevents AI looping and context bloat by injecting strict protocol prompts and using silent local state deduplication (omitting unchanged files from subsequent prompts).
+3. **Diagnostic Awareness:** Optionally injects active IDE compiler errors and warnings directly into the payload, forcing the AI to resolve deterministic constraints rather than guessing.
+4. **Zero API Dependency:** Operates via a browser userscript bridge, eliminating API costs and geographical restrictions.
+5. **Anti-Hallucination:** Prevents AI looping and context bloat by injecting strict protocol prompts and using silent local state deduplication (omitting unchanged files from subsequent prompts).
 
 ## Development Setup Requirements
 * IntelliJ Platform Plugin Template (Kotlin)

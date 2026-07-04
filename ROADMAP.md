@@ -35,9 +35,10 @@ This project is structured into distinct, sequential phases. Each phase must be 
 * [x] Implement MIME/Type checking to exclude opaque binaries and support media attachments.
 * [x] Refine UI/UX (prompt history stack, better error handling).
 
-## Phase 6: Git Integration (Planned)
-**Goal:** Leverage version control state for smarter context selection.
-* [ ] Add action to auto-select uncommitted/modified files.
+## Phase 6: Engineering Context (Git & Diagnostics)
+**Goal:** Provide the AI with deterministic software engineering constraints.
+* [ ] Add UI toggle to include active editor compiler errors/warnings in the payload.
+* [ ] Add action to auto-select uncommitted/modified files based on `git status`.
 * [ ] Optimize payload by sending Git diffs for modified files already in memory.
 
 ## Phase 7: Read-Only Tool Calling (Planned)

@@ -6,6 +6,7 @@ The system MUST support strictly two context extraction levels for text/code fil
   * *For code files:* Extracts strictly the "Public API". It MUST include class/interface declarations, public/protected signatures, KDoc/JavaDoc, and only the imports required by those specific signatures. It MUST explicitly strip method bodies, private signatures, internal logic, and unused imports.
   * *For non-code files:* Acts as a simple path listing (outputs only the relative file path/name).
 * **Full:** The complete raw text of the file.
+* **Diagnostics:** The system MUST support an optional toggle to append active IDE diagnostics (compiler errors/warnings) for the selected files into the payload.
 * **Media & Binaries:** The system MUST gracefully handle supported media files (e.g., via attachments) and strictly exclude opaque binaries from text payloads to prevent encoding errors.
 
 ## 2. Universal Context Deduplication
