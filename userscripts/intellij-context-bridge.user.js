@@ -81,18 +81,75 @@
             });
         }
 
-        async function handleIncomingPayload(payload) {
+        // --- Base64 to File Converter ---
+        function base64ToFile(base64Data, mimeType, filename) {
+            const byteString = atob(base64Data);
+            const ab = new ArrayBuffer(byteString.length);
+            const ia = new Uint8Array(ab);
+            for (let i = 0; i < byteString.length; i++) {
+                ia[i] = byteString.charCodeAt(i);
+            }
+            const blob = new Blob([ab], { type: mimeType });
+            return new File([blob], filename, { type: mimeType });
+        }
+
+        // --- Drag and Drop Simulator ---
+        function simulateFileDrop(files) {
+            // AI Studio has a specific div for drag & drop, or we fallback to document.body
+            const dropZone = document.querySelector('[msglobalfiledragdrop]') || document.body;
+
+            const dataTransfer = new DataTransfer();
+            files.forEach(file => dataTransfer.items.add(file));
+
+            // Dispatch dragenter, dragover, and drop to satisfy Angular's event listeners
+            ['dragenter', 'dragover', 'drop'].forEach(eventType => {
+                const dropEvent = new DragEvent(eventType, {
+                    bubbles: true,
+                    cancelable: true,
+                    dataTransfer: dataTransfer
+                });
+                dropZone.dispatchEvent(dropEvent);
+            });
+        }
+
+        async function handleIncomingPayload(payloadString) {
             if (isProcessing) return;
             isProcessing = true;
 
+            let payloadObj;
+            try {
+                // Try to parse as JSON (New format)
+                payloadObj = JSON.parse(payloadString);
+            } catch (e) {
+                // Fallback for old plain-text payloads
+                payloadObj = { text: payloadString, attachments: [] };
+            }
+
+            // 1. Handle Media Attachments
+            if (payloadObj.attachments && payloadObj.attachments.length > 0) {
+                updateFab(`📎 Attaching ${payloadObj.attachments.length} files...`, '#FF9800');
+
+                const files = payloadObj.attachments.map(att =>
+                    base64ToFile(att.base64Data, att.mimeType, att.name)
+                );
+
+                simulateFileDrop(files);
+
+                // Wait 2 seconds for AI Studio to finish processing/uploading the dropped files
+                // before we paste the text and hit run.
+                await new Promise(r => setTimeout(r, 2000));
+            }
+
+            // 2. Inject Text Prompt
             const textarea = await waitForElement('textarea[formcontrolname="promptText"], textarea[aria-label="Enter a prompt"]');
             if (!textarea) { isProcessing = false; return; }
 
             textarea.focus();
             const nativeInputValueSetter = Object.getOwnPropertyDescriptor(window.HTMLTextAreaElement.prototype, "value").set;
-            nativeInputValueSetter.call(textarea, payload);
+            nativeInputValueSetter.call(textarea, payloadObj.text);
             textarea.dispatchEvent(new Event('input', { bubbles: true }));
 
+            // 3. Trigger Run
             setTimeout(async () => {
                 const runBtn = await waitForElement('button[type="submit"]');
                 if (runBtn) {
