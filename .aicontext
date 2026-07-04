@@ -1,0 +1,11 @@
+{
+  "skeleton": [
+    "."
+  ],
+  "full": [
+    "README.md",
+    "ROADMAP.md",
+    "ARCHITECTURE.md",
+    "REQUIREMENTS.md"
+  ]
+}
