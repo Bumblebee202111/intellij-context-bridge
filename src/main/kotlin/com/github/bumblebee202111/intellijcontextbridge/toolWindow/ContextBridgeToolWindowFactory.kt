@@ -8,6 +8,7 @@ import com.github.bumblebee202111.intellijcontextbridge.state.ContextState
 import com.intellij.diff.DiffContentFactory
 import com.intellij.diff.DiffManager
 import com.intellij.diff.requests.SimpleDiffRequest
+import com.intellij.openapi.application.ApplicationManager
 import com.intellij.openapi.components.service
 import com.intellij.openapi.fileEditor.FileDocumentManager
 import com.intellij.openapi.fileEditor.FileEditorManager
@@ -52,8 +53,12 @@ class ContextBridgeToolWindowFactory : ToolWindowFactory {
 
     class ContextBridgeToolWindow(private val project: Project) {
         private val contextState = project.service<ContextState>()
-        private val server = com.intellij.openapi.application.ApplicationManager.getApplication().getService(
+        private val server = ApplicationManager.getApplication().getService(
             ContextBridgeServer::class.java)
+
+        // History tracking state
+        private var historyIndex = -1
+        private var draftPrompt = ""
 
         // UI Components we need to access from WebSocket callbacks
         private val tabbedPane = com.intellij.ui.components.JBTabbedPane()
@@ -162,7 +167,44 @@ class ContextBridgeToolWindowFactory : ToolWindowFactory {
                 rows = 4
                 lineWrap = true
                 wrapStyleWord = true
-                emptyText.text = "Type your prompt here..."
+                emptyText.text = "Type your prompt here... (Ctrl+Up for history)"
+
+                // KeyListener for History Navigation
+                addKeyListener(object : java.awt.event.KeyAdapter() {
+                    override fun keyPressed(e: java.awt.event.KeyEvent) {
+                        val isModifierDown = e.isControlDown || e.isMetaDown // Supports Ctrl (Win/Linux) and Cmd (Mac)
+
+                        if (isModifierDown && e.keyCode == java.awt.event.KeyEvent.VK_UP) {
+                            val history = contextState.promptHistory
+                            if (history.isEmpty()) return
+
+                            if (historyIndex == -1) {
+                                // Save current text as draft before navigating back
+                                draftPrompt = text
+                                historyIndex = history.size - 1
+                                text = history[historyIndex]
+                            } else if (historyIndex > 0) {
+                                historyIndex--
+                                text = history[historyIndex]
+                            }
+                            e.consume() // Prevent default behavior
+
+                        } else if (isModifierDown && e.keyCode == java.awt.event.KeyEvent.VK_DOWN) {
+                            val history = contextState.promptHistory
+                            if (historyIndex != -1) {
+                                if (historyIndex < history.size - 1) {
+                                    historyIndex++
+                                    text = history[historyIndex]
+                                } else if (historyIndex == history.size - 1) {
+                                    // Reached the present, restore the draft
+                                    historyIndex = -1
+                                    text = draftPrompt
+                                }
+                                e.consume()
+                            }
+                        }
+                    }
+                })
             }
             bottomPanel.add(JBScrollPane(promptArea), BorderLayout.CENTER)
 
@@ -174,13 +216,20 @@ class ContextBridgeToolWindowFactory : ToolWindowFactory {
                 addActionListener {
                     contextState.clear()
                     promptArea.text = ""
+                    historyIndex = -1
+                    draftPrompt = ""
                     tree.repaint()
                 }
             }
 
             val copyButton = JButton("Copy").apply {
                 addActionListener {
-                    val payload = PayloadGenerator.generatePayload(project, contextState, promptArea.text)
+                    val promptText = promptArea.text
+                    contextState.addPromptToHistory(promptText) // Save to history
+                    historyIndex = -1 // Reset navigator
+                    draftPrompt = ""
+
+                    val payload = PayloadGenerator.generatePayload(project, contextState, promptText)
                     CopyPasteManager.getInstance().setContents(StringSelection(payload))
                     val originalText = text
                     text = "Copied!"
@@ -191,7 +240,12 @@ class ContextBridgeToolWindowFactory : ToolWindowFactory {
 
             // Send via WebSocket Action
             sendWsButton.addActionListener {
-                val payload = PayloadGenerator.generatePayload(project, contextState, promptArea.text)
+                val promptText = promptArea.text
+                contextState.addPromptToHistory(promptText) // Save to history
+                historyIndex = -1 // Reset navigator
+                draftPrompt = ""
+
+                val payload = PayloadGenerator.generatePayload(project, contextState, promptText)
                 server.broadcast(payload)
 
                 val originalText = sendWsButton.text

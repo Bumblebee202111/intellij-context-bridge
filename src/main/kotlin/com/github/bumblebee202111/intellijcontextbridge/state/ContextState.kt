@@ -15,6 +15,9 @@ class ContextState(private val project: Project) {
 
     val sentFileHashes = mutableMapOf<VirtualFile, Pair<ContextLevel, String>>()
 
+    // Store prompt history
+    val promptHistory = mutableListOf<String>()
+
     fun getLevel(file: VirtualFile): ContextLevel {
         return fileStates[file] ?: ContextLevel.NONE
     }
@@ -32,8 +35,19 @@ class ContextState(private val project: Project) {
         return bytes.joinToString("") { "%02x".format(it) }
     }
 
+    // Add prompt to history safely
+    fun addPromptToHistory(prompt: String) {
+        val trimmed = prompt.trim()
+        if (trimmed.isEmpty()) return
+        // Don't add if it's the exact same as the most recent one
+        if (promptHistory.isEmpty() || promptHistory.last() != trimmed) {
+            promptHistory.add(trimmed)
+        }
+    }
+
     fun clear() {
         fileStates.clear()
         sentFileHashes.clear()
+        // We intentionally DO NOT clear promptHistory here!
     }
 }
