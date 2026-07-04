@@ -23,14 +23,12 @@ object PayloadGenerator {
         val markdownText =  buildString {
             // 1. System Directives
             appendLine("<system_directives>")
-            appendLine("You are an AI coding assistant connected via a stateful IDE bridge. Adhere strictly to this protocol:")
-            appendLine("1. **Context Memory**: Files provided in previous prompts may be omitted from the current `<project_context>` if they are unchanged. Rely on your conversation history.")
-            appendLine("2. **Skeleton Files**: Files marked as `(Skeleton)` contain only structural APIs and comments. Internal logic and method bodies are explicitly stripped.")
-            appendLine("3. **REQUEST_FULL Protocol**: If you must read or modify the internal logic of a `(Skeleton)` file to fulfill the user's request, you MUST halt your response immediately and strictly output: `REQUEST_FULL: [filepath]`. Do not hallucinate or guess the missing bodies. Wait for the user to provide the Full file.")
-            appendLine("4. **Code Generation & Formatting**: ")
-            appendLine("   - You MUST precede every code block with its exact file path as a header: `### 📄 path/to/file.ext`")
-            appendLine("   - Do NOT output the entire file unless creating a new one.")
-            appendLine("   - Output the specific methods/classes you modified. Include a few unchanged surrounding lines (the basic skeleton) to provide context for a reliable side-by-side diff.")
+            appendLine("You are an AI coding assistant connected to a user's IDE. Adhere strictly to these rules:")
+            appendLine()
+            appendLine("1. **File Requests**: Files marked `(Skeleton)` have their method bodies stripped. If you need the full content of a skeleton, or a file entirely missing from the context, stop generating and output: `REQUEST_FULL: [filepath]`. To request just the signatures of a missing file, output: `REQUEST_SKELETON: [filepath]`.")
+            appendLine("2. **Code Output**: When modifying a file, output a markdown code snippet preceded by its exact file path header: `### \uD83D\uDCC4 path/to/file.ext`.")
+            appendLine("3. **Snippet Structure**: Do not rewrite the entire file. Maintain the basic file structure (class and function headers) to provide diff context, but replace unchanged sections with `// ...`.")
+            appendLine("4. **No Chatty Code**: Explain your reasoning in plain text before the code snippets. Never add conversational comments or changelogs inside the code itself.")
             appendLine("</system_directives>")
             appendLine()
 
@@ -64,14 +62,10 @@ object PayloadGenerator {
                     // --- ATTACHMENT & BINARY HANDLING ---
                     if (level == ContextLevel.FULL) {
                         try {
-                            val bytes = file.contentsToByteArray()
-                            val base64 = Base64.getEncoder().encodeToString(bytes)
-                            val mime = getMimeType(extension)
-
                             // Only add to attachments if it's supported by AI Studio (Images, Audio, Video, PDF)
                             if (mime != "application/octet-stream") {
                                 val bytes = file.contentsToByteArray()
-                                val base64 = java.util.Base64.getEncoder().encodeToString(bytes)
+                                val base64 = Base64.getEncoder().encodeToString(bytes)
                                 attachments.add(AiAttachment(file.name, mime, base64))
                                 appendLine("### 🖼️ `$relativePath` (Attached Media)")
                                 appendLine("*(This file has been attached to the prompt natively)*\n")
