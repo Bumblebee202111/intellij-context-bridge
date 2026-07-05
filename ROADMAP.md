@@ -33,7 +33,7 @@ This project is structured into distinct, sequential phases. Each phase must be 
 **Goal:** Improve UX and handle edge cases.
 * [x] Implement `.aicontext` parser to auto-load default context routing on project open.
 * [x] Implement MIME/Type checking to exclude opaque binaries and support media attachments.
-* [x] Refine UI/UX (prompt history stack, better error handling).
+* [x] Refine UI/UX (prompt history stack, direct state toggles, computed directory states, better error handling).
 
 ## Phase 6: Engineering Context (Git & Diagnostics)
 **Goal:** Provide the AI with deterministic software engineering constraints.

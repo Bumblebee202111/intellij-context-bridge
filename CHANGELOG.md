@@ -2,6 +2,8 @@
 
 # intellij-context-bridge Changelog
 
+*Note: As this is an experimental project primarily for personal use, this changelog is maintained informally to track major milestones rather than strict semantic versioning.*
+
 ## [Unreleased]
 ### Added
 - Initial scaffold created from [IntelliJ Platform Plugin Template](https://github.com/JetBrains/intellij-platform-plugin-template)
@@ -24,6 +26,7 @@
 - **Phase 5: Polish & Configuration**
   - `.aicontext` parser for auto-loading default project context on startup.
   - Smart MIME/Type checker (excludes opaque binaries, encodes supported media to Base64 JSON payloads).
+  - UI Overhaul: Computed directory states, visual state icons, direct-click toggling, and `(cached)` deduplication badges.
 
 ### Removed
 - Default template sample files and dummy actions.
