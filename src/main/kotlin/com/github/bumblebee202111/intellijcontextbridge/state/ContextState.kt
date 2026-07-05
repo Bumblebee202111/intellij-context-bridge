@@ -12,47 +12,80 @@ import kotlinx.serialization.json.Json
 import java.security.MessageDigest
 
 enum class ContextLevel {
-    NONE, SKELETON, FULL
+    NONE, SKELETON, FULL, MIXED
 }
 
 @Service(Service.Level.PROJECT)
 class ContextState(private val project: Project) {
     val fileStates = mutableMapOf<VirtualFile, ContextLevel>()
-
     val sentFileHashes = mutableMapOf<VirtualFile, Pair<ContextLevel, String>>()
-
-    // Store prompt history
     val promptHistory = mutableListOf<String>()
 
     private val jsonParser = Json { ignoreUnknownKeys = true }
+    private val dirStateCache = mutableMapOf<VirtualFile, ContextLevel>()
 
     fun getLevel(file: VirtualFile): ContextLevel {
         return fileStates[file] ?: ContextLevel.NONE
     }
 
-    fun setLevel(file: VirtualFile, level: ContextLevel) {
-        if (level == ContextLevel.NONE) {
-            fileStates.remove(file)
-        } else {
-            fileStates[file] = level
+    // Dynamically calculates a directory's state based on its leaves
+    fun getComputedLevel(file: VirtualFile): ContextLevel {
+        if (!file.isDirectory || file.children.isEmpty()) {
+            return getLevel(file)
         }
+
+        dirStateCache[file]?.let { return it }
+
+        var hasFull = false
+        var hasSkeleton = false
+        var hasNone = false
+
+        fun traverse(dir: VirtualFile) {
+            if (hasFull && hasSkeleton && hasNone) return // Early exit, it's mixed
+
+            for (child in dir.children) {
+                if (FileFilterUtil.isIgnored(project, child)) continue
+
+                if (child.isDirectory && child.children.isNotEmpty()) {
+                    traverse(child)
+                } else {
+                    when (getLevel(child)) {
+                        ContextLevel.FULL -> hasFull = true
+                        ContextLevel.SKELETON -> hasSkeleton = true
+                        ContextLevel.NONE -> hasNone = true
+                        else -> {}
+                    }
+                }
+            }
+        }
+
+        traverse(file)
+
+        val result = if (hasFull && !hasSkeleton && !hasNone) ContextLevel.FULL
+        else if (!hasFull && hasSkeleton && !hasNone) ContextLevel.SKELETON
+        else if (!hasFull && !hasSkeleton && hasNone) ContextLevel.NONE
+        else if (!hasFull && !hasSkeleton && !hasNone) ContextLevel.NONE
+        else ContextLevel.MIXED
+
+        dirStateCache[file] = result
+        return result
     }
 
-    // Apply state to a file/folder and all its children
     fun applyStateRecursively(file: VirtualFile, level: ContextLevel) {
-        // UNIFIED FILTER: Respect .gitignore and IDE exclusions
         if (FileFilterUtil.isIgnored(project, file)) return
 
-        setLevel(file, level)
-
         if (file.isDirectory) {
-            file.children.forEach { child ->
-                applyStateRecursively(child, level)
+            fileStates.remove(file) // Folders don't hold state, only leaves do
+            file.children.forEach { applyStateRecursively(it, level) }
+        } else {
+            if (level == ContextLevel.NONE || level == ContextLevel.MIXED) {
+                fileStates.remove(file)
+            } else {
+                fileStates[file] = level
             }
         }
     }
 
-    // Load defaults from .aicontext
     fun loadConfig() {
         val projectDir = project.guessProjectDir() ?: return
         val configFile = projectDir.findChild(".aicontext")
@@ -63,26 +96,21 @@ class ContextState(private val project: Project) {
                 jsonParser.decodeFromString<AiContextConfig>(configText)
             } catch (e: Exception) {
                 thisLogger().warn("Failed to parse .aicontext: ${e.message}")
-                // Fallback to default if their JSON is malformed
                 AiContextConfig(skeleton = listOf("."), full = listOf("README.md"))
             }
         } else {
-            // Out-of-the-box Default Behavior
             AiContextConfig(skeleton = listOf("."), full = listOf("README.md"))
         }
 
-        // 1. Apply Skeletons first
         config.skeleton.forEach { path ->
             val file = if (path == "." || path == "/") projectDir else projectDir.findFileByRelativePath(path)
             if (file != null && file.exists()) applyStateRecursively(file, ContextLevel.SKELETON)
         }
 
-        // 2. Apply Full (overrides Skeletons)
         config.full.forEach { path ->
             val file = if (path == "." || path == "/") projectDir else projectDir.findFileByRelativePath(path)
             if (file != null && file.exists()) applyStateRecursively(file, ContextLevel.FULL)
         }
-        thisLogger().info("Successfully loaded AI Context configuration.")
     }
 
     fun calculateHash(content: String): String {
@@ -90,11 +118,9 @@ class ContextState(private val project: Project) {
         return bytes.joinToString("") { "%02x".format(it) }
     }
 
-    // Add prompt to history safely
     fun addPromptToHistory(prompt: String) {
         val trimmed = prompt.trim()
         if (trimmed.isEmpty()) return
-        // Don't add if it's the exact same as the most recent one
         if (promptHistory.isEmpty() || promptHistory.last() != trimmed) {
             promptHistory.add(trimmed)
         }
@@ -103,6 +129,6 @@ class ContextState(private val project: Project) {
     fun clear() {
         fileStates.clear()
         sentFileHashes.clear()
-        // We intentionally DO NOT clear promptHistory here!
+        dirStateCache.clear()
     }
 }

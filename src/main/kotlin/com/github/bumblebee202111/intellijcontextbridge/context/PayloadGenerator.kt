@@ -20,6 +20,8 @@ object PayloadGenerator {
         val projectDir = project.guessProjectDir()
         val attachments = mutableListOf<AiAttachment>()
 
+        val dedupedFilesTracker = mutableSetOf<VirtualFile>()
+
         val markdownText =  buildString {
             // 1. System Directives
             appendLine("<system_directives>")
@@ -27,7 +29,7 @@ object PayloadGenerator {
             appendLine()
             appendLine("1. **File Requests**: Files marked `(Skeleton)` have their method bodies stripped. If you need the full content of a skeleton, or a file entirely missing from the context, stop generating and output: `REQUEST_FULL: [filepath]`. To request just the signatures of a missing file, output: `REQUEST_SKELETON: [filepath]`.")
             appendLine("2. **Code Output**: When modifying a file, output a markdown code snippet preceded by its exact file path header: `### \uD83D\uDCC4 path/to/file.ext`.")
-            appendLine("3. **Snippet Structure**: Do not rewrite the entire file. Maintain the basic file structure (class and function headers) to provide diff context, but replace unchanged sections with `// ...`.")
+            appendLine("3. **Snippet Structure**: Keep the full class structure and ALL method signatures. Use `// ...` to skip unchanged method bodies AND unchanged blocks inside modified methods. Leave enough surrounding original lines around your edits for accurate diff alignment.")
             appendLine("4. **No Chatty Code**: Explain your reasoning in plain text before the code snippets. Never add conversational comments or changelogs inside the code itself.")
             appendLine("</system_directives>")
             appendLine()
@@ -103,6 +105,7 @@ object PayloadGenerator {
 
                     // 3. Compare Level AND Hash
                     if (previousRecord != null && previousRecord.first == level && previousRecord.second == currentHash) {
+                        dedupedFilesTracker.add(file) // Track the deduped file
                         continue // Omit unchanged file
                     } else {
                         contextState.sentFileHashes[file] = Pair(level, currentHash)
@@ -130,7 +133,9 @@ object PayloadGenerator {
             appendLine("</user_prompt>")
         }
 
-        return AiPayload(text = markdownText, attachments = attachments)
+        val payload = AiPayload(text = markdownText, attachments = attachments)
+        payload.dedupedFiles = dedupedFilesTracker
+        return payload
     }
 
     private fun getMimeType(extension: String): String {

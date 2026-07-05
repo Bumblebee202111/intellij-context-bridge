@@ -1,6 +1,8 @@
 package com.github.bumblebee202111.intellijcontextbridge.context
 
+import com.intellij.openapi.vfs.VirtualFile
 import kotlinx.serialization.Serializable
+import kotlinx.serialization.Transient
 
 @Serializable
 data class AiAttachment(
@@ -13,4 +15,7 @@ data class AiAttachment(
 data class AiPayload(
     val text: String,
     val attachments: List<AiAttachment>
-)
+) {
+    @Transient
+    var dedupedFiles: Set<VirtualFile> = emptySet()
+}
