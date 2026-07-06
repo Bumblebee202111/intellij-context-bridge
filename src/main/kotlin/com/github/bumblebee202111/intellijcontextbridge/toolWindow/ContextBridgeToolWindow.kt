@@ -103,7 +103,7 @@ class ContextBridgeToolWindow(private val project: Project) {
         }
     }
 
-    // Computes directory state instantly using the in-memory TreeModel
+    // Computes directory state instantly using the filtered in-memory TreeModel
     private fun getComputedLevel(node: DefaultMutableTreeNode): ContextLevel {
         val file = node.userObject as? VirtualFile ?: return ContextLevel.NONE
         if (!file.isDirectory) return contextState.getLevel(file)
@@ -185,6 +185,7 @@ class ContextBridgeToolWindow(private val project: Project) {
             }
         }
 
+        // Use the local UI node cache
         tree.cellRenderer = ContextTreeCellRenderer(::getComputedLevel) { file -> lastDedupedFiles.contains(file) }
 
         tree.addMouseListener(object : MouseAdapter() {

@@ -22,53 +22,9 @@ class ContextState(private val project: Project) {
     val promptHistory = mutableListOf<String>()
 
     private val jsonParser = Json { ignoreUnknownKeys = true }
-    private val dirStateCache = mutableMapOf<VirtualFile, ContextLevel>()
 
     fun getLevel(file: VirtualFile): ContextLevel {
         return fileStates[file] ?: ContextLevel.NONE
-    }
-
-    // Dynamically calculates a directory's state based on its leaves
-    fun getComputedLevel(file: VirtualFile): ContextLevel {
-        if (!file.isDirectory || file.children.isEmpty()) {
-            return getLevel(file)
-        }
-
-        dirStateCache[file]?.let { return it }
-
-        var hasFull = false
-        var hasSkeleton = false
-        var hasNone = false
-
-        fun traverse(dir: VirtualFile) {
-            if (hasFull && hasSkeleton && hasNone) return // Early exit, it's mixed
-
-            for (child in dir.children) {
-                if (FileFilterUtil.isIgnored(project, child)) continue
-
-                if (child.isDirectory && child.children.isNotEmpty()) {
-                    traverse(child)
-                } else {
-                    when (getLevel(child)) {
-                        ContextLevel.FULL -> hasFull = true
-                        ContextLevel.SKELETON -> hasSkeleton = true
-                        ContextLevel.NONE -> hasNone = true
-                        else -> {}
-                    }
-                }
-            }
-        }
-
-        traverse(file)
-
-        val result = if (hasFull && !hasSkeleton && !hasNone) ContextLevel.FULL
-        else if (!hasFull && hasSkeleton && !hasNone) ContextLevel.SKELETON
-        else if (!hasFull && !hasSkeleton && hasNone) ContextLevel.NONE
-        else if (!hasFull && !hasSkeleton && !hasNone) ContextLevel.NONE
-        else ContextLevel.MIXED
-
-        dirStateCache[file] = result
-        return result
     }
 
     fun applyStateRecursively(file: VirtualFile, level: ContextLevel) {
@@ -129,6 +85,5 @@ class ContextState(private val project: Project) {
     fun clear() {
         fileStates.clear()
         sentFileHashes.clear()
-        dirStateCache.clear()
     }
 }
