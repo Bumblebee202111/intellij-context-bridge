@@ -11,15 +11,19 @@ import io.ktor.server.websocket.*
 import io.ktor.websocket.*
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.cancel
 import kotlinx.coroutines.launch
 import java.util.*
 import kotlin.time.Duration.Companion.seconds
 
 @Service(Service.Level.APP)
-class ContextBridgeServer(private val scope: CoroutineScope) : Disposable {
+class ContextBridgeServer : Disposable {
+
+    // Safely manage our own scope instead of relying on constructor injection
+    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
 
     private var server: EmbeddedServer<CIOApplicationEngine, CIOApplicationEngine.Configuration>? = null
-
     private val connections = Collections.synchronizedSet(LinkedHashSet<DefaultWebSocketServerSession>())
 
     var onMessageReceived: ((String) -> Unit)? = null
@@ -60,14 +64,13 @@ class ContextBridgeServer(private val scope: CoroutineScope) : Disposable {
             }
         }
 
-        // Use the IDE-managed coroutine scope
-        scope.launch(Dispatchers.IO) {
+        scope.launch {
             try {
                 server?.start(wait = true)
             } catch (e: Exception) {
                 thisLogger().error("Failed to start ContextBridgeServer on port 37373: ${e.message}")
                 server = null
-                onConnectionChanged?.invoke(false) // Prevent UI from waiting infinitely
+                onConnectionChanged?.invoke(false)
             }
         }
     }
@@ -85,6 +88,7 @@ class ContextBridgeServer(private val scope: CoroutineScope) : Disposable {
     }
 
     override fun dispose() {
+        scope.cancel()
         server?.stop(1000, 2000)
         server = null
         connections.clear()

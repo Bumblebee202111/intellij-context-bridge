@@ -7,7 +7,12 @@ import com.github.bumblebee202111.intellijcontextbridge.ui.DiffReceiverPanel
 import com.intellij.openapi.application.ApplicationManager
 import com.intellij.openapi.components.service
 import com.intellij.openapi.project.Project
+import com.intellij.ui.components.JBScrollPane
+import com.intellij.ui.components.JBTabbedPane
+import java.awt.BorderLayout
 import javax.swing.JComponent
+import javax.swing.JPanel
+import javax.swing.JTextArea
 import javax.swing.SwingUtilities
 
 class ContextBridgeToolWindow(private val project: Project) {
@@ -15,11 +20,14 @@ class ContextBridgeToolWindow(private val project: Project) {
     private val server = ApplicationManager.getApplication().getService(ContextBridgeServer::class.java)
 
     fun getContent(): JComponent {
-        // Initialize State and Server
+        try {
+            // Lazy load these inside the try/catch so if they crash, we catch it!
+            val contextState = project.service<ContextState>()
+            val server = ApplicationManager.getApplication().getService(ContextBridgeServer::class.java)
         contextState.loadConfig()
         server.start()
 
-        val tabbedPane = com.intellij.ui.components.JBTabbedPane()
+        val tabbedPane = JBTabbedPane()
 
         val composerPanel = ContextComposerPanel(project)
         val receiverPanel = DiffReceiverPanel(project)
@@ -35,6 +43,17 @@ class ContextBridgeToolWindow(private val project: Project) {
             }
         }
 
-        return tabbedPane
+            return tabbedPane
+
+        } catch (e: Throwable) {
+            // If the UI ever crashes again, it will print the stack trace on the screen instead of a blank panel!
+            val errorPanel = JPanel(BorderLayout())
+            val errorArea = JTextArea("CRASH DETECTED:\n\n${e.stackTraceToString()}").apply {
+                isEditable = false
+                foreground = java.awt.Color.RED
+            }
+            errorPanel.add(JBScrollPane(errorArea), BorderLayout.CENTER)
+            return errorPanel
+        }
     }
 }
