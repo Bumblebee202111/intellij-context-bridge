@@ -1,5 +1,6 @@
 package com.github.bumblebee202111.intellijcontextbridge.server
 
+import com.intellij.openapi.Disposable
 import com.intellij.openapi.components.Service
 import com.intellij.openapi.diagnostic.thisLogger
 import io.ktor.server.application.*
@@ -15,19 +16,17 @@ import java.util.*
 import kotlin.time.Duration.Companion.seconds
 
 @Service(Service.Level.APP)
-class ContextBridgeServer {
+class ContextBridgeServer(private val scope: CoroutineScope) : Disposable {
 
     private var server: EmbeddedServer<CIOApplicationEngine, CIOApplicationEngine.Configuration>? = null
-    
-    // Thread-safe set to keep track of connected browsers
+
     private val connections = Collections.synchronizedSet(LinkedHashSet<DefaultWebSocketServerSession>())
 
-    // Callbacks to update the IntelliJ UI
     var onMessageReceived: ((String) -> Unit)? = null
     var onConnectionChanged: ((Boolean) -> Unit)? = null
 
     fun start() {
-        if (server != null) return // Already running
+        if (server != null) return
 
         server = embeddedServer(CIO, port = 37373, host = "127.0.0.1") {
             install(WebSockets) {
@@ -61,18 +60,20 @@ class ContextBridgeServer {
             }
         }
 
-        // Start the server in the background
-        CoroutineScope(Dispatchers.IO).launch {
+        // Use the IDE-managed coroutine scope
+        scope.launch(Dispatchers.IO) {
             try {
                 server?.start(wait = true)
             } catch (e: Exception) {
-                thisLogger().error("Failed to start ContextBridgeServer: ${e.message}")
+                thisLogger().error("Failed to start ContextBridgeServer on port 37373: ${e.message}")
+                server = null
+                onConnectionChanged?.invoke(false) // Prevent UI from waiting infinitely
             }
         }
     }
 
     fun broadcast(message: String) {
-        CoroutineScope(Dispatchers.IO).launch {
+        scope.launch(Dispatchers.IO) {
             connections.forEach {
                 try {
                     it.send(message)
@@ -83,7 +84,7 @@ class ContextBridgeServer {
         }
     }
 
-    fun stop() {
+    override fun dispose() {
         server?.stop(1000, 2000)
         server = null
         connections.clear()
