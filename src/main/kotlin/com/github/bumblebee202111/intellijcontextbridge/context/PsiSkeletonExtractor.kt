@@ -8,14 +8,14 @@ import org.jetbrains.kotlin.psi.*
 
 object PsiSkeletonExtractor {
 
-    fun extract(project: Project, file: VirtualFile): String {
+    fun extract(project: Project, file: VirtualFile): String? {
         val psiManager = PsiManager.getInstance(project)
-        val psiFile = psiManager.findFile(file) ?: return file.path
+        val psiFile = psiManager.findFile(file) ?: return null
 
         return when (psiFile) {
             is KtFile -> extractKotlin(psiFile)
             is PsiJavaFile -> extractJava(psiFile)
-            else -> file.path // Fallback for non-code files (Name-Only)
+            else -> null // Fallback for non-code files
         }
     }
 
@@ -45,16 +45,17 @@ object PsiSkeletonExtractor {
     }
 
     private fun processKtDeclaration(declaration: KtDeclaration, indent: String = ""): String? {
-        // Strip private and internal members
-        if (declaration.hasModifier(KtTokens.PRIVATE_KEYWORD) || declaration.hasModifier(KtTokens.INTERNAL_KEYWORD)) {
-            return null
-        }
+        // Strip private members (Internal is kept for intra-module LLM context)
+        if (declaration.hasModifier(KtTokens.PRIVATE_KEYWORD)) return null
 
         val doc = declaration.docComment?.text?.let { "$indent$it\n" } ?: ""
 
         return when (declaration) {
-            is KtClassOrObject -> {
-                val headerText = declaration.text.substringBefore("{").trim()
+            is KtEnumEntry -> {
+                val body = declaration.body
+                val headerEnd = body?.textRange?.startOffset ?: declaration.textRange.endOffset
+                val headerText = declaration.containingFile.text.substring(declaration.textRange.startOffset, headerEnd).trimEnd()
+
                 val children = declaration.body?.declarations?.mapNotNull { processKtDeclaration(it, "$indent    ") } ?: emptyList()
 
                 if (children.isEmpty()) {
@@ -63,40 +64,65 @@ object PsiSkeletonExtractor {
                     "$doc$indent$headerText {\n${children.joinToString("\n\n")}\n$indent}"
                 }
             }
-            is KtNamedFunction -> {
-                var sig = declaration.text
-                declaration.bodyExpression?.let { body ->
-                    val offset = body.textRange.startOffset - declaration.textRange.startOffset
-                    sig = sig.substring(0, offset)
+            is KtClassOrObject -> {
+                val body = declaration.body
+                val headerEnd = body?.textRange?.startOffset ?: declaration.textRange.endOffset
+                val headerText = declaration.containingFile.text.substring(declaration.textRange.startOffset, headerEnd).trim()
+
+                val children = declaration.body?.declarations?.mapNotNull { processKtDeclaration(it, "$indent    ") } ?: emptyList()
+
+                if (children.isEmpty()) {
+                    "$doc$indent$headerText {}"
+                } else {
+                    "$doc$indent$headerText {\n${children.joinToString("\n\n")}\n$indent}"
                 }
-                sig = sig.trimEnd('=', ' ', '\n', '{')
+            }
+            is KtNamedFunction -> {
+                val body = declaration.bodyExpression
+                val equalsToken = declaration.node.findChildByType(KtTokens.EQ)?.psi
+
+                // Safely find the exact AST boundary of the body or equals sign
+                val endOffset = equalsToken?.textRange?.startOffset ?: body?.textRange?.startOffset ?: declaration.textRange.endOffset
+                val sig = declaration.containingFile.text.substring(declaration.textRange.startOffset, endOffset).trimEnd()
+
+                "$doc$indent$sig"
+            }
+            is KtSecondaryConstructor -> {
+                val body = declaration.bodyExpression
+                val endOffset = body?.textRange?.startOffset ?: declaration.textRange.endOffset
+                val sig = declaration.containingFile.text.substring(declaration.textRange.startOffset, endOffset).trimEnd()
                 "$doc$indent$sig"
             }
             is KtProperty -> {
-                var sig = declaration.text
+                val initializer = declaration.initializer
+                val delegate = declaration.delegateExpression
+                val isConst = declaration.hasModifier(KtTokens.CONST_KEYWORD)
+                val hasExplicitType = declaration.typeReference != null
 
-                // SMART STRIP: If the type is explicitly declared, we don't need the initializer.
-                // This prevents leaking massive blocks like `callbackFlow { ... }`
-                if (declaration.typeReference != null) {
-                    declaration.initializer?.let { sig = sig.replace(it.text, "") }
-                }
-                // (If typeReference is null, we keep the initializer so the AI can infer the type)
+                var endOffset = declaration.textRange.endOffset
 
-                // Replace delegates with "..." to save space
-                declaration.delegateExpression?.let { sig = sig.replace(it.text, "...") }
-
-                // Strip custom getter/setter bodies
-                declaration.accessors.forEach { acc ->
-                    acc.bodyExpression?.let { body ->
-                        sig = sig.replace(body.text, "")
+                // Strip initializer ONLY if it's not a const AND has an explicit type
+                if (!isConst && hasExplicitType) {
+                    if (initializer != null) {
+                        val equalsToken = declaration.node.findChildByType(KtTokens.EQ)?.psi
+                        if (equalsToken != null) endOffset = equalsToken.textRange.startOffset
+                    } else if (delegate != null) {
+                        val byToken = declaration.node.findChildByType(KtTokens.BY_KEYWORD)?.psi
+                        if (byToken != null) endOffset = byToken.textRange.startOffset
                     }
                 }
 
-                // Clean up trailing equals signs, spaces, or braces
-                sig = sig.trimEnd('=', ' ', '\n', '{')
+                // Strip custom getter/setter bodies by finding the first accessor
+                val firstAccessor = declaration.accessors.firstOrNull()
+                if (firstAccessor != null && firstAccessor.textRange.startOffset < endOffset) {
+                    endOffset = firstAccessor.textRange.startOffset
+                }
+
+                val sig = declaration.containingFile.text.substring(declaration.textRange.startOffset, endOffset).trimEnd()
                 "$doc$indent$sig"
             }
-            else -> "$doc$indent${declaration.text}"
+            is KtAnonymousInitializer -> null // Purely internal implementation logic, omit entirely
+            else -> "$doc$indent${declaration.text}" // Fallback for TypeAliases, etc.
         }
     }
 
@@ -120,8 +146,8 @@ object PsiSkeletonExtractor {
     }
 
     private fun processJavaClass(psiClass: PsiClass, indent: String): String? {
-        // Strip private and package-private
-        if (psiClass.hasModifierProperty(PsiModifier.PRIVATE) || psiClass.hasModifierProperty(PsiModifier.PACKAGE_LOCAL)) return null
+        // Strip private (Package-private is kept for intra-module LLM context)
+        if (psiClass.hasModifierProperty(PsiModifier.PRIVATE)) return null
 
         val doc = psiClass.docComment?.text?.let { "$indent$it\n" } ?: ""
 
@@ -136,28 +162,36 @@ object PsiSkeletonExtractor {
         val children = mutableListOf<String>()
 
         psiClass.fields.forEach { field ->
-            if (!field.hasModifierProperty(PsiModifier.PRIVATE) && !field.hasModifierProperty(PsiModifier.PACKAGE_LOCAL)) {
+            if (!field.hasModifierProperty(PsiModifier.PRIVATE)) {
                 val fDoc = field.docComment?.text?.let { "$indent    $it\n" } ?: ""
-                var fText = field.text
-                field.initializer?.let { init ->
-                    val offset = init.textRange.startOffset - field.textRange.startOffset
-                    fText = fText.substring(0, offset)
+
+                val initializer = field.initializer
+                val isStaticFinal = field.hasModifierProperty(PsiModifier.STATIC) && field.hasModifierProperty(PsiModifier.FINAL)
+
+                var endOffset = field.textRange.endOffset
+
+                // Strip initializer ONLY if it is not a constant
+                if (initializer != null && !isStaticFinal) {
+                    val equalsToken = field.children.find { it is PsiJavaToken && it.tokenType == JavaTokenType.EQ }
+                    if (equalsToken != null) {
+                        endOffset = equalsToken.textRange.startOffset
+                    }
                 }
-                fText = fText.trimEnd('=', ' ')
+
+                var fText = field.containingFile.text.substring(field.textRange.startOffset, endOffset).trimEnd()
                 if (!fText.endsWith(";")) fText += ";"
                 children.add("$fDoc$indent    $fText")
             }
         }
 
         psiClass.methods.forEach { method ->
-            if (!method.hasModifierProperty(PsiModifier.PRIVATE) && !method.hasModifierProperty(PsiModifier.PACKAGE_LOCAL)) {
+            if (!method.hasModifierProperty(PsiModifier.PRIVATE)) {
                 val mDoc = method.docComment?.text?.let { "$indent    $it\n" } ?: ""
-                var mText = method.text
-                method.body?.let { body ->
-                    val offset = body.textRange.startOffset - method.textRange.startOffset
-                    mText = mText.substring(0, offset)
-                }
-                mText = mText.trimEnd(' ', '\n', '{')
+
+                val body = method.body
+                val endOffset = body?.textRange?.startOffset ?: method.textRange.endOffset
+
+                var mText = method.containingFile.text.substring(method.textRange.startOffset, endOffset).trimEnd()
                 if (!mText.endsWith(";")) mText += ";"
                 children.add("$mDoc$indent    $mText")
             }

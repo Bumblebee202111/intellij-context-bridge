@@ -86,16 +86,21 @@ object PayloadGenerator {
 
                 // --- TEXT/CODE HANDLING (with Deduplication) ---
                 var contentToAppend: String? = null
+                var isNonCodeSkeleton = false
                 try {
                     // 1. Extract the content based on the level
                     val extractedText = if (level == ContextLevel.FULL) {
                         VfsUtilCore.loadText(file)
                     } else {
-                        PsiSkeletonExtractor.extract(project, file)
+                        val skeleton = PsiSkeletonExtractor.extract(project, file)
+                        if (skeleton == null) {
+                            isNonCodeSkeleton = true
+                        }
+                        skeleton
                     }
 
                     // 2. Hash the extracted text
-                    val currentHash = contextState.calculateHash(extractedText)
+                    val currentHash = contextState.calculateHash(extractedText ?: "OMITTED_NON_CODE_SKELETON")
                     val previousRecord = contextState.sentFileHashes[file]
 
                     // 3. Compare Level AND Hash
@@ -108,6 +113,12 @@ object PayloadGenerator {
                     }
                 } catch (e: Exception) {
                     contentToAppend = "// Error reading file: ${e.message}"
+                }
+
+                if (isNonCodeSkeleton) {
+                    appendLine("### \uD83D\uDCC4 `$relativePath` (Skeleton)")
+                    appendLine("*(File exists, contents omitted in Skeleton mode)*\n")
+                    continue
                 }
 
                 if (contentToAppend == null) continue
