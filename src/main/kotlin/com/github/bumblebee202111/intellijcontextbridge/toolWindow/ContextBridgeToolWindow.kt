@@ -13,6 +13,8 @@ import com.intellij.diff.DiffManager
 import com.intellij.diff.requests.SimpleDiffRequest
 import com.intellij.icons.AllIcons
 import com.intellij.openapi.application.ApplicationManager
+import com.intellij.openapi.application.ModalityState
+import com.intellij.openapi.application.ReadAction
 import com.intellij.openapi.components.service
 import com.intellij.openapi.fileEditor.FileDocumentManager
 import com.intellij.openapi.fileEditor.FileEditorManager
@@ -33,6 +35,7 @@ import com.intellij.ui.components.JBList
 import com.intellij.ui.components.JBScrollPane
 import com.intellij.ui.components.JBTextArea
 import com.intellij.ui.treeStructure.Tree
+import com.intellij.util.concurrency.AppExecutorUtil
 import com.intellij.util.ui.JBUI
 import com.intellij.util.ui.tree.TreeUtil
 import kotlinx.serialization.encodeToString
@@ -359,25 +362,32 @@ class ContextBridgeToolWindow(private val project: Project) {
                 contextState.addPromptToHistory(promptText)
                 historyIndex = -1
                 draftPrompt = ""
-                promptArea.text = ""
-
-                val payloadObj = PayloadGenerator.generatePayload(project, contextState, promptText)
-                lastDedupedFiles = payloadObj.dedupedFiles
-                refreshTree()
-
-                CopyPasteManager.getInstance().setContents(StringSelection(payloadObj.text))
-
-                if (payloadObj.attachments.isNotEmpty()) {
-                    Messages.showWarningDialog(
-                        "You copied ${payloadObj.attachments.size} media file(s). They cannot be copied to the clipboard.",
-                        "Media Files Skipped"
-                    )
-                }
 
                 val originalText = text
-                text = "Copied!"
+                text = "Generating..."
                 isEnabled = false
-                Timer(1500) { text = originalText; isEnabled = true }.apply { isRepeats = false }.start()
+
+                ReadAction.nonBlocking<com.github.bumblebee202111.intellijcontextbridge.context.AiPayload> {
+                    PayloadGenerator.generatePayload(project, contextState, promptText)
+                }
+                .finishOnUiThread(ModalityState.defaultModalityState()) { payloadObj ->
+                    lastDedupedFiles = payloadObj.dedupedFiles
+                    refreshTree()
+
+                    CopyPasteManager.getInstance().setContents(StringSelection(payloadObj.text))
+
+                    if (payloadObj.attachments.isNotEmpty()) {
+                        Messages.showWarningDialog(
+                            "You copied ${payloadObj.attachments.size} media file(s). They cannot be copied to the clipboard.",
+                            "Media Files Skipped"
+                        )
+                    }
+
+                    promptArea.text = ""
+                    text = "Copied!"
+                    Timer(1500) { text = originalText; isEnabled = true }.apply { isRepeats = false }.start()
+                }
+                .submit(AppExecutorUtil.getAppExecutorService())
             }
         }
 
@@ -386,19 +396,26 @@ class ContextBridgeToolWindow(private val project: Project) {
             contextState.addPromptToHistory(promptText)
             historyIndex = -1
             draftPrompt = ""
-            promptArea.text = ""
-
-            val payloadObj = PayloadGenerator.generatePayload(project, contextState, promptText)
-            lastDedupedFiles = payloadObj.dedupedFiles
-            refreshTree()
-
-            val jsonString = Json.encodeToString(payloadObj)
-            server.broadcast(jsonString)
 
             val originalText = sendWsButton.text
-            sendWsButton.text = "Sent!"
+            sendWsButton.text = "Generating..."
             sendWsButton.isEnabled = false
-            Timer(1500) { sendWsButton.text = originalText; sendWsButton.isEnabled = true }.apply { isRepeats = false }.start()
+
+            ReadAction.nonBlocking<com.github.bumblebee202111.intellijcontextbridge.context.AiPayload> {
+                PayloadGenerator.generatePayload(project, contextState, promptText)
+            }
+            .finishOnUiThread(ModalityState.defaultModalityState()) { payloadObj ->
+                lastDedupedFiles = payloadObj.dedupedFiles
+                refreshTree()
+
+                val jsonString = Json.encodeToString(payloadObj)
+                server.broadcast(jsonString)
+
+                sendWsButton.text = "Sent!"
+                promptArea.text = ""
+                Timer(1500) { sendWsButton.text = originalText; sendWsButton.isEnabled = true }.apply { isRepeats = false }.start()
+            }
+            .submit(AppExecutorUtil.getAppExecutorService())
         }
 
         actionButtonPanel.add(clearButton)
