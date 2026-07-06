@@ -2,6 +2,7 @@ package com.github.bumblebee202111.intellijcontextbridge.context
 
 import com.github.bumblebee202111.intellijcontextbridge.state.ContextLevel
 import com.github.bumblebee202111.intellijcontextbridge.state.ContextState
+import com.github.bumblebee202111.intellijcontextbridge.utils.ContextCapabilityUtil
 import com.intellij.openapi.project.Project
 import com.intellij.openapi.project.guessProjectDir
 import com.intellij.openapi.vfs.VfsUtilCore
@@ -9,12 +10,6 @@ import com.intellij.openapi.vfs.VirtualFile
 import java.util.Base64
 
 object PayloadGenerator {
-
-    // List of extensions we treat as text. Everything else is treated as a binary/attachment.
-    private val textExtensions = setOf(
-        "kt", "kts", "java", "xml", "json", "md", "gradle", "yaml", "yml",
-        "sh", "py", "js", "ts", "html", "htm", "css", "txt", "csv", "properties", "pro"
-    )
 
     fun generatePayload(project: Project, contextState: ContextState, userPrompt: String): AiPayload {
         val projectDir = project.guessProjectDir()
@@ -57,7 +52,7 @@ object PayloadGenerator {
                 }
 
                 val extension = file.extension?.lowercase() ?: ""
-                val isTextFile = textExtensions.contains(extension) || !file.fileType.isBinary
+                val isTextFile = ContextCapabilityUtil.textExtensions.contains(extension) || !file.fileType.isBinary
 
                 if (!isTextFile) {
                     val mime = getMimeType(extension)

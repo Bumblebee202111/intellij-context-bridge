@@ -7,6 +7,7 @@ import com.github.bumblebee202111.intellijcontextbridge.server.ContextBridgeServ
 import com.github.bumblebee202111.intellijcontextbridge.state.ContextLevel
 import com.github.bumblebee202111.intellijcontextbridge.state.ContextState
 import com.github.bumblebee202111.intellijcontextbridge.ui.ContextTreeCellRenderer
+import com.github.bumblebee202111.intellijcontextbridge.utils.ContextCapabilityUtil
 import com.github.bumblebee202111.intellijcontextbridge.utils.FileFilterUtil
 import com.intellij.diff.DiffContentFactory
 import com.intellij.diff.DiffManager
@@ -106,7 +107,9 @@ class ContextBridgeToolWindow(private val project: Project) {
     // Computes directory state instantly using the filtered in-memory TreeModel
     private fun getComputedLevel(node: DefaultMutableTreeNode): ContextLevel {
         val file = node.userObject as? VirtualFile ?: return ContextLevel.NONE
-        if (!file.isDirectory) return contextState.getLevel(file)
+
+        // FIX: If it's a file OR an empty directory, ask ContextState directly
+        if (!file.isDirectory || file.children.isEmpty()) return contextState.getLevel(file)
 
         nodeStateCache[node]?.let { return it }
 
@@ -206,11 +209,15 @@ class ContextBridgeToolWindow(private val project: Project) {
                     if (e.clickCount == 1) {
                         if (e.x >= bounds.x && e.x < bounds.x + 22) {
                             val currentLevel = getComputedLevel(node)
-                            val nextLevel = when (currentLevel) {
-                                ContextLevel.NONE, ContextLevel.MIXED -> ContextLevel.FULL
-                                ContextLevel.FULL -> ContextLevel.SKELETON
-                                ContextLevel.SKELETON -> ContextLevel.FULL
+
+                            val maxLevel = if (file.isDirectory && file.children.isNotEmpty()) {
+                                ContextLevel.FULL // Populated folders can cycle FULL to pass it down to children
+                            } else {
+                                ContextCapabilityUtil.getMaxLevel(file)
                             }
+
+                            val nextLevel = ContextCapabilityUtil.getNextLevel(currentLevel, maxLevel)
+
                             applyStateToNode(node, nextLevel)
                             if (showSelectedOnly) refreshTree() else tree.repaint()
                             e.consume()

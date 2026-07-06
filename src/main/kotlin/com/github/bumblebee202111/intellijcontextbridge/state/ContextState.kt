@@ -1,6 +1,7 @@
 package com.github.bumblebee202111.intellijcontextbridge.state
 
 import com.github.bumblebee202111.intellijcontextbridge.context.AiContextConfig
+import com.github.bumblebee202111.intellijcontextbridge.utils.ContextCapabilityUtil
 import com.github.bumblebee202111.intellijcontextbridge.utils.FileFilterUtil
 import com.intellij.openapi.components.Service
 import com.intellij.openapi.diagnostic.thisLogger
@@ -31,13 +32,27 @@ class ContextState(private val project: Project) {
         if (FileFilterUtil.isIgnored(project, file)) return
 
         if (file.isDirectory) {
-            fileStates.remove(file) // Folders don't hold state, only leaves do
-            file.children.forEach { applyStateRecursively(it, level) }
+            if (file.children.isEmpty()) {
+                // Empty directories can hold state, but are capped at SKELETON
+                val cappedLevel = if (level == ContextLevel.FULL) ContextLevel.SKELETON else level
+                if (cappedLevel == ContextLevel.NONE || cappedLevel == ContextLevel.MIXED) {
+                    fileStates.remove(file)
+                } else {
+                    fileStates[file] = cappedLevel
+                }
+            } else {
+                fileStates.remove(file) // Populated folders don't hold state, only leaves do
+                file.children.forEach { applyStateRecursively(it, level) }
+            }
         } else {
-            if (level == ContextLevel.NONE || level == ContextLevel.MIXED) {
+            // Leaf nodes cap based on their capability
+            val maxLevel = ContextCapabilityUtil.getMaxLevel(file)
+            val cappedLevel = if (level == ContextLevel.FULL && maxLevel == ContextLevel.SKELETON) ContextLevel.SKELETON else level
+
+            if (cappedLevel == ContextLevel.NONE || cappedLevel == ContextLevel.MIXED) {
                 fileStates.remove(file)
             } else {
-                fileStates[file] = level
+                fileStates[file] = cappedLevel
             }
         }
     }
