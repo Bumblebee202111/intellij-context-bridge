@@ -28,6 +28,7 @@ import com.intellij.ui.treeStructure.Tree
 import com.intellij.util.concurrency.AppExecutorUtil
 import com.intellij.util.ui.JBUI
 import com.intellij.util.ui.tree.TreeUtil
+import org.jetbrains.concurrency.CancellablePromise
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
 import java.awt.BorderLayout
@@ -37,6 +38,7 @@ import java.awt.event.KeyAdapter
 import java.awt.event.KeyEvent
 import java.awt.event.MouseAdapter
 import java.awt.event.MouseEvent
+import java.util.concurrent.ConcurrentHashMap
 import javax.swing.*
 import javax.swing.event.DocumentEvent
 import javax.swing.tree.DefaultMutableTreeNode
@@ -50,7 +52,12 @@ class ContextComposerPanel(private val project: Project) {
     private var historyIndex = -1
     private var draftPrompt = ""
     private var lastDedupedFiles = emptySet<VirtualFile>()
-    private val nodeStateCache = mutableMapOf<DefaultMutableTreeNode, ContextLevel>()
+
+    // Upgraded to ConcurrentHashMap for thread-safe access between background builder and EDT renderer
+    private val nodeStateCache = ConcurrentHashMap<DefaultMutableTreeNode, ContextLevel>()
+
+    // Tracks the active tree-building background task so we can cancel it if the user types quickly
+    private var treeUpdateJob: CancellablePromise<*>? = null
 
     val content: JPanel = JPanel(BorderLayout())
 
@@ -64,17 +71,31 @@ class ContextComposerPanel(private val project: Project) {
         }
 
         fun refreshTree() {
-            nodeStateCache.clear()
-            val rootDir = project.guessProjectDir()
-            val rootNode = if (rootDir != null) buildFileTree(rootDir, showSelectedOnly, searchQuery) ?: DefaultMutableTreeNode("No Project Root") else DefaultMutableTreeNode("No Project Root")
-            treeModel.setRoot(rootNode)
-            treeModel.reload()
+            // 1. Cancel any ongoing tree-building task to prevent CPU thrashing
+            treeUpdateJob?.cancel()
 
-            if (searchQuery.isNotBlank()) {
-                TreeUtil.expandAll(tree)
-            } else {
-                expandExplicitNodes(tree, rootNode)
+            // 2. Offload the O(N) file system traversal to a background thread
+            treeUpdateJob = ReadAction.nonBlocking<DefaultTreeModel> {
+                nodeStateCache.clear() // Clear cache for the new tree
+                val rootDir = project.guessProjectDir()
+                val rootNode = if (rootDir != null) {
+                    buildFileTree(rootDir, showSelectedOnly, searchQuery) ?: DefaultMutableTreeNode("No Project Root")
+                } else {
+                    DefaultMutableTreeNode("No Project Root")
+                }
+                DefaultTreeModel(rootNode)
             }
+                .expireWith(project) // Safely abort if the project is closed
+                .finishOnUiThread(ModalityState.defaultModalityState()) { newModel ->
+                    // 3. Apply the fully built tree to the UI on the EDT
+                    tree.model = newModel
+                    if (searchQuery.isNotBlank()) {
+                        TreeUtil.expandAll(tree)
+                    } else {
+                        expandExplicitNodes(tree, newModel.root as DefaultMutableTreeNode)
+                    }
+                }
+                .submit(AppExecutorUtil.getAppExecutorService())
         }
 
         tree.cellRenderer = ContextTreeCellRenderer(::getComputedLevel) { file -> lastDedupedFiles.contains(file) }
