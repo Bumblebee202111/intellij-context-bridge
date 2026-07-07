@@ -38,6 +38,8 @@ import java.awt.event.KeyAdapter
 import java.awt.event.KeyEvent
 import java.awt.event.MouseAdapter
 import java.awt.event.MouseEvent
+import java.text.SimpleDateFormat
+import java.util.Date
 import java.util.concurrent.ConcurrentHashMap
 import javax.swing.*
 import javax.swing.event.DocumentEvent
@@ -53,51 +55,23 @@ class ContextComposerPanel(private val project: Project) {
     private var draftPrompt = ""
     private var lastDedupedFiles = emptySet<VirtualFile>()
 
-    // Upgraded to ConcurrentHashMap for thread-safe access between background builder and EDT renderer
     private val nodeStateCache = ConcurrentHashMap<DefaultMutableTreeNode, ContextLevel>()
-
-    // Tracks the active tree-building background task so we can cancel it if the user types quickly
     private var treeUpdateJob: CancellablePromise<*>? = null
+
+    private val dateFormat = SimpleDateFormat("HH:mm:ss")
+    private val promptArea = JBTextArea()
+    private val undoButton = JButton("Undo Last")
+
+    private var showSelectedOnly = false
+    private var searchQuery = ""
+    private val treeModel = DefaultTreeModel(DefaultMutableTreeNode("Loading..."))
+    private val tree = Tree(treeModel).apply {
+        toolTipText = "Left-click icon: Toggle. Right-click row: Clear. Double-click: Open."
+    }
 
     val content: JPanel = JPanel(BorderLayout())
 
     init {
-        var showSelectedOnly = false
-        var searchQuery = ""
-
-        val treeModel = DefaultTreeModel(DefaultMutableTreeNode("Loading..."))
-        val tree = Tree(treeModel).apply {
-            toolTipText = "Left-click icon: Toggle. Right-click row: Clear. Double-click: Open."
-        }
-
-        fun refreshTree() {
-            // 1. Cancel any ongoing tree-building task to prevent CPU thrashing
-            treeUpdateJob?.cancel()
-
-            // 2. Offload the O(N) file system traversal to a background thread
-            treeUpdateJob = ReadAction.nonBlocking<DefaultTreeModel> {
-                nodeStateCache.clear() // Clear cache for the new tree
-                val rootDir = project.guessProjectDir()
-                val rootNode = if (rootDir != null) {
-                    buildFileTree(rootDir, showSelectedOnly, searchQuery) ?: DefaultMutableTreeNode("No Project Root")
-                } else {
-                    DefaultMutableTreeNode("No Project Root")
-                }
-                DefaultTreeModel(rootNode)
-            }
-                .expireWith(project) // Safely abort if the project is closed
-                .finishOnUiThread(ModalityState.defaultModalityState()) { newModel ->
-                    // 3. Apply the fully built tree to the UI on the EDT
-                    tree.model = newModel
-                    if (searchQuery.isNotBlank()) {
-                        TreeUtil.expandAll(tree)
-                    } else {
-                        expandExplicitNodes(tree, newModel.root as DefaultMutableTreeNode)
-                    }
-                }
-                .submit(AppExecutorUtil.getAppExecutorService())
-        }
-
         tree.cellRenderer = ContextTreeCellRenderer(::getComputedLevel) { file -> lastDedupedFiles.contains(file) }
 
         tree.addMouseListener(object : MouseAdapter() {
@@ -109,7 +83,7 @@ class ContextComposerPanel(private val project: Project) {
 
                 if (SwingUtilities.isRightMouseButton(e)) {
                     applyStateToNode(node, ContextLevel.NONE)
-                    if (showSelectedOnly) refreshTree() else {
+                    if (showSelectedOnly) refreshUi() else {
                         tree.repaint()
                         autoCollapse(tree, node, path)
                     }
@@ -128,7 +102,7 @@ class ContextComposerPanel(private val project: Project) {
                             val nextLevel = ContextCapabilityUtil.getNextLevel(currentLevel, maxLevel)
                             
                             applyStateToNode(node, nextLevel)
-                            if (showSelectedOnly) refreshTree() else tree.repaint()
+                            if (showSelectedOnly) refreshUi() else tree.repaint()
                             e.consume()
                         }
                     } else if (e.clickCount == 2) {
@@ -164,7 +138,7 @@ class ContextComposerPanel(private val project: Project) {
                     }
                 }
                 if (stateChanged) {
-                    if (showSelectedOnly) refreshTree() else tree.repaint()
+                    if (showSelectedOnly) refreshUi() else tree.repaint()
                     e.consume()
                 }
             }
@@ -181,7 +155,7 @@ class ContextComposerPanel(private val project: Project) {
                     val file = editor?.document?.let { FileDocumentManager.getInstance().getFile(it) }
                     if (file != null) {
                         contextState.applyStateRecursively(file, ContextLevel.FULL)
-                        refreshTree()
+                        refreshUi()
                     } else {
                         Messages.showInfoMessage("No active editor found.", "Add Active File")
                     }
@@ -190,7 +164,7 @@ class ContextComposerPanel(private val project: Project) {
 
             val filterToggle = JToggleButton(AllIcons.General.Filter).apply {
                 toolTipText = "Show Selected Context Only"
-                addActionListener { showSelectedOnly = isSelected; refreshTree() }
+                addActionListener { showSelectedOnly = isSelected; refreshUi() }
             }
 
             add(addActiveFileBtn)
@@ -206,7 +180,7 @@ class ContextComposerPanel(private val project: Project) {
                     searchTimer?.stop()
                     searchTimer = Timer(300) {
                         searchQuery = text.trim()
-                        refreshTree()
+                        refreshUi()
                     }.apply { isRepeats = false; start() }
                 }
             })
@@ -219,7 +193,7 @@ class ContextComposerPanel(private val project: Project) {
         treeContainer.add(JBScrollPane(tree), BorderLayout.CENTER)
 
         val bottomPanel = JPanel(BorderLayout()).apply { border = JBUI.Borders.empty(5) }
-        val promptArea = JBTextArea().apply {
+        promptArea.apply {
             rows = 4
             lineWrap = true
             wrapStyleWord = true
@@ -229,7 +203,7 @@ class ContextComposerPanel(private val project: Project) {
                 override fun keyPressed(e: KeyEvent) {
                     val isModifierDown = e.isControlDown || e.isMetaDown
                     if (isModifierDown && e.keyCode == KeyEvent.VK_UP) {
-                        val history = contextState.promptHistory
+                        val history = contextState.getPromptHistory()
                         if (history.isEmpty()) return
 
                         if (historyIndex == -1) {
@@ -242,7 +216,7 @@ class ContextComposerPanel(private val project: Project) {
                         }
                         e.consume()
                     } else if (isModifierDown && e.keyCode == KeyEvent.VK_DOWN) {
-                        val history = contextState.promptHistory
+                        val history = contextState.getPromptHistory()
                         if (historyIndex != -1) {
                             if (historyIndex < history.size - 1) {
                                 historyIndex++
@@ -259,24 +233,37 @@ class ContextComposerPanel(private val project: Project) {
         }
         bottomPanel.add(JBScrollPane(promptArea), BorderLayout.CENTER)
 
-        val actionButtonPanel = JPanel(java.awt.GridLayout(1, 3, 5, 0)).apply { border = JBUI.Borders.emptyTop(5) }
+        val actionButtonPanel = JPanel(java.awt.GridLayout(1, 4, 5, 0)).apply { border = JBUI.Borders.emptyTop(5) }
 
         val clearButton = JButton("New Chat").apply {
             addActionListener {
                 contextState.clear()
                 contextState.loadConfig()
-                lastDedupedFiles = emptySet()
                 promptArea.text = ""
                 historyIndex = -1
                 draftPrompt = ""
-                refreshTree()
+                refreshUi()
+            }
+        }
+
+        undoButton.apply {
+            addActionListener {
+                val turn = contextState.removeLastTurn()
+                if (turn != null) {
+                    promptArea.text = turn.prompt
+                    refreshUi()
+
+                    val originalText = text
+                    text = "Undone!"
+                    isEnabled = false
+                    Timer(1500) { text = originalText; updateUndoButton() }.apply { isRepeats = false }.start()
+                }
             }
         }
 
         val copyButton = JButton("Copy").apply {
             addActionListener {
                 val promptText = promptArea.text
-                contextState.addPromptToHistory(promptText)
                 historyIndex = -1
                 draftPrompt = ""
                 
@@ -288,8 +275,9 @@ class ContextComposerPanel(private val project: Project) {
                     PayloadGenerator.generatePayload(project, contextState, promptText)
                 }
                 .finishOnUiThread(ModalityState.defaultModalityState()) { payloadObj ->
-                    lastDedupedFiles = payloadObj.dedupedFiles
-                    refreshTree()
+                    payloadObj.turn?.let { contextState.addTurn(it) }
+
+                    refreshUi()
 
                     CopyPasteManager.getInstance().setContents(StringSelection(payloadObj.text))
 
@@ -314,7 +302,6 @@ class ContextComposerPanel(private val project: Project) {
             
             addActionListener {
                 val promptText = promptArea.text
-                contextState.addPromptToHistory(promptText)
                 historyIndex = -1
                 draftPrompt = ""
                 
@@ -326,8 +313,9 @@ class ContextComposerPanel(private val project: Project) {
                     PayloadGenerator.generatePayload(project, contextState, promptText)
                 }
                 .finishOnUiThread(ModalityState.defaultModalityState()) { payloadObj ->
-                    lastDedupedFiles = payloadObj.dedupedFiles
-                    refreshTree()
+                    payloadObj.turn?.let { contextState.addTurn(it) }
+
+                    refreshUi()
 
                     val jsonString = Json.encodeToString(payloadObj)
                     server.broadcast(jsonString)
@@ -353,6 +341,7 @@ class ContextComposerPanel(private val project: Project) {
         }
 
         actionButtonPanel.add(clearButton)
+        actionButtonPanel.add(undoButton)
         actionButtonPanel.add(copyButton)
         actionButtonPanel.add(sendWsButton)
 
@@ -362,8 +351,58 @@ class ContextComposerPanel(private val project: Project) {
         splitPane.firstComponent = treeContainer
         splitPane.secondComponent = bottomPanel
 
-        refreshTree()
+        refreshUi()
         content.add(splitPane, BorderLayout.CENTER)
+    }
+
+    private fun updateUndoButton() {
+        val lastTurn = contextState.getLastTurn()
+        if (lastTurn == null) {
+            undoButton.isEnabled = false
+            undoButton.toolTipText = "No previous sends to undo"
+        } else {
+            undoButton.isEnabled = true
+            val snippet = lastTurn.prompt.replace("\n", " ").take(40)
+            val displaySnippet = if (lastTurn.prompt.length > 40) "$snippet..." else snippet
+            val time = dateFormat.format(Date(lastTurn.timestamp))
+            undoButton.toolTipText = "<html><b>Undo Last Send</b><br>Sent: $time<br>Prompt: <i>$displaySnippet</i><br>Files: ${lastTurn.sentFiles.size}</html>"
+        }
+    }
+
+    private fun updateDedupedFiles() {
+        val projectDir = project.guessProjectDir() ?: return
+        lastDedupedFiles = contextState.getDedupCache().keys.mapNotNull { projectDir.findFileByRelativePath(it) }.toSet()
+    }
+
+    fun refreshUi() {
+        updateDedupedFiles()
+        updateUndoButton()
+        refreshTree()
+    }
+
+    private fun refreshTree() {
+        treeUpdateJob?.cancel()
+
+        treeUpdateJob = ReadAction.nonBlocking<DefaultTreeModel> {
+            nodeStateCache.clear()
+            val rootDir = project.guessProjectDir()
+            val rootNode = if (rootDir != null) {
+                buildFileTree(rootDir, showSelectedOnly, searchQuery) ?: DefaultMutableTreeNode("No Project Root")
+            } else {
+                DefaultMutableTreeNode("No Project Root")
+            }
+            DefaultTreeModel(rootNode)
+        }
+        .expireWith(project)
+        .finishOnUiThread(ModalityState.NON_MODAL) { newModel -> // Ensures this runs even during IDE startup
+            tree.model = newModel
+            if (searchQuery.isNotBlank()) {
+                TreeUtil.expandAll(tree)
+            } else {
+                expandExplicitNodes(tree, newModel.root as DefaultMutableTreeNode)
+            }
+        }
+        .submit(AppExecutorUtil.getAppExecutorService())
     }
 
     private fun getComputedLevel(node: DefaultMutableTreeNode): ContextLevel {

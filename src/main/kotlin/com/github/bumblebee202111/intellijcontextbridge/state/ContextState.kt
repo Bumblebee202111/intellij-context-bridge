@@ -3,7 +3,10 @@ package com.github.bumblebee202111.intellijcontextbridge.state
 import com.github.bumblebee202111.intellijcontextbridge.context.AiContextConfig
 import com.github.bumblebee202111.intellijcontextbridge.utils.ContextCapabilityUtil
 import com.github.bumblebee202111.intellijcontextbridge.utils.FileFilterUtil
+import com.intellij.openapi.components.PersistentStateComponent
 import com.intellij.openapi.components.Service
+import com.intellij.openapi.components.State
+import com.intellij.openapi.components.Storage
 import com.intellij.openapi.diagnostic.thisLogger
 import com.intellij.openapi.project.Project
 import com.intellij.openapi.project.guessProjectDir
@@ -11,17 +14,42 @@ import com.intellij.openapi.vfs.VfsUtilCore
 import com.intellij.openapi.vfs.VirtualFile
 import kotlinx.serialization.json.Json
 import java.security.MessageDigest
+import java.util.UUID
 
 enum class ContextLevel {
     NONE, SKELETON, FULL, MIXED
 }
 
-@Service(Service.Level.PROJECT)
-class ContextState(private val project: Project) {
-    val fileStates = mutableMapOf<VirtualFile, ContextLevel>()
-    val sentFileHashes = mutableMapOf<VirtualFile, Pair<ContextLevel, String>>()
-    val promptHistory = mutableListOf<String>()
+data class FileStateRecord(
+    var level: ContextLevel = ContextLevel.NONE,
+    var hash: String = ""
+)
 
+data class UserTurn(
+    var id: String = UUID.randomUUID().toString(),
+    var timestamp: Long = System.currentTimeMillis(),
+    var prompt: String = "",
+    var sentFiles: MutableMap<String, FileStateRecord> = mutableMapOf()
+)
+
+@Service(Service.Level.PROJECT)
+@State(name = "ContextBridgeState", storages = [Storage("ContextBridge.xml")])
+class ContextState(private val project: Project) : PersistentStateComponent<ContextState.State> {
+
+    class State {
+        var turns: MutableList<UserTurn> = mutableListOf()
+    }
+
+    private var myState = State()
+
+    override fun getState(): State = myState
+
+    override fun loadState(state: State) {
+        myState = state
+    }
+
+    // Active UI selections (transient, clears on restart)
+    val fileStates = mutableMapOf<VirtualFile, ContextLevel>()
     private val jsonParser = Json { ignoreUnknownKeys = true }
 
     fun getLevel(file: VirtualFile): ContextLevel {
@@ -33,7 +61,6 @@ class ContextState(private val project: Project) {
 
         if (file.isDirectory) {
             if (file.children.isEmpty()) {
-                // Empty directories can hold state, but are capped at SKELETON
                 val cappedLevel = if (level == ContextLevel.FULL) ContextLevel.SKELETON else level
                 if (cappedLevel == ContextLevel.NONE || cappedLevel == ContextLevel.MIXED) {
                     fileStates.remove(file)
@@ -41,11 +68,10 @@ class ContextState(private val project: Project) {
                     fileStates[file] = cappedLevel
                 }
             } else {
-                fileStates.remove(file) // Populated folders don't hold state, only leaves do
+                fileStates.remove(file)
                 file.children.forEach { applyStateRecursively(it, level) }
             }
         } else {
-            // Leaf nodes cap based on their capability
             val maxLevel = ContextCapabilityUtil.getMaxLevel(file)
             val cappedLevel = if (level == ContextLevel.FULL && maxLevel == ContextLevel.SKELETON) ContextLevel.SKELETON else level
 
@@ -89,16 +115,38 @@ class ContextState(private val project: Project) {
         return bytes.joinToString("") { "%02x".format(it) }
     }
 
-    fun addPromptToHistory(prompt: String) {
-        val trimmed = prompt.trim()
-        if (trimmed.isEmpty()) return
-        if (promptHistory.isEmpty() || promptHistory.last() != trimmed) {
-            promptHistory.add(trimmed)
+    // --- History & Dedup Logic ---
+
+    fun addTurn(turn: UserTurn) {
+        myState.turns.add(turn)
+    }
+
+    fun removeTurn(turnId: String) {
+        myState.turns.removeAll { it.id == turnId }
+    }
+
+    fun getLastTurn(): UserTurn? = myState.turns.lastOrNull()
+
+    fun removeLastTurn(): UserTurn? {
+        return if (myState.turns.isNotEmpty()) myState.turns.removeLast() else null
+    }
+
+    fun getPromptHistory(): List<String> {
+        return myState.turns.map { it.prompt }.filter { it.isNotBlank() }.distinct()
+    }
+
+    fun getDedupCache(): Map<String, FileStateRecord> {
+        val cache = mutableMapOf<String, FileStateRecord>()
+        for (turn in myState.turns) {
+            for ((path, record) in turn.sentFiles) {
+                cache[path] = record
+            }
         }
+        return cache
     }
 
     fun clear() {
         fileStates.clear()
-        sentFileHashes.clear()
+        myState.turns.clear()
     }
 }

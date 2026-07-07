@@ -1,5 +1,6 @@
 package com.github.bumblebee202111.intellijcontextbridge.context
 
+import com.github.bumblebee202111.intellijcontextbridge.state.UserTurn
 import com.intellij.openapi.vfs.VirtualFile
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.Transient
@@ -18,4 +19,7 @@ data class AiPayload(
 ) {
     @Transient
     var dedupedFiles: Set<VirtualFile> = emptySet()
+
+    @Transient
+    var turn: UserTurn? = null
 }

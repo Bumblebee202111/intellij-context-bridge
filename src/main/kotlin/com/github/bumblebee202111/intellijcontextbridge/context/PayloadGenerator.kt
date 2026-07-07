@@ -2,6 +2,8 @@ package com.github.bumblebee202111.intellijcontextbridge.context
 
 import com.github.bumblebee202111.intellijcontextbridge.state.ContextLevel
 import com.github.bumblebee202111.intellijcontextbridge.state.ContextState
+import com.github.bumblebee202111.intellijcontextbridge.state.FileStateRecord
+import com.github.bumblebee202111.intellijcontextbridge.state.UserTurn
 import com.github.bumblebee202111.intellijcontextbridge.utils.ContextCapabilityUtil
 import com.intellij.openapi.project.Project
 import com.intellij.openapi.project.guessProjectDir
@@ -16,6 +18,10 @@ object PayloadGenerator {
         val attachments = mutableListOf<AiAttachment>()
 
         val dedupedFilesTracker = mutableSetOf<VirtualFile>()
+
+        // Dynamically calculate the current cache state
+        val currentCache = contextState.getDedupCache()
+        val newTurn = UserTurn(prompt = userPrompt)
 
         val markdownText =  buildString {
             // 1. System Directives
@@ -42,7 +48,6 @@ object PayloadGenerator {
                 val relativePath = if (projectDir != null) VfsUtilCore.getRelativePath(file, projectDir) ?: file.path else file.path
 
                 // Skip directories ONLY if they have children (non-empty).
-                // Empty directories are kept to preserve project structure intent.
                 if (file.isDirectory) {
                     if (file.children.isNotEmpty()) continue
 
@@ -59,7 +64,6 @@ object PayloadGenerator {
                     // --- ATTACHMENT & BINARY HANDLING ---
                     if (level == ContextLevel.FULL) {
                         try {
-                            // Only add to attachments if it's supported by AI Studio (Images, Audio, Video, PDF)
                             if (mime != "application/octet-stream") {
                                 val bytes = file.contentsToByteArray()
                                 val base64 = Base64.getEncoder().encodeToString(bytes)
@@ -74,7 +78,6 @@ object PayloadGenerator {
                             appendLine("### ❌ `$relativePath` (Error reading file: ${e.message})\n")
                         }
                     } else {
-                        // SKELETON MODE
                         if (mime != "application/octet-stream") {
                             appendLine("### 🖼️ `$relativePath` (Skeleton Media)\n")
                         } else {
@@ -101,14 +104,15 @@ object PayloadGenerator {
 
                     // 2. Hash the extracted text
                     val currentHash = contextState.calculateHash(extractedText ?: "OMITTED_NON_CODE_SKELETON")
-                    val previousRecord = contextState.sentFileHashes[file]
+                    val previousRecord = currentCache[relativePath]
 
                     // 3. Compare Level AND Hash
-                    if (previousRecord != null && previousRecord.first == level && previousRecord.second == currentHash) {
-                        dedupedFilesTracker.add(file) // Track the deduped file
-                        continue // Omit unchanged file
+                    if (previousRecord != null && previousRecord.level == level && previousRecord.hash == currentHash) {
+                        dedupedFilesTracker.add(file)
+                        newTurn.sentFiles[relativePath] = FileStateRecord(level, currentHash) // Record it so future turns know it was part of this payload
+                        continue
                     } else {
-                        contextState.sentFileHashes[file] = Pair(level, currentHash)
+                        newTurn.sentFiles[relativePath] = FileStateRecord(level, currentHash)
                         contentToAppend = extractedText
                     }
                 } catch (e: Exception) {
@@ -141,6 +145,7 @@ object PayloadGenerator {
 
         val payload = AiPayload(text = markdownText, attachments = attachments)
         payload.dedupedFiles = dedupedFilesTracker
+        payload.turn = newTurn
         return payload
     }
 
