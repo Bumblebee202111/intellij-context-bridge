@@ -18,6 +18,7 @@ import com.intellij.openapi.ide.CopyPasteManager
 import com.intellij.openapi.project.Project
 import com.intellij.openapi.project.guessProjectDir
 import com.intellij.openapi.ui.Messages
+import com.intellij.openapi.vfs.VfsUtilCore
 import com.intellij.openapi.vfs.VirtualFile
 import com.intellij.ui.DocumentAdapter
 import com.intellij.ui.JBSplitter
@@ -79,10 +80,11 @@ class ContextComposerPanel(private val project: Project) {
                 val path = tree.getPathForLocation(e.x, e.y) ?: return
                 val bounds = tree.getPathBounds(path) ?: return
                 val node = path.lastPathComponent as? DefaultMutableTreeNode ?: return
-                val file = node.userObject as? VirtualFile ?: return
+                val file = (node.userObject as? NodeData)?.file ?: return
 
                 if (SwingUtilities.isRightMouseButton(e)) {
                     applyStateToNode(node, ContextLevel.NONE)
+                    updateDedupedFiles()
                     if (showSelectedOnly) refreshUi() else {
                         tree.repaint()
                         autoCollapse(tree, node, path)
@@ -102,6 +104,7 @@ class ContextComposerPanel(private val project: Project) {
                             val nextLevel = ContextCapabilityUtil.getNextLevel(currentLevel, maxLevel)
                             
                             applyStateToNode(node, nextLevel)
+                            updateDedupedFiles()
                             if (showSelectedOnly) refreshUi() else tree.repaint()
                             e.consume()
                         }
@@ -122,7 +125,7 @@ class ContextComposerPanel(private val project: Project) {
 
                 for (path in paths) {
                     val node = path.lastPathComponent as? DefaultMutableTreeNode ?: continue
-                    val file = node.userObject as? VirtualFile ?: continue
+                    val file = (node.userObject as? NodeData)?.file ?: continue
 
                     when (e.keyCode) {
                         KeyEvent.VK_ENTER -> {
@@ -138,6 +141,7 @@ class ContextComposerPanel(private val project: Project) {
                     }
                 }
                 if (stateChanged) {
+                    updateDedupedFiles()
                     if (showSelectedOnly) refreshUi() else tree.repaint()
                     e.consume()
                 }
@@ -351,8 +355,9 @@ class ContextComposerPanel(private val project: Project) {
         splitPane.firstComponent = treeContainer
         splitPane.secondComponent = bottomPanel
 
-        refreshUi()
         content.add(splitPane, BorderLayout.CENTER)
+
+        refreshUi()
     }
 
     private fun updateUndoButton() {
@@ -371,7 +376,19 @@ class ContextComposerPanel(private val project: Project) {
 
     private fun updateDedupedFiles() {
         val projectDir = project.guessProjectDir() ?: return
-        lastDedupedFiles = contextState.getDedupCache().keys.mapNotNull { projectDir.findFileByRelativePath(it) }.toSet()
+        val cache = contextState.getDedupCache()
+
+        lastDedupedFiles = contextState.fileStates.entries.mapNotNull { (file, currentLevel) ->
+            val relativePath = VfsUtilCore.getRelativePath(file, projectDir) ?: file.path
+            val cachedRecord = cache[relativePath]
+
+            // Only show the green cached dot if the selected level exactly matches the cached level!
+            if (cachedRecord != null && cachedRecord.level == currentLevel) {
+                file
+            } else {
+                null
+            }
+        }.toSet()
     }
 
     fun refreshUi() {
@@ -387,14 +404,14 @@ class ContextComposerPanel(private val project: Project) {
             nodeStateCache.clear()
             val rootDir = project.guessProjectDir()
             val rootNode = if (rootDir != null) {
-                buildFileTree(rootDir, showSelectedOnly, searchQuery) ?: DefaultMutableTreeNode("No Project Root")
+                buildFileTree(rootDir, showSelectedOnly, searchQuery) ?: DefaultMutableTreeNode(NodeData(rootDir, "No Project Root"))
             } else {
                 DefaultMutableTreeNode("No Project Root")
             }
             DefaultTreeModel(rootNode)
         }
         .expireWith(project)
-        .finishOnUiThread(ModalityState.NON_MODAL) { newModel -> // Ensures this runs even during IDE startup
+        .finishOnUiThread(ModalityState.NON_MODAL) { newModel ->
             tree.model = newModel
             if (searchQuery.isNotBlank()) {
                 TreeUtil.expandAll(tree)
@@ -406,7 +423,7 @@ class ContextComposerPanel(private val project: Project) {
     }
 
     private fun getComputedLevel(node: DefaultMutableTreeNode): ContextLevel {
-        val file = node.userObject as? VirtualFile ?: return ContextLevel.NONE
+        val file = (node.userObject as? NodeData)?.file ?: return ContextLevel.NONE
         
         if (!file.isDirectory || file.children.isEmpty()) return contextState.getLevel(file)
 
@@ -439,14 +456,14 @@ class ContextComposerPanel(private val project: Project) {
     }
 
     private fun applyStateToNode(node: DefaultMutableTreeNode, level: ContextLevel) {
-        val file = node.userObject as? VirtualFile ?: return
+        val file = (node.userObject as? NodeData)?.file ?: return
         if (!file.isDirectory) {
             contextState.applyStateRecursively(file, level)
         } else {
             val enumeration = node.depthFirstEnumeration()
             while (enumeration.hasMoreElements()) {
                 val descendant = enumeration.nextElement() as DefaultMutableTreeNode
-                val descFile = descendant.userObject as? VirtualFile ?: continue
+                val descFile = (descendant.userObject as? NodeData)?.file ?: continue
                 if (!descFile.isDirectory) {
                     contextState.applyStateRecursively(descFile, level)
                 }
@@ -456,20 +473,27 @@ class ContextComposerPanel(private val project: Project) {
     }
 
     @Suppress("UnsafeVfsRecursion")
-    private fun buildFileTree(dir: VirtualFile, showSelectedOnly: Boolean, searchQuery: String): DefaultMutableTreeNode? {
+    private fun buildFileTree(dir: VirtualFile, showSelectedOnly: Boolean, searchQuery: String, prefix: String = ""): DefaultMutableTreeNode? {
         if (FileFilterUtil.isIgnored(project, dir)) return null
 
-        val node = DefaultMutableTreeNode(dir)
-        val children = dir.children.sortedWith(compareBy({ !it.isDirectory }, { it.name }))
-        var hasValidChildren = false
+        val children = dir.children.filter { !FileFilterUtil.isIgnored(project, it) }
+            .sortedWith(compareBy({ !it.isDirectory }, { it.name }))
 
-        val dirMatchesSearch = searchQuery.isBlank() || dir.name.contains(searchQuery, ignoreCase = true)
+        // Flattening logic for middle packages
+        if (dir.isDirectory && children.size == 1 && children[0].isDirectory) {
+            val newPrefix = if (prefix.isEmpty()) dir.name else "$prefix.${dir.name}"
+            return buildFileTree(children[0], showSelectedOnly, searchQuery, newPrefix)
+        }
+
+        val displayName = if (prefix.isEmpty()) dir.name else "$prefix.${dir.name}"
+        val node = DefaultMutableTreeNode(NodeData(dir, displayName))
+
+        var hasValidChildren = false
+        val dirMatchesSearch = searchQuery.isBlank() || displayName.contains(searchQuery, ignoreCase = true)
 
         for (child in children) {
-            if (FileFilterUtil.isIgnored(project, child)) continue
-
             if (child.isDirectory) {
-                val childNode = buildFileTree(child, showSelectedOnly, searchQuery)
+                val childNode = buildFileTree(child, showSelectedOnly, searchQuery, "")
                 if (childNode != null) {
                     node.add(childNode)
                     hasValidChildren = true
@@ -482,7 +506,7 @@ class ContextComposerPanel(private val project: Project) {
                 val passesSearch = searchQuery.isBlank() || dirMatchesSearch || child.name.contains(searchQuery, ignoreCase = true)
 
                 if (passesSelection && passesSearch) {
-                    node.add(DefaultMutableTreeNode(child))
+                    node.add(DefaultMutableTreeNode(NodeData(child, child.name)))
                     hasValidChildren = true
                 }
             }
@@ -495,7 +519,7 @@ class ContextComposerPanel(private val project: Project) {
         if (!hasValidChildren) {
             if (!passesSelection) return null
             if (searchQuery.isNotBlank() && !dirMatchesSearch) return null
-            if (dir.children.isNotEmpty()) return null
+            if (children.isNotEmpty()) return null
         }
 
         return node

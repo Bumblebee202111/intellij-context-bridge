@@ -5,10 +5,12 @@ import com.github.bumblebee202111.intellijcontextbridge.state.ContextState
 import com.intellij.icons.AllIcons
 import com.intellij.openapi.vfs.VirtualFile
 import com.intellij.ui.ColoredTreeCellRenderer
+import com.intellij.ui.JBColor
 import com.intellij.ui.RowIcon
 import com.intellij.ui.SimpleTextAttributes
 import com.intellij.util.ui.JBUI
 import java.awt.BasicStroke
+import java.awt.Color
 import java.awt.Component
 import java.awt.Graphics
 import java.awt.Graphics2D
@@ -16,6 +18,8 @@ import java.awt.RenderingHints
 import javax.swing.Icon
 import javax.swing.JTree
 import javax.swing.tree.DefaultMutableTreeNode
+
+data class NodeData(val file: VirtualFile, val displayName: String)
 
 class StateIcon(private val level: ContextLevel) : Icon {
     override fun paintIcon(c: Component?, g: Graphics?, x: Int, y: Int) {
@@ -57,6 +61,33 @@ class StateIcon(private val level: ContextLevel) : Icon {
     override fun getIconHeight() = 16
 }
 
+class CachedOverlayIcon(private val baseIcon: Icon) : Icon {
+    override fun paintIcon(c: Component?, g: Graphics?, x: Int, y: Int) {
+        baseIcon.paintIcon(c, g, x, y)
+        val g2d = g as Graphics2D
+        val oldAntialias = g2d.getRenderingHint(RenderingHints.KEY_ANTIALIASING)
+        g2d.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON)
+
+        val dotSize = 6
+        val padding = 1
+        val dotX = x + getIconWidth() - dotSize - padding
+        val dotY = y + getIconHeight() - dotSize - padding
+
+        // Draw background cutout for native look
+        g2d.color = JBUI.CurrentTheme.Tree.background(true, true)
+        g2d.fillOval(dotX - 1, dotY - 1, dotSize + 2, dotSize + 2)
+
+        // Draw the green sync/cached dot
+        g2d.color = JBColor(Color(0x59A869), Color(0x499C54))
+        g2d.fillOval(dotX, dotY, dotSize, dotSize)
+
+        g2d.setRenderingHint(RenderingHints.KEY_ANTIALIASING, oldAntialias)
+    }
+
+    override fun getIconWidth() = baseIcon.iconWidth
+    override fun getIconHeight() = baseIcon.iconHeight
+}
+
 class ContextTreeCellRenderer(
     private val getComputedLevel: (DefaultMutableTreeNode) -> ContextLevel,
     private val isCached: (VirtualFile) -> Boolean
@@ -66,7 +97,8 @@ class ContextTreeCellRenderer(
         tree: JTree, value: Any?, selected: Boolean, expanded: Boolean, leaf: Boolean, row: Int, hasFocus: Boolean
     ) {
         val node = value as? DefaultMutableTreeNode ?: return
-        val file = node.userObject as? VirtualFile
+        val nodeData = node.userObject as? NodeData
+        val file = nodeData?.file
 
         if (file != null) {
             val level = getComputedLevel(node)
@@ -75,19 +107,16 @@ class ContextTreeCellRenderer(
             val rowIcon = RowIcon(2)
             rowIcon.setIcon(StateIcon(level), 0)
 
-            val fileIcon = if (file.isDirectory) AllIcons.Nodes.Folder else file.fileType.icon
+            val baseIcon = if (file.isDirectory) AllIcons.Nodes.Folder else file.fileType.icon
+            val fileIcon = if (cached && baseIcon != null) CachedOverlayIcon(baseIcon) else baseIcon
             rowIcon.setIcon(fileIcon, 1)
 
             icon = rowIcon
 
             if (level == ContextLevel.FULL) {
-                append(file.name, SimpleTextAttributes.REGULAR_BOLD_ATTRIBUTES)
+                append(nodeData.displayName, SimpleTextAttributes.REGULAR_BOLD_ATTRIBUTES)
             } else {
-                append(file.name)
-            }
-
-            if (level != ContextLevel.NONE && cached) {
-                append(" (cached)", SimpleTextAttributes.GRAYED_ATTRIBUTES)
+                append(nodeData.displayName)
             }
         } else {
             append(value.toString())
