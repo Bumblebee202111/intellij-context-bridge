@@ -55,6 +55,7 @@ class ContextComposerPanel(private val project: Project) {
     private var historyIndex = -1
     private var draftPrompt = ""
     private var lastDedupedFiles = emptySet<VirtualFile>()
+    private var isConfigLoaded = false // Tracks if .aicontext has been applied
 
     private val nodeStateCache = ConcurrentHashMap<DefaultMutableTreeNode, ContextLevel>()
     private var treeUpdateJob: CancellablePromise<*>? = null
@@ -158,8 +159,12 @@ class ContextComposerPanel(private val project: Project) {
                     val editor = FileEditorManager.getInstance(project).selectedTextEditor
                     val file = editor?.document?.let { FileDocumentManager.getInstance().getFile(it) }
                     if (file != null) {
-                        contextState.applyStateRecursively(file, ContextLevel.FULL)
-                        refreshUi()
+                        // Offload slow index checks to background thread
+                        ReadAction.nonBlocking<Unit> {
+                            contextState.applyStateRecursively(file, ContextLevel.FULL, checkIgnore = true)
+                        }.finishOnUiThread(ModalityState.nonModal()) {
+                            refreshUi()
+                        }.submit(AppExecutorUtil.getAppExecutorService())
                     } else {
                         Messages.showInfoMessage("No active editor found.", "Add Active File")
                     }
@@ -242,7 +247,7 @@ class ContextComposerPanel(private val project: Project) {
         val clearButton = JButton("New Chat").apply {
             addActionListener {
                 contextState.clear()
-                contextState.loadConfig()
+                isConfigLoaded = false // Force config reload on next refresh
                 promptArea.text = ""
                 historyIndex = -1
                 draftPrompt = ""
@@ -382,7 +387,6 @@ class ContextComposerPanel(private val project: Project) {
             val relativePath = VfsUtilCore.getRelativePath(file, projectDir) ?: file.path
             val cachedRecord = cache[relativePath]
 
-            // Only show the green cached dot if the selected level exactly matches the cached level!
             if (cachedRecord != null && cachedRecord.level == currentLevel) {
                 file
             } else {
@@ -401,6 +405,12 @@ class ContextComposerPanel(private val project: Project) {
         treeUpdateJob?.cancel()
 
         treeUpdateJob = ReadAction.nonBlocking<DefaultTreeModel> {
+            // Offload slow .aicontext loading to the background thread
+            if (!isConfigLoaded) {
+                contextState.loadConfig()
+                isConfigLoaded = true
+            }
+
             nodeStateCache.clear()
             val rootDir = project.guessProjectDir()
             val rootNode = if (rootDir != null) {
@@ -458,14 +468,15 @@ class ContextComposerPanel(private val project: Project) {
     private fun applyStateToNode(node: DefaultMutableTreeNode, level: ContextLevel) {
         val file = (node.userObject as? NodeData)?.file ?: return
         if (!file.isDirectory) {
-            contextState.applyStateRecursively(file, level)
+            // Leaf nodes inside the tree are pre-filtered, skip the slow isIgnored check
+            contextState.applyStateRecursively(file, level, checkIgnore = false)
         } else {
             val enumeration = node.depthFirstEnumeration()
             while (enumeration.hasMoreElements()) {
                 val descendant = enumeration.nextElement() as DefaultMutableTreeNode
                 val descFile = (descendant.userObject as? NodeData)?.file ?: continue
                 if (!descFile.isDirectory) {
-                    contextState.applyStateRecursively(descFile, level)
+                    contextState.applyStateRecursively(descFile, level, checkIgnore = false)
                 }
             }
         }

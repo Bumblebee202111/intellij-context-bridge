@@ -15,6 +15,7 @@ import com.intellij.openapi.vfs.VirtualFile
 import kotlinx.serialization.json.Json
 import java.security.MessageDigest
 import java.util.UUID
+import java.util.concurrent.ConcurrentHashMap
 
 enum class ContextLevel {
     NONE, SKELETON, FULL, MIXED
@@ -48,16 +49,17 @@ class ContextState(private val project: Project) : PersistentStateComponent<Cont
         myState = state
     }
 
-    // Active UI selections (transient, clears on restart)
-    val fileStates = mutableMapOf<VirtualFile, ContextLevel>()
+    // Thread-safe map for background configuration loading and UI rendering
+    val fileStates = ConcurrentHashMap<VirtualFile, ContextLevel>()
     private val jsonParser = Json { ignoreUnknownKeys = true }
 
     fun getLevel(file: VirtualFile): ContextLevel {
         return fileStates[file] ?: ContextLevel.NONE
     }
 
-    fun applyStateRecursively(file: VirtualFile, level: ContextLevel) {
-        if (FileFilterUtil.isIgnored(project, file)) return
+    fun applyStateRecursively(file: VirtualFile, level: ContextLevel, checkIgnore: Boolean = true) {
+        // Skip slow index operations if we already know the file is valid (e.g., from a UI click)
+        if (checkIgnore && FileFilterUtil.isIgnored(project, file)) return
 
         if (file.isDirectory) {
             if (file.children.isEmpty()) {
@@ -69,7 +71,7 @@ class ContextState(private val project: Project) : PersistentStateComponent<Cont
                 }
             } else {
                 fileStates.remove(file)
-                file.children.forEach { applyStateRecursively(it, level) }
+                file.children.forEach { applyStateRecursively(it, level, checkIgnore) }
             }
         } else {
             val maxLevel = ContextCapabilityUtil.getMaxLevel(file)
@@ -101,12 +103,12 @@ class ContextState(private val project: Project) : PersistentStateComponent<Cont
 
         config.skeleton.forEach { path ->
             val file = if (path == "." || path == "/") projectDir else projectDir.findFileByRelativePath(path)
-            if (file != null && file.exists()) applyStateRecursively(file, ContextLevel.SKELETON)
+            if (file != null && file.exists()) applyStateRecursively(file, ContextLevel.SKELETON, checkIgnore = true)
         }
 
         config.full.forEach { path ->
             val file = if (path == "." || path == "/") projectDir else projectDir.findFileByRelativePath(path)
-            if (file != null && file.exists()) applyStateRecursively(file, ContextLevel.FULL)
+            if (file != null && file.exists()) applyStateRecursively(file, ContextLevel.FULL, checkIgnore = true)
         }
     }
 
@@ -114,8 +116,6 @@ class ContextState(private val project: Project) : PersistentStateComponent<Cont
         val bytes = MessageDigest.getInstance("MD5").digest(content.toByteArray(Charsets.UTF_8))
         return bytes.joinToString("") { "%02x".format(it) }
     }
-
-    // --- History & Dedup Logic ---
 
     fun addTurn(turn: UserTurn) {
         myState.turns.add(turn)
