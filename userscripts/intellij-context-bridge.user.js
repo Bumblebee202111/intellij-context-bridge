@@ -18,18 +18,38 @@
     win.__cbActive = false;
     win.__cbIntercepted = false;
 
-    function updateFab(text, color) {
-        const fab = document.getElementById('context-bridge-fab');
-        if (fab) {
-            fab.textContent = text;
-            fab.style.backgroundColor = color;
+    // --- Global Status Pill (Replaces the heavy FAB) ---
+    let statusPill;
+    let toastTimeout;
+
+    function initStatusPill() {
+        statusPill = document.createElement('div');
+        statusPill.id = 'cb-status-pill';
+        statusPill.style.cssText = `
+            position: fixed; bottom: 24px; right: 24px; z-index: 999999;
+            background-color: #333; color: white; border-radius: 16px;
+            padding: 6px 12px; font-family: Inter, sans-serif; font-size: 12px; font-weight: bold;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.2); transition: opacity 0.3s ease;
+            pointer-events: none; opacity: 0;
+        `;
+        document.body.appendChild(statusPill);
+    }
+
+    function showToast(text, color, duration = 3000) {
+        if (!statusPill) return;
+        statusPill.textContent = text;
+        statusPill.style.backgroundColor = color;
+        statusPill.style.opacity = '1';
+        clearTimeout(toastTimeout);
+        if (duration > 0) {
+            toastTimeout = setTimeout(() => { statusPill.style.opacity = '0'; }, duration);
         }
     }
 
+    // --- Clipboard Interception ---
     function sendToIde(text) {
         if (window.__ws && window.__ws.readyState === WebSocket.OPEN) {
             window.__ws.send(text);
-            updateFab('✅ Sent', '#2196F3');
             win.__cbIntercepted = true;
         }
     }
@@ -48,24 +68,62 @@
 
     document.addEventListener('DOMContentLoaded', () => {
         let isProcessing = false;
+        initStatusPill();
 
-        const fab = document.createElement('button');
-        fab.id = 'context-bridge-fab';
-        fab.textContent = '🔌 Disconnected';
-        fab.style.cssText = `position: fixed; bottom: 24px; right: 24px; z-index: 999999; background-color: #F44336; color: white; border: none; border-radius: 24px; padding: 12px 20px; font-family: Inter, sans-serif; font-size: 14px; font-weight: bold; cursor: pointer; box-shadow: 0 4px 12px rgba(0,0,0,0.3); transition: all 0.3s ease;`;
-        document.body.appendChild(fab);
+        // --- Per-Turn Button Injection ---
+        function injectTurnButtons() {
+            // Target the actual model turn containers
+            const turns = document.querySelectorAll('.chat-turn-container.model');
+            turns.forEach(turn => {
+                // Skip if we already injected the button
+                if (turn.querySelector('.cb-send-to-ide-btn')) return;
 
-        fab.addEventListener('click', (e) => {
-            e.preventDefault();
-            if (fab.textContent.includes('Generating') || fab.textContent.includes('...')) return;
-            extractViaNativeCopy();
-        });
+                // 1. Ensure it's fully generated AND not a "Thoughts" turn
+                // "Thoughts" turns do not have a thumb_up button.
+                const hasThumbUp = turn.querySelector('button[aria-label="Good response"]') !== null;
+                if (!hasThumbUp) return;
 
+                // 2. Ensure it's not currently loading
+                const isLoading = turn.querySelector('ms-chat-loading-indicator') !== null;
+                if (isLoading) return;
+
+                // 3. Find the exact action bar to align perfectly with native buttons
+                const actionBar = turn.querySelector('.actions.hover-or-edit');
+                if (!actionBar) return;
+
+                const sendBtn = document.createElement('button');
+                sendBtn.className = 'cb-send-to-ide-btn';
+                sendBtn.textContent = '✨ Send to IDE';
+                sendBtn.style.cssText = `
+                    background: transparent; color: #4CAF50; border: 1px solid #4CAF50; border-radius: 16px;
+                    padding: 0 12px; margin-left: 8px; font-size: 13px; font-weight: 500; font-family: inherit;
+                    cursor: pointer; display: inline-flex; align-items: center; justify-content: center;
+                    height: 32px; transition: all 0.2s ease; white-space: nowrap; box-sizing: border-box;
+                `;
+
+                sendBtn.onmouseover = () => { sendBtn.style.background = 'rgba(76, 175, 80, 0.1)'; };
+                sendBtn.onmouseout = () => { sendBtn.style.background = 'transparent'; };
+
+                sendBtn.addEventListener('click', (e) => {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    if (sendBtn.textContent.includes('...')) return;
+                    extractViaNativeCopy(turn, sendBtn);
+                });
+
+                actionBar.appendChild(sendBtn);
+            });
+        }
+
+        // Run the injector loop to catch newly generated turns
+        setInterval(injectTurnButtons, 1000);
+
+        // --- WebSocket Connection ---
         function connect() {
             window.__ws = new WebSocket('ws://127.0.0.1:37373/ai-bridge');
-            window.__ws.onopen = () => updateFab('✨ Send to IDE', '#4CAF50');
+            window.__ws.onopen = () => showToast('🔗 IDE Connected', '#4CAF50', 3000);
             window.__ws.onmessage = (event) => handleIncomingPayload(event.data);
-            window.__ws.onclose = () => { updateFab('🔌 Disconnected', '#F44336'); setTimeout(connect, 3000); };
+            window.__ws.onclose = () => { showToast('🔌 IDE Disconnected', '#F44336', 0); setTimeout(connect, 3000); };
             window.__ws.onerror = () => window.__ws.close();
         }
 
@@ -81,7 +139,6 @@
             });
         }
 
-        // --- Base64 to File Converter ---
         function base64ToFile(base64Data, mimeType, filename) {
             const byteString = atob(base64Data);
             const ab = new ArrayBuffer(byteString.length);
@@ -93,15 +150,11 @@
             return new File([blob], filename, { type: mimeType });
         }
 
-        // --- Drag and Drop Simulator ---
         function simulateFileDrop(files) {
-            // AI Studio has a specific div for drag & drop, or we fallback to document.body
             const dropZone = document.querySelector('[msglobalfiledragdrop]') || document.body;
-
             const dataTransfer = new DataTransfer();
             files.forEach(file => dataTransfer.items.add(file));
 
-            // Dispatch dragenter, dragover, and drop to satisfy Angular's event listeners
             ['dragenter', 'dragover', 'drop'].forEach(eventType => {
                 const dropEvent = new DragEvent(eventType, {
                     bubbles: true,
@@ -118,29 +171,18 @@
 
             let payloadObj;
             try {
-                // Try to parse as JSON (New format)
                 payloadObj = JSON.parse(payloadString);
             } catch (e) {
-                // Fallback for old plain-text payloads
                 payloadObj = { text: payloadString, attachments: [] };
             }
 
-            // 1. Handle Media Attachments
             if (payloadObj.attachments && payloadObj.attachments.length > 0) {
-                updateFab(`📎 Attaching ${payloadObj.attachments.length} files...`, '#FF9800');
-
-                const files = payloadObj.attachments.map(att =>
-                    base64ToFile(att.base64Data, att.mimeType, att.name)
-                );
-
+                showToast(`📎 Attaching ${payloadObj.attachments.length} files...`, '#FF9800', 0);
+                const files = payloadObj.attachments.map(att => base64ToFile(att.base64Data, att.mimeType, att.name));
                 simulateFileDrop(files);
-
-                // Wait 2 seconds for AI Studio to finish processing/uploading the dropped files
-                // before we paste the text and hit run.
                 await new Promise(r => setTimeout(r, 2000));
             }
 
-            // 2. Inject Text Prompt
             const textarea = await waitForElement('textarea[formcontrolname="promptText"], textarea[aria-label="Enter a prompt"]');
             if (!textarea) { isProcessing = false; return; }
 
@@ -149,7 +191,6 @@
             nativeInputValueSetter.call(textarea, payloadObj.text);
             textarea.dispatchEvent(new Event('input', { bubbles: true }));
 
-            // 3. Trigger Run
             setTimeout(async () => {
                 const runBtn = await waitForElement('button[type="submit"]');
                 if (runBtn) {
@@ -162,54 +203,56 @@
         }
 
         function monitorGeneration() {
-            updateFab('⏳ Generating...', '#FF9800');
+            showToast('⏳ AI is Generating...', '#FF9800', 0);
             setTimeout(() => {
                 const checkInterval = setInterval(() => {
                     const scrollBtn = document.querySelector('.scroll-to-bottom');
                     if (scrollBtn) scrollBtn.click();
 
-                    const allTurns = document.querySelectorAll('ms-chat-turn');
+                    const allTurns = document.querySelectorAll('.chat-turn-container.model');
                     if (allTurns.length === 0) return;
 
                     const lastTurn = allTurns[allTurns.length - 1];
                     lastTurn.scrollIntoView({ behavior: 'auto', block: 'end' });
 
-                    const hasThumbUp = lastTurn.querySelector('button[aria-label="Good response"]') ||
-                        Array.from(lastTurn.querySelectorAll('span')).some(s => s.textContent.trim() === 'thumb_up');
-                    const isLoading = document.querySelector('ms-chat-loading-indicator') !== null;
+                    const hasThumbUp = lastTurn.querySelector('button[aria-label="Good response"]') !== null;
+                    const isLoading = lastTurn.querySelector('ms-chat-loading-indicator') !== null;
 
                     if (hasThumbUp && !isLoading) {
                         clearInterval(checkInterval);
                         isProcessing = false;
-                        updateFab('✨ Send to IDE', '#4CAF50');
+                        showToast('✅ Generation Complete', '#4CAF50', 3000);
                     }
                 }, 1000);
             }, 2000);
         }
 
-        async function extractViaNativeCopy() {
-            updateFab('🔍 Finding menu...', '#FF9800');
-            const allTurns = document.querySelectorAll('.chat-turn-container.model');
-            if (allTurns.length === 0) return updateFab('❌ No AI response', '#F44336');
-            const lastTurn = allTurns[allTurns.length - 1];
+        // --- Scoped Extraction Logic ---
+        async function extractViaNativeCopy(turnElement, btnElement) {
+            const originalText = btnElement.textContent;
+            btnElement.textContent = '⏳ Copying...';
+            btnElement.style.color = '#FF9800';
+            btnElement.style.borderColor = '#FF9800';
 
-            const menuBtn = lastTurn.querySelector('button[aria-label="Open options"]') || lastTurn.querySelector('ms-chat-turn-options button');
-            if (!menuBtn) return updateFab('❌ Menu not found', '#F44336');
+            const menuBtn = turnElement.querySelector('button[aria-label="Open options"]') || turnElement.querySelector('ms-chat-turn-options button');
+            if (!menuBtn) {
+                btnElement.textContent = '❌ Menu Error';
+                return;
+            }
 
             menuBtn.click();
-            updateFab('⏳ Waiting for copy btn...', '#FF9800');
 
             const copyIcon = await waitForElement('.cdk-overlay-container .copy-markdown-button', 3000);
             if (!copyIcon) {
                 document.body.click();
-                return updateFab('❌ Copy btn not found', '#F44336');
+                btnElement.textContent = '❌ Copy Btn Error';
+                return;
             }
 
             const copyBtn = copyIcon.closest('button');
 
             win.__cbActive = true;
             win.__cbIntercepted = false;
-            updateFab('🪤 Intercepting...', '#FF9800');
 
             copyBtn.click();
 
@@ -220,15 +263,20 @@
                 if (backdrop) backdrop.click();
                 else document.body.click();
 
-                if (!win.__cbIntercepted) {
-                    updateFab('❌ Intercept Failed', '#F44336');
+                if (win.__cbIntercepted) {
+                    btnElement.textContent = '✅ Sent to IDE';
+                    btnElement.style.color = '#4CAF50';
+                    btnElement.style.borderColor = '#4CAF50';
+                } else {
+                    btnElement.textContent = '❌ Intercept Failed';
+                    btnElement.style.color = '#F44336';
+                    btnElement.style.borderColor = '#F44336';
                 }
 
                 setTimeout(() => {
-                    if (document.getElementById('context-bridge-fab').textContent.includes('❌') ||
-                        document.getElementById('context-bridge-fab').textContent.includes('✅')) {
-                        updateFab('✨ Send to IDE', '#4CAF50');
-                    }
+                    btnElement.textContent = originalText;
+                    btnElement.style.color = '#4CAF50';
+                    btnElement.style.borderColor = '#4CAF50';
                 }, 3000);
 
             }, 500);
