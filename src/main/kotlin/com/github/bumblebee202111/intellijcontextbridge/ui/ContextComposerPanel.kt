@@ -57,7 +57,22 @@ class ContextComposerPanel(private val project: Project) {
     private var lastDedupedFiles = emptySet<VirtualFile>()
     private var isConfigLoaded = false // Tracks if .aicontext has been applied
 
-    private val nodeStateCache = ConcurrentHashMap<DefaultMutableTreeNode, ContextLevel>()
+    private data class AggregatedState(
+        val allMaxed: Boolean,
+        val allSkeleton: Boolean,
+        val allNone: Boolean,
+        val hasLeaves: Boolean
+    ) {
+        val level: ContextLevel get() {
+            if (!hasLeaves) return ContextLevel.NONE
+            if (allNone) return ContextLevel.NONE
+            if (allSkeleton) return ContextLevel.SKELETON
+            if (allMaxed) return ContextLevel.FULL
+            return ContextLevel.MIXED
+        }
+    }
+
+    private val nodeStateCache = ConcurrentHashMap<DefaultMutableTreeNode, AggregatedState>()
     private var treeUpdateJob: CancellablePromise<*>? = null
 
     private val dateFormat = SimpleDateFormat("HH:mm:ss")
@@ -96,14 +111,24 @@ class ContextComposerPanel(private val project: Project) {
                         if (e.x >= bounds.x && e.x < bounds.x + 22) {
                             val currentLevel = getComputedLevel(node)
                             
-                            val maxLevel = if (file.isDirectory && file.children.isNotEmpty()) {
-                                ContextLevel.FULL
+                            val nextLevel = if (file.isDirectory) {
+                                if (file.children.isEmpty()) {
+                                    // Empty directories can only be SKELETON, left-click never removes
+                                    ContextLevel.SKELETON
+                                } else {
+                                    // Populated directories cycle between FULL and SKELETON, never NONE
+                                    when (currentLevel) {
+                                        ContextLevel.NONE, ContextLevel.MIXED -> ContextLevel.FULL
+                                        ContextLevel.FULL -> ContextLevel.SKELETON
+                                        ContextLevel.SKELETON -> ContextLevel.FULL
+                                    }
+                                }
                             } else {
-                                ContextCapabilityUtil.getMaxLevel(file)
+                                // Leaf files use standard capability cycling (which can cycle back to NONE)
+                                val maxLevel = ContextCapabilityUtil.getMaxLevel(file)
+                                ContextCapabilityUtil.getNextLevel(currentLevel, maxLevel)
                             }
-                            
-                            val nextLevel = ContextCapabilityUtil.getNextLevel(currentLevel, maxLevel)
-                            
+
                             applyStateToNode(node, nextLevel)
                             updateDedupedFiles()
                             if (showSelectedOnly) refreshUi() else tree.repaint()
@@ -283,7 +308,7 @@ class ContextComposerPanel(private val project: Project) {
                 ReadAction.nonBlocking<com.github.bumblebee202111.intellijcontextbridge.context.AiPayload> {
                     PayloadGenerator.generatePayload(project, contextState, promptText)
                 }
-                .finishOnUiThread(ModalityState.defaultModalityState()) { payloadObj ->
+                .finishOnUiThread(ModalityState.nonModal()) { payloadObj ->
                     payloadObj.turn?.let { contextState.addTurn(it) }
 
                     refreshUi()
@@ -321,7 +346,7 @@ class ContextComposerPanel(private val project: Project) {
                 ReadAction.nonBlocking<com.github.bumblebee202111.intellijcontextbridge.context.AiPayload> {
                     PayloadGenerator.generatePayload(project, contextState, promptText)
                 }
-                .finishOnUiThread(ModalityState.defaultModalityState()) { payloadObj ->
+                .finishOnUiThread(ModalityState.nonModal()) { payloadObj ->
                     payloadObj.turn?.let { contextState.addTurn(it) }
 
                     refreshUi()
@@ -421,7 +446,7 @@ class ContextComposerPanel(private val project: Project) {
             DefaultTreeModel(rootNode)
         }
         .expireWith(project)
-        .finishOnUiThread(ModalityState.NON_MODAL) { newModel ->
+        .finishOnUiThread(ModalityState.nonModal()) { newModel ->
             tree.model = newModel
             if (searchQuery.isNotBlank()) {
                 TreeUtil.expandAll(tree)
@@ -432,50 +457,60 @@ class ContextComposerPanel(private val project: Project) {
         .submit(AppExecutorUtil.getAppExecutorService())
     }
 
-    private fun getComputedLevel(node: DefaultMutableTreeNode): ContextLevel {
-        val file = (node.userObject as? NodeData)?.file ?: return ContextLevel.NONE
+    private fun getAggregatedState(node: DefaultMutableTreeNode): AggregatedState {
+        val file = (node.userObject as? NodeData)?.file ?: return AggregatedState(true, true, true, false)
         
-        if (!file.isDirectory || file.children.isEmpty()) return contextState.getLevel(file)
+        if (!file.isDirectory || file.children.isEmpty()) {
+            val level = contextState.getLevel(file)
+            val maxLevel = if (file.isDirectory) ContextLevel.SKELETON else ContextCapabilityUtil.getMaxLevel(file)
+            return AggregatedState(
+                allMaxed = (level == maxLevel),
+                allSkeleton = (level == ContextLevel.SKELETON),
+                allNone = (level == ContextLevel.NONE),
+                hasLeaves = true
+            )
+        }
 
         nodeStateCache[node]?.let { return it }
 
-        var hasFull = false
-        var hasSkeleton = false
-        var hasNone = false
+        var allMaxed = true
+        var allSkeleton = true
+        var allNone = true
+        var hasLeaves = false
 
         val enumeration = node.children()
         while (enumeration.hasMoreElements()) {
             val child = enumeration.nextElement() as DefaultMutableTreeNode
-            when (getComputedLevel(child)) {
-                ContextLevel.FULL -> hasFull = true
-                ContextLevel.SKELETON -> hasSkeleton = true
-                ContextLevel.NONE -> hasNone = true
-                ContextLevel.MIXED -> { hasFull = true; hasNone = true }
+            val childState = getAggregatedState(child)
+
+            if (childState.hasLeaves) {
+                hasLeaves = true
+                if (!childState.allMaxed) allMaxed = false
+                if (!childState.allSkeleton) allSkeleton = false
+                if (!childState.allNone) allNone = false
             }
-            if (hasFull && hasSkeleton && hasNone) break
         }
 
-        val result = if (hasFull && !hasSkeleton && !hasNone) ContextLevel.FULL
-        else if (!hasFull && hasSkeleton && !hasNone) ContextLevel.SKELETON
-        else if (!hasFull && !hasSkeleton && hasNone) ContextLevel.NONE
-        else if (!hasFull && !hasSkeleton && !hasNone) ContextLevel.NONE
-        else ContextLevel.MIXED
-
+        val result = AggregatedState(allMaxed, allSkeleton, allNone, hasLeaves)
         nodeStateCache[node] = result
         return result
+    }
+
+    private fun getComputedLevel(node: DefaultMutableTreeNode): ContextLevel {
+        return getAggregatedState(node).level
     }
 
     private fun applyStateToNode(node: DefaultMutableTreeNode, level: ContextLevel) {
         val file = (node.userObject as? NodeData)?.file ?: return
         if (!file.isDirectory) {
-            // Leaf nodes inside the tree are pre-filtered, skip the slow isIgnored check
             contextState.applyStateRecursively(file, level, checkIgnore = false)
         } else {
             val enumeration = node.depthFirstEnumeration()
             while (enumeration.hasMoreElements()) {
                 val descendant = enumeration.nextElement() as DefaultMutableTreeNode
                 val descFile = (descendant.userObject as? NodeData)?.file ?: continue
-                if (!descFile.isDirectory) {
+                // Apply to files AND empty directories!
+                if (!descFile.isDirectory || descFile.children.isEmpty()) {
                     contextState.applyStateRecursively(descFile, level, checkIgnore = false)
                 }
             }
