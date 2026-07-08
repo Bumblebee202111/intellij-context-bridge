@@ -1,6 +1,8 @@
 package com.github.bumblebee202111.intellijcontextbridge.ui
 
+import com.github.bumblebee202111.intellijcontextbridge.context.AiPayload
 import com.github.bumblebee202111.intellijcontextbridge.context.PayloadGenerator
+import com.github.bumblebee202111.intellijcontextbridge.server.BrowserTab
 import com.github.bumblebee202111.intellijcontextbridge.server.ContextBridgeServer
 import com.github.bumblebee202111.intellijcontextbridge.state.ContextLevel
 import com.github.bumblebee202111.intellijcontextbridge.state.ContextState
@@ -17,6 +19,7 @@ import com.intellij.openapi.fileEditor.OpenFileDescriptor
 import com.intellij.openapi.ide.CopyPasteManager
 import com.intellij.openapi.project.Project
 import com.intellij.openapi.project.guessProjectDir
+import com.intellij.openapi.ui.ComboBox
 import com.intellij.openapi.ui.Messages
 import com.intellij.openapi.vfs.VfsUtilCore
 import com.intellij.openapi.vfs.VirtualFile
@@ -33,6 +36,7 @@ import org.jetbrains.concurrency.CancellablePromise
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
 import java.awt.BorderLayout
+import java.awt.Dimension
 import java.awt.FlowLayout
 import java.awt.datatransfer.StringSelection
 import java.awt.event.KeyAdapter
@@ -47,6 +51,10 @@ import javax.swing.event.DocumentEvent
 import javax.swing.tree.DefaultMutableTreeNode
 import javax.swing.tree.DefaultTreeModel
 import javax.swing.tree.TreePath
+
+data class BrowserTabItem(val id: String, val title: String) {
+    override fun toString() = title
+}
 
 class ContextComposerPanel(private val project: Project) {
     private val contextState = project.service<ContextState>()
@@ -263,12 +271,15 @@ class ContextComposerPanel(private val project: Project) {
         }
         bottomPanel.add(JBScrollPane(promptArea), BorderLayout.CENTER)
 
-        val actionButtonPanel = JPanel(java.awt.GridLayout(1, 4, 5, 0)).apply { border = JBUI.Borders.emptyTop(5) }
+        val actionButtonPanel = JPanel(BorderLayout(5, 0)).apply { border = JBUI.Borders.emptyTop(5) }
+
+        val leftButtons = JPanel(FlowLayout(FlowLayout.LEFT, 5, 0))
+        val rightButtons = JPanel(FlowLayout(FlowLayout.RIGHT, 5, 0))
 
         val clearButton = JButton("New Chat").apply {
             addActionListener {
                 contextState.clear()
-                isConfigLoaded = false // Force config reload on next refresh
+                isConfigLoaded = false
                 promptArea.text = ""
                 historyIndex = -1
                 draftPrompt = ""
@@ -301,14 +312,12 @@ class ContextComposerPanel(private val project: Project) {
                 text = "Generating..."
                 isEnabled = false
 
-                ReadAction.nonBlocking<com.github.bumblebee202111.intellijcontextbridge.context.AiPayload> {
+                ReadAction.nonBlocking<AiPayload> {
                     PayloadGenerator.generatePayload(project, contextState, promptText)
                 }
                 .finishOnUiThread(ModalityState.nonModal()) { payloadObj ->
                     payloadObj.turn?.let { contextState.addTurn(it) }
-
                     refreshUi()
-
                     CopyPasteManager.getInstance().setContents(StringSelection(payloadObj.text))
 
                     if (payloadObj.attachments.isNotEmpty()) {
@@ -326,11 +335,17 @@ class ContextComposerPanel(private val project: Project) {
             }
         }
 
-        val sendWsButton = JButton("Waiting for Browser...").apply {
+        val tabComboBox = ComboBox<BrowserTabItem>().apply {
+            toolTipText = "Select the target AI Studio tab"
+            preferredSize = Dimension(180, preferredSize.height)
+        }
+
+        val sendWsButton = JButton("Waiting...").apply {
             isEnabled = false
-            toolTipText = "Send context directly to AI Studio via WebSocket"
+            toolTipText = "Send context directly to the selected AI Studio tab"
             
             addActionListener {
+                val selectedTab = tabComboBox.selectedItem as? BrowserTabItem ?: return@addActionListener
                 val promptText = promptArea.text
                 historyIndex = -1
                 draftPrompt = ""
@@ -339,16 +354,15 @@ class ContextComposerPanel(private val project: Project) {
                 text = "Generating..."
                 isEnabled = false
 
-                ReadAction.nonBlocking<com.github.bumblebee202111.intellijcontextbridge.context.AiPayload> {
+                ReadAction.nonBlocking<AiPayload> {
                     PayloadGenerator.generatePayload(project, contextState, promptText)
                 }
                 .finishOnUiThread(ModalityState.nonModal()) { payloadObj ->
                     payloadObj.turn?.let { contextState.addTurn(it) }
-
                     refreshUi()
 
                     val jsonString = Json.encodeToString(payloadObj)
-                    server.broadcast(jsonString)
+                    server.sendToTab(selectedTab.id, jsonString)
 
                     text = "Sent!"
                     promptArea.text = ""
@@ -358,22 +372,40 @@ class ContextComposerPanel(private val project: Project) {
             }
         }
 
-        server.onConnectionChanged = { isConnected ->
+        val updateTabsUI = { tabs: List<BrowserTab> ->
             SwingUtilities.invokeLater {
-                if (isConnected) {
+                val currentSelection = tabComboBox.selectedItem as? BrowserTabItem
+                tabComboBox.removeAllItems()
+                tabs.forEach { tabComboBox.addItem(BrowserTabItem(it.id, it.title)) }
+
+                if (currentSelection != null && tabs.any { it.id == currentSelection.id }) {
+                    tabComboBox.selectedItem = tabs.first { it.id == currentSelection.id }.let { BrowserTabItem(it.id, it.title) }
+                } else if (tabComboBox.itemCount > 0) {
+                    tabComboBox.selectedIndex = 0
+                }
+
+                if (tabComboBox.itemCount > 0) {
                     sendWsButton.text = "Send to AI Studio"
                     sendWsButton.isEnabled = true
                 } else {
-                    sendWsButton.text = "Waiting for Browser..."
+                    sendWsButton.text = "Waiting..."
                     sendWsButton.isEnabled = false
                 }
             }
         }
 
-        actionButtonPanel.add(clearButton)
-        actionButtonPanel.add(undoButton)
-        actionButtonPanel.add(copyButton)
-        actionButtonPanel.add(sendWsButton)
+        server.onTabsChanged = updateTabsUI
+        updateTabsUI(server.getActiveTabs())
+
+        leftButtons.add(clearButton)
+        leftButtons.add(undoButton)
+        leftButtons.add(copyButton)
+
+        rightButtons.add(tabComboBox)
+        rightButtons.add(sendWsButton)
+
+        actionButtonPanel.add(leftButtons, BorderLayout.WEST)
+        actionButtonPanel.add(rightButtons, BorderLayout.EAST)
 
         bottomPanel.add(actionButtonPanel, BorderLayout.SOUTH)
 
@@ -454,7 +486,12 @@ class ContextComposerPanel(private val project: Project) {
     }
 
     private fun getAggregatedState(node: DefaultMutableTreeNode): AggregatedState {
-        val file = (node.userObject as? NodeData)?.file ?: return AggregatedState(true, true, true, false)
+        val file = (node.userObject as? NodeData)?.file ?: return AggregatedState(
+            allMaxed = true,
+            allSkeleton = true,
+            allNone = true,
+            hasLeaves = false
+        )
         
         if (!file.isDirectory || file.children.isEmpty()) {
             val level = contextState.getLevel(file)

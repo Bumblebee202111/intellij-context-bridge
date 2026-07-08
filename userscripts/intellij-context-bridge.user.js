@@ -18,7 +18,13 @@
     win.__cbActive = false;
     win.__cbIntercepted = false;
 
-    // --- Global Status Pill (Replaces the heavy FAB) ---
+    // --- Multi-IDE Mesh Networking ---
+    const PORTS = Array.from({length: 10}, (_, i) => 37373 + i);
+    const activeSockets = new Map(); // port -> WebSocket
+    const tabId = Math.random().toString(36).substring(2, 10);
+    let lastActivePort = null; // Remembers which IDE last sent us a payload
+
+    // --- Global Status Pill ---
     let statusPill;
     let toastTimeout;
 
@@ -46,11 +52,37 @@
         }
     }
 
-    // --- Clipboard Interception ---
+    function updateStatusPill() {
+        const connectedCount = activeSockets.size;
+        if (connectedCount > 0) {
+            showToast(`🔗 Connected to ${connectedCount} IDE(s)`, '#4CAF50', 3000);
+        } else {
+            showToast('🔌 IDE Disconnected', '#F44336', 0);
+        }
+    }
+
+    function getChatTitle() {
+        const h1 = document.querySelector('.page-title h1');
+        if (h1 && h1.textContent.trim()) return h1.textContent.trim();
+        return document.title.replace(' - Google AI Studio', '').trim() || 'New Chat';
+    }
+
+    // --- Clipboard Interception & Routing ---
     function sendToIde(text) {
-        if (window.__ws && window.__ws.readyState === WebSocket.OPEN) {
-            window.__ws.send(text);
+        // Route back to the exact IDE that initiated this conversation
+        if (lastActivePort && activeSockets.has(lastActivePort) && activeSockets.get(lastActivePort).readyState === WebSocket.OPEN) {
+            activeSockets.get(lastActivePort).send(text);
             win.__cbIntercepted = true;
+        } else {
+            // Fallback: Broadcast to all connected IDEs
+            let sent = false;
+            activeSockets.forEach(ws => {
+                if (ws.readyState === WebSocket.OPEN) {
+                    ws.send(text);
+                    sent = true;
+                }
+            });
+            win.__cbIntercepted = sent;
         }
     }
 
@@ -70,24 +102,68 @@
         let isProcessing = false;
         initStatusPill();
 
+        // --- Connection Maintenance ---
+        function maintainConnections() {
+            PORTS.forEach(port => {
+                if (!activeSockets.has(port) || activeSockets.get(port).readyState === WebSocket.CLOSED) {
+                    try {
+                        const ws = new WebSocket(`ws://127.0.0.1:${port}/ai-bridge`);
+
+                        ws.onopen = () => {
+                            activeSockets.set(port, ws);
+                            ws.send(`[HANDSHAKE]${tabId}|${getChatTitle()}`);
+                            updateStatusPill();
+                        };
+
+                        ws.onmessage = (event) => {
+                            lastActivePort = port; // Lock the return route to this specific IDE
+                            handleIncomingPayload(event.data);
+                        };
+
+                        ws.onclose = () => {
+                            activeSockets.delete(port);
+                            updateStatusPill();
+                        };
+
+                        ws.onerror = () => {
+                            ws.close();
+                        };
+                    } catch (e) {
+                        activeSockets.delete(port);
+                    }
+                }
+            });
+        }
+
+        setInterval(maintainConnections, 3000);
+        maintainConnections();
+
+        // Keep IDEs updated if the chat title changes
+        let lastTitle = "";
+        setInterval(() => {
+            const currentTitle = getChatTitle();
+            if (currentTitle !== lastTitle) {
+                lastTitle = currentTitle;
+                activeSockets.forEach(ws => {
+                    if (ws.readyState === WebSocket.OPEN) {
+                        ws.send(`[HANDSHAKE]${tabId}|${currentTitle}`);
+                    }
+                });
+            }
+        }, 2000);
+
         // --- Per-Turn Button Injection ---
         function injectTurnButtons() {
-            // Target the actual model turn containers
             const turns = document.querySelectorAll('.chat-turn-container.model');
             turns.forEach(turn => {
-                // Skip if we already injected the button
                 if (turn.querySelector('.cb-send-to-ide-btn')) return;
 
-                // 1. Ensure it's fully generated AND not a "Thoughts" turn
-                // "Thoughts" turns do not have a thumb_up button.
                 const hasThumbUp = turn.querySelector('button[aria-label="Good response"]') !== null;
                 if (!hasThumbUp) return;
 
-                // 2. Ensure it's not currently loading
                 const isLoading = turn.querySelector('ms-chat-loading-indicator') !== null;
                 if (isLoading) return;
 
-                // 3. Find the exact action bar to align perfectly with native buttons
                 const actionBar = turn.querySelector('.actions.hover-or-edit');
                 if (!actionBar) return;
 
@@ -115,17 +191,7 @@
             });
         }
 
-        // Run the injector loop to catch newly generated turns
         setInterval(injectTurnButtons, 1000);
-
-        // --- WebSocket Connection ---
-        function connect() {
-            window.__ws = new WebSocket('ws://127.0.0.1:37373/ai-bridge');
-            window.__ws.onopen = () => showToast('🔗 IDE Connected', '#4CAF50', 3000);
-            window.__ws.onmessage = (event) => handleIncomingPayload(event.data);
-            window.__ws.onclose = () => { showToast('🔌 IDE Disconnected', '#F44336', 0); setTimeout(connect, 3000); };
-            window.__ws.onerror = () => window.__ws.close();
-        }
 
         async function waitForElement(selector, timeout = 15000) {
             return new Promise((resolve) => {
@@ -227,7 +293,6 @@
             }, 2000);
         }
 
-        // --- Scoped Extraction Logic ---
         async function extractViaNativeCopy(turnElement, btnElement) {
             const originalText = btnElement.textContent;
             btnElement.textContent = '⏳ Copying...';
@@ -281,8 +346,6 @@
 
             }, 500);
         }
-
-        connect();
     });
 
 })();
