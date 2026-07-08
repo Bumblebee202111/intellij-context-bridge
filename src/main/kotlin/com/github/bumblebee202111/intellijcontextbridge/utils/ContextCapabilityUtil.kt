@@ -33,19 +33,20 @@ object ContextCapabilityUtil {
 
     /**
      * Cycles to the next logical state based on the file's maximum capability.
+     * Left-click/Spacebar toggles active states ONLY. It never cycles to NONE.
      */
     fun getNextLevel(current: ContextLevel, maxLevel: ContextLevel): ContextLevel {
         return if (maxLevel == ContextLevel.SKELETON) {
             when (current) {
                 ContextLevel.NONE, ContextLevel.MIXED -> ContextLevel.SKELETON
-                ContextLevel.SKELETON -> ContextLevel.NONE
-                ContextLevel.FULL -> ContextLevel.NONE // Fallback
+                ContextLevel.SKELETON -> ContextLevel.SKELETON // Never cycle to NONE
+                ContextLevel.FULL -> ContextLevel.SKELETON // Fallback
             }
         } else {
             when (current) {
                 ContextLevel.NONE, ContextLevel.MIXED -> ContextLevel.FULL
                 ContextLevel.FULL -> ContextLevel.SKELETON
-                ContextLevel.SKELETON -> ContextLevel.NONE
+                ContextLevel.SKELETON -> ContextLevel.FULL // Cycle back to FULL, never NONE
             }
         }
     }

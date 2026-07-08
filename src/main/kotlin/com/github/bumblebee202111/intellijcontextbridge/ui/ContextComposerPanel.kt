@@ -91,23 +91,14 @@ class ContextComposerPanel(private val project: Project) {
     init {
         tree.cellRenderer = ContextTreeCellRenderer(::getComputedLevel) { file -> lastDedupedFiles.contains(file) }
 
-        // Helper function to calculate the next state in the cycle
         fun getNextToggleLevel(node: DefaultMutableTreeNode, file: VirtualFile): ContextLevel {
             val currentLevel = getComputedLevel(node)
-            return if (file.isDirectory) {
-                if (file.children.isEmpty()) {
-                    ContextLevel.SKELETON
-                } else {
-                    when (currentLevel) {
-                        ContextLevel.NONE, ContextLevel.MIXED -> ContextLevel.FULL
-                        ContextLevel.FULL -> ContextLevel.SKELETON
-                        ContextLevel.SKELETON -> ContextLevel.FULL
-                    }
-                }
+            val maxLevel = if (file.isDirectory && file.children.isNotEmpty()) {
+                ContextLevel.FULL
             } else {
-                val maxLevel = ContextCapabilityUtil.getMaxLevel(file)
-                ContextCapabilityUtil.getNextLevel(currentLevel, maxLevel)
+                ContextCapabilityUtil.getMaxLevel(file)
             }
+            return ContextCapabilityUtil.getNextLevel(currentLevel, maxLevel)
         }
 
         tree.addMouseListener(object : MouseAdapter() {
