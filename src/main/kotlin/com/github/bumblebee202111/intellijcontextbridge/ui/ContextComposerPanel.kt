@@ -83,13 +83,32 @@ class ContextComposerPanel(private val project: Project) {
     private var searchQuery = ""
     private val treeModel = DefaultTreeModel(DefaultMutableTreeNode("Loading..."))
     private val tree = Tree(treeModel).apply {
-        toolTipText = "Left-click icon: Toggle. Right-click row: Clear. Double-click: Open."
+        toolTipText = "Space/Left-click icon: Toggle. Right-click row: Clear. Double-click: Open."
     }
 
     val content: JPanel = JPanel(BorderLayout())
 
     init {
         tree.cellRenderer = ContextTreeCellRenderer(::getComputedLevel) { file -> lastDedupedFiles.contains(file) }
+
+        // Helper function to calculate the next state in the cycle
+        fun getNextToggleLevel(node: DefaultMutableTreeNode, file: VirtualFile): ContextLevel {
+            val currentLevel = getComputedLevel(node)
+            return if (file.isDirectory) {
+                if (file.children.isEmpty()) {
+                    ContextLevel.SKELETON
+                } else {
+                    when (currentLevel) {
+                        ContextLevel.NONE, ContextLevel.MIXED -> ContextLevel.FULL
+                        ContextLevel.FULL -> ContextLevel.SKELETON
+                        ContextLevel.SKELETON -> ContextLevel.FULL
+                    }
+                }
+            } else {
+                val maxLevel = ContextCapabilityUtil.getMaxLevel(file)
+                ContextCapabilityUtil.getNextLevel(currentLevel, maxLevel)
+            }
+        }
 
         tree.addMouseListener(object : MouseAdapter() {
             override fun mouseClicked(e: MouseEvent) {
@@ -108,27 +127,8 @@ class ContextComposerPanel(private val project: Project) {
                     e.consume()
                 } else if (SwingUtilities.isLeftMouseButton(e)) {
                     if (e.clickCount == 1) {
-                        if (e.x >= bounds.x && e.x < bounds.x + 22) {
-                            val currentLevel = getComputedLevel(node)
-                            
-                            val nextLevel = if (file.isDirectory) {
-                                if (file.children.isEmpty()) {
-                                    // Empty directories can only be SKELETON, left-click never removes
-                                    ContextLevel.SKELETON
-                                } else {
-                                    // Populated directories cycle between FULL and SKELETON, never NONE
-                                    when (currentLevel) {
-                                        ContextLevel.NONE, ContextLevel.MIXED -> ContextLevel.FULL
-                                        ContextLevel.FULL -> ContextLevel.SKELETON
-                                        ContextLevel.SKELETON -> ContextLevel.FULL
-                                    }
-                                }
-                            } else {
-                                // Leaf files use standard capability cycling (which can cycle back to NONE)
-                                val maxLevel = ContextCapabilityUtil.getMaxLevel(file)
-                                ContextCapabilityUtil.getNextLevel(currentLevel, maxLevel)
-                            }
-
+                        if (e.x >= bounds.x && e.x < bounds.x + 28) {
+                            val nextLevel = getNextToggleLevel(node, file)
                             applyStateToNode(node, nextLevel)
                             updateDedupedFiles()
                             if (showSelectedOnly) refreshUi() else tree.repaint()
@@ -156,6 +156,11 @@ class ContextComposerPanel(private val project: Project) {
                     when (e.keyCode) {
                         KeyEvent.VK_ENTER -> {
                             if (!file.isDirectory) OpenFileDescriptor(project, file).navigate(true)
+                        }
+                        KeyEvent.VK_SPACE -> {
+                            val nextLevel = getNextToggleLevel(node, file)
+                            applyStateToNode(node, nextLevel)
+                            stateChanged = true
                         }
                         KeyEvent.VK_S -> { applyStateToNode(node, ContextLevel.SKELETON); stateChanged = true }
                         KeyEvent.VK_F -> { applyStateToNode(node, ContextLevel.FULL); stateChanged = true }
