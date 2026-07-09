@@ -116,7 +116,7 @@
                         };
 
                         ws.onmessage = (event) => {
-                            lastActivePort = port; // Lock the return route to this specific IDE
+                            lastActivePort = port;
                             handleIncomingPayload(event.data);
                         };
 
@@ -138,7 +138,6 @@
         setInterval(maintainConnections, 3000);
         maintainConnections();
 
-        // Keep IDEs updated if the chat title changes
         let lastTitle = "";
         setInterval(() => {
             const currentTitle = getChatTitle();
@@ -242,6 +241,41 @@
                 payloadObj = { text: payloadString, attachments: [] };
             }
 
+            const nativeInputValueSetter = Object.getOwnPropertyDescriptor(window.HTMLTextAreaElement.prototype, "value").set;
+
+            // 1. Inject System Instructions (if provided and not already injected)
+            if (payloadObj.systemInstructions) {
+                const sysCard = document.querySelector('[data-test-system-instructions-card]');
+                if (sysCard) {
+                    const subtitle = sysCard.querySelector('.subtitle');
+                    // Check if our prompt is already injected to avoid UI thrashing
+                    const isAlreadyInjected = subtitle && subtitle.textContent.includes('You are an expert AI coding assistant');
+
+                    if (!isAlreadyInjected) {
+                        showToast('⚙️ Updating System Instructions...', '#FF9800', 0);
+                        sysCard.click(); // Open the panel
+
+                        const sysTextarea = await waitForElement('textarea[aria-label="System instructions"]', 3000);
+                        if (sysTextarea) {
+                            sysTextarea.focus();
+                            nativeInputValueSetter.call(sysTextarea, payloadObj.systemInstructions);
+                            sysTextarea.dispatchEvent(new Event('input', { bubbles: true }));
+
+                            // Wait for Angular to register the change
+                            await new Promise(r => setTimeout(r, 500));
+
+                            // Close the panel
+                            const closeBtn = document.querySelector('button[data-test-close-button], button[aria-label="Close panel"]');
+                            if (closeBtn) closeBtn.click();
+
+                            // Wait for the slide-out animation to finish
+                            await new Promise(r => setTimeout(r, 300));
+                        }
+                    }
+                }
+            }
+
+            // 2. Handle Media Attachments
             if (payloadObj.attachments && payloadObj.attachments.length > 0) {
                 showToast(`📎 Attaching ${payloadObj.attachments.length} files...`, '#FF9800', 0);
                 const files = payloadObj.attachments.map(att => base64ToFile(att.base64Data, att.mimeType, att.name));
@@ -249,14 +283,15 @@
                 await new Promise(r => setTimeout(r, 2000));
             }
 
+            // 3. Inject Text Prompt
             const textarea = await waitForElement('textarea[formcontrolname="promptText"], textarea[aria-label="Enter a prompt"]');
             if (!textarea) { isProcessing = false; return; }
 
             textarea.focus();
-            const nativeInputValueSetter = Object.getOwnPropertyDescriptor(window.HTMLTextAreaElement.prototype, "value").set;
             nativeInputValueSetter.call(textarea, payloadObj.text);
             textarea.dispatchEvent(new Event('input', { bubbles: true }));
 
+            // 4. Trigger Run
             setTimeout(async () => {
                 const runBtn = await waitForElement('button[type="submit"]');
                 if (runBtn) {

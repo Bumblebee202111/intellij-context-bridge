@@ -14,6 +14,7 @@ data class AiAttachment(
 
 @Serializable
 data class AiPayload(
+    val systemInstructions: String,
     val text: String,
     val attachments: List<AiAttachment>
 ) {

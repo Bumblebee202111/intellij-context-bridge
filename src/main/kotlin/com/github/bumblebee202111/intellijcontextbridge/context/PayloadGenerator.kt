@@ -22,9 +22,8 @@ object PayloadGenerator {
         val currentCache = contextState.getDedupCache()
         val newTurn = UserTurn(prompt = userPrompt)
 
-        val markdownText =  buildString {
-            // 1. System Directives
-            appendLine("<system_directives>")
+        // 1. System Instructions (Separated from the main prompt)
+        val systemInstructionsText = buildString {
             appendLine("You are an expert AI coding assistant natively integrated into an IntelliJ IDE. Adhere strictly to these protocols:")
             appendLine()
             appendLine("1. **Context Awareness**: Files are provided as either `(Full)` or `(Skeleton)`. Skeletons have their internal logic stripped. If you need the full logic of a Skeleton file, halt and output: `REQUEST_FULL: [filepath]`.")
@@ -64,9 +63,9 @@ object PayloadGenerator {
             appendLine("    }")
             appendLine("}")
             appendLine("```")
-            appendLine("</system_directives>")
-            appendLine()
+        }
 
+        val markdownText =  buildString {
             // 2. Project Context
             appendLine("<project_context>")
             appendLine()
@@ -141,7 +140,7 @@ object PayloadGenerator {
                     // 3. Compare Level AND Hash
                     if (previousRecord != null && previousRecord.level == level && previousRecord.hash == currentHash) {
                         dedupedFilesTracker.add(file)
-                        newTurn.sentFiles[relativePath] = FileStateRecord(level, currentHash) // Record it so future turns know it was part of this payload
+                        newTurn.sentFiles[relativePath] = FileStateRecord(level, currentHash)
                         continue
                     } else {
                         newTurn.sentFiles[relativePath] = FileStateRecord(level, currentHash)
@@ -175,7 +174,11 @@ object PayloadGenerator {
             appendLine("</user_prompt>")
         }
 
-        val payload = AiPayload(text = markdownText, attachments = attachments)
+        val payload = AiPayload(
+            systemInstructions = systemInstructionsText,
+            text = markdownText,
+            attachments = attachments
+        )
         payload.dedupedFiles = dedupedFilesTracker
         payload.turn = newTurn
         return payload
