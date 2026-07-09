@@ -18,13 +18,11 @@
     win.__cbActive = false;
     win.__cbIntercepted = false;
 
-    // --- Multi-IDE Mesh Networking ---
     const PORTS = Array.from({length: 10}, (_, i) => 37373 + i);
-    const activeSockets = new Map(); // port -> WebSocket
+    const activeSockets = new Map();
     const tabId = Math.random().toString(36).substring(2, 10);
-    let lastActivePort = null; // Remembers which IDE last sent us a payload
+    let lastActivePort = null;
 
-    // --- Global Status Pill ---
     let statusPill;
     let toastTimeout;
 
@@ -53,7 +51,12 @@
     }
 
     function updateStatusPill() {
-        const connectedCount = activeSockets.size;
+        // Count only fully open sockets
+        let connectedCount = 0;
+        activeSockets.forEach(ws => {
+            if (ws.readyState === WebSocket.OPEN) connectedCount++;
+        });
+
         if (connectedCount > 0) {
             showToast(`🔗 Connected to ${connectedCount} IDE(s)`, '#4CAF50', 3000);
         } else {
@@ -67,14 +70,11 @@
         return document.title.replace(' - Google AI Studio', '').trim() || 'New Chat';
     }
 
-    // --- Clipboard Interception & Routing ---
     function sendToIde(text) {
-        // Route back to the exact IDE that initiated this conversation
         if (lastActivePort && activeSockets.has(lastActivePort) && activeSockets.get(lastActivePort).readyState === WebSocket.OPEN) {
             activeSockets.get(lastActivePort).send(text);
             win.__cbIntercepted = true;
         } else {
-            // Fallback: Broadcast to all connected IDEs
             let sent = false;
             activeSockets.forEach(ws => {
                 if (ws.readyState === WebSocket.OPEN) {
@@ -102,16 +102,19 @@
         let isProcessing = false;
         initStatusPill();
 
-        // --- Connection Maintenance ---
         function maintainConnections() {
+            const currentTitle = getChatTitle();
             PORTS.forEach(port => {
-                if (!activeSockets.has(port) || activeSockets.get(port).readyState === WebSocket.CLOSED) {
+                // Only attempt to connect if we aren't already tracking this port
+                if (!activeSockets.has(port)) {
                     try {
                         const ws = new WebSocket(`ws://127.0.0.1:${port}/ai-bridge`);
 
+                        // Immediately track the socket so we don't spam connections
+                        activeSockets.set(port, ws);
+
                         ws.onopen = () => {
-                            activeSockets.set(port, ws);
-                            ws.send(`[HANDSHAKE]${tabId}|${getChatTitle()}`);
+                            ws.send(`[HANDSHAKE]${tabId}|${currentTitle}`);
                             updateStatusPill();
                         };
 
@@ -121,12 +124,14 @@
                         };
 
                         ws.onclose = () => {
+                            // Remove from tracking so the next loop can retry
                             activeSockets.delete(port);
                             updateStatusPill();
                         };
 
                         ws.onerror = () => {
-                            ws.close();
+                            // onerror doesn't always trigger onclose immediately in all browsers
+                            // but we rely on onclose to handle the cleanup
                         };
                     } catch (e) {
                         activeSockets.delete(port);
@@ -151,7 +156,6 @@
             }
         }, 2000);
 
-        // --- Per-Turn Button Injection ---
         function injectTurnButtons() {
             const turns = document.querySelectorAll('.chat-turn-container.model');
             turns.forEach(turn => {
@@ -238,22 +242,20 @@
             try {
                 payloadObj = JSON.parse(payloadString);
             } catch (e) {
-                payloadObj = { text: payloadString, attachments: [] };
+                payloadObj = { text: payloadString, attachments: [], systemInstructions: "" };
             }
 
             const nativeInputValueSetter = Object.getOwnPropertyDescriptor(window.HTMLTextAreaElement.prototype, "value").set;
 
-            // 1. Inject System Instructions (if provided and not already injected)
             if (payloadObj.systemInstructions) {
                 const sysCard = document.querySelector('[data-test-system-instructions-card]');
                 if (sysCard) {
                     const subtitle = sysCard.querySelector('.subtitle');
-                    // Check if our prompt is already injected to avoid UI thrashing
                     const isAlreadyInjected = subtitle && subtitle.textContent.includes('You are an expert AI coding assistant');
 
                     if (!isAlreadyInjected) {
                         showToast('⚙️ Updating System Instructions...', '#FF9800', 0);
-                        sysCard.click(); // Open the panel
+                        sysCard.click();
 
                         const sysTextarea = await waitForElement('textarea[aria-label="System instructions"]', 3000);
                         if (sysTextarea) {
@@ -261,21 +263,17 @@
                             nativeInputValueSetter.call(sysTextarea, payloadObj.systemInstructions);
                             sysTextarea.dispatchEvent(new Event('input', { bubbles: true }));
 
-                            // Wait for Angular to register the change
                             await new Promise(r => setTimeout(r, 500));
 
-                            // Close the panel
                             const closeBtn = document.querySelector('button[data-test-close-button], button[aria-label="Close panel"]');
                             if (closeBtn) closeBtn.click();
 
-                            // Wait for the slide-out animation to finish
                             await new Promise(r => setTimeout(r, 300));
                         }
                     }
                 }
             }
 
-            // 2. Handle Media Attachments
             if (payloadObj.attachments && payloadObj.attachments.length > 0) {
                 showToast(`📎 Attaching ${payloadObj.attachments.length} files...`, '#FF9800', 0);
                 const files = payloadObj.attachments.map(att => base64ToFile(att.base64Data, att.mimeType, att.name));
@@ -283,7 +281,6 @@
                 await new Promise(r => setTimeout(r, 2000));
             }
 
-            // 3. Inject Text Prompt
             const textarea = await waitForElement('textarea[formcontrolname="promptText"], textarea[aria-label="Enter a prompt"]');
             if (!textarea) { isProcessing = false; return; }
 
@@ -291,7 +288,6 @@
             nativeInputValueSetter.call(textarea, payloadObj.text);
             textarea.dispatchEvent(new Event('input', { bubbles: true }));
 
-            // 4. Trigger Run
             setTimeout(async () => {
                 const runBtn = await waitForElement('button[type="submit"]');
                 if (runBtn) {
