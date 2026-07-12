@@ -1,5 +1,12 @@
 # IntelliJ Context Bridge
 
+> ⚠️ **Disclaimer: Experimental & As-Is**
+> This is a personal dogfooding project open-sourced for educational purposes and reference.
+> * **No Pre-built Binaries:** You must build the plugin from source yourself.
+> * **No Support:** You may open issues for discussion or to report UI breaks, but I do not guarantee updates or bug fixes.
+> * **No Pull Requests:** I am not accepting PRs at this time.
+> * **Web UI Automation:** The companion userscript interacts with Google AI Studio by automating the web UI (DOM manipulation) rather than using an official API. This means it will naturally break whenever Google updates their frontend layout. Use and adapt it at your own discretion.
+
 ## Overview
 A native IntelliJ/Android Studio plugin designed to connect the IDE with web-based LLM playgrounds (such as Google AI Studio). Inspired by the workflow of [CodeWebChat](https://github.com/robertpiosik/CodeWebChat), it acts as an optimized, stateful context manager. It compiles project context into LLM-friendly payloads and synchronizes them via the clipboard or a local WebSocket server, providing an alternative to direct API integrations.
 
@@ -17,46 +24,22 @@ A native IntelliJ/Android Studio plugin designed to connect the IDE with web-bas
 * IntelliJ Platform Plugin Template (Kotlin)
 * Gradle
 
-![Build](https://github.com/Bumblebee202111/intellij-context-bridge/workflows/Build/badge.svg)
-[![Version](https://img.shields.io/jetbrains/plugin/v/MARKETPLACE_ID.svg)](https://plugins.jetbrains.com/plugin/MARKETPLACE_ID)
-[![Downloads](https://img.shields.io/jetbrains/plugin/d/MARKETPLACE_ID.svg)](https://plugins.jetbrains.com/plugin/MARKETPLACE_ID)
+## Building & Installation
 
-## Template ToDo list
-- [x] Create a new [IntelliJ Platform Plugin Template][template] project.
-- [ ] Get familiar with the [template documentation][template].
-- [ ] Adjust the [group](./gradle.properties), as well as the [id](./src/main/resources/META-INF/plugin.xml), [name](./src/main/resources/META-INF/plugin.xml), and [sources package](./src/main/kotlin).
-- [ ] Adjust the plugin [description](./src/main/resources/META-INF/plugin.xml) (see [Tips][docs:plugin-description]) and this README to describe what your plugin does.
-- [ ] Review the [Legal Agreements](https://plugins.jetbrains.com/docs/marketplace/legal-agreements.html?from=IJPluginTemplate).
-- [ ] [Publish a plugin manually](https://plugins.jetbrains.com/docs/intellij/publishing-plugin.html?from=IJPluginTemplate) for the first time.
-- [ ] Set the `MARKETPLACE_ID` in the above README badges. You can obtain it once the plugin is published to JetBrains Marketplace.
-- [ ] Set the [Plugin Signing](https://plugins.jetbrains.com/docs/intellij/plugin-signing.html?from=IJPluginTemplate) related [secrets](https://github.com/JetBrains/intellij-platform-plugin-template#environment-variables).
-- [ ] Set the [Deployment Token](https://plugins.jetbrains.com/docs/marketplace/plugin-upload.html?from=IJPluginTemplate).
-- [ ] Click the <kbd>Watch</kbd> button on the top of the [IntelliJ Platform Plugin Template][template] to be notified about releases containing new features and fixes.
+Because there are no pre-packaged releases, you must build the plugin locally using Gradle.
 
-This Fancy IntelliJ Platform Plugin is going to be your implementation of the brilliant ideas that you have.
-
-## Installation
-
-- Using the IDE built-in plugin system:
-
-  <kbd>Settings/Preferences</kbd> > <kbd>Plugins</kbd> > <kbd>Marketplace</kbd> > <kbd>Search for "intellij-context-bridge"</kbd> >
-  <kbd>Install</kbd>
-
-- Using JetBrains Marketplace:
-
-  Go to [JetBrains Marketplace](https://plugins.jetbrains.com/plugin/MARKETPLACE_ID) and install it by clicking the <kbd>Install to ...</kbd> button in case your IDE is running.
-
-  You can also download the [latest release](https://plugins.jetbrains.com/plugin/MARKETPLACE_ID/versions) from JetBrains Marketplace and install it manually using
-  <kbd>Settings/Preferences</kbd> > <kbd>Plugins</kbd> > <kbd>⚙️</kbd> > <kbd>Install plugin from disk...</kbd>
-
-- Manually:
-
-  Download the [latest release](https://github.com/Bumblebee202111/intellij-context-bridge/releases/latest) and install it manually using
-  <kbd>Settings/Preferences</kbd> > <kbd>Plugins</kbd> > <kbd>⚙️</kbd> > <kbd>Install plugin from disk...</kbd>
-
-
----
-Plugin based on the [IntelliJ Platform Plugin Template][template].
-
-[template]: https://github.com/JetBrains/intellij-platform-plugin-template
-[docs:plugin-description]: https://plugins.jetbrains.com/docs/intellij/plugin-user-experience.html#plugin-description-and-presentation
+1. **Clone the repository:**
+   ```bash
+   git clone https://github.com/Bumblebee202111/intellij-context-bridge.git
+   cd intellij-context-bridge
+   ```
+2. **Build the plugin:**
+   ```bash
+   ./gradlew buildPlugin
+   ```
+3. **Install in IntelliJ/Android Studio:**
+   * Go to <kbd>Settings/Preferences</kbd> > <kbd>Plugins</kbd> > <kbd>⚙️</kbd> > <kbd>Install plugin from disk...</kbd>
+   * Select the generated ZIP file located at `build/distributions/intellij-context-bridge-X.X.X.zip`.
+4. **Install the Userscript:**
+   * Install a userscript manager like Tampermonkey in your browser.
+   * Add the script located at `userscripts/intellij-context-bridge.user.js`.
