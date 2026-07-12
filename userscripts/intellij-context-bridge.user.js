@@ -51,7 +51,6 @@
     }
 
     function updateStatusPill() {
-        // Count only fully open sockets
         let connectedCount = 0;
         activeSockets.forEach(ws => {
             if (ws.readyState === WebSocket.OPEN) connectedCount++;
@@ -105,12 +104,10 @@
         function maintainConnections() {
             const currentTitle = getChatTitle();
             PORTS.forEach(port => {
-                // Only attempt to connect if we aren't already tracking this port
                 if (!activeSockets.has(port)) {
                     try {
                         const ws = new WebSocket(`ws://127.0.0.1:${port}/ai-bridge`);
 
-                        // Immediately track the socket so we don't spam connections
                         activeSockets.set(port, ws);
 
                         ws.onopen = () => {
@@ -124,14 +121,11 @@
                         };
 
                         ws.onclose = () => {
-                            // Remove from tracking so the next loop can retry
                             activeSockets.delete(port);
                             updateStatusPill();
                         };
 
                         ws.onerror = () => {
-                            // onerror doesn't always trigger onclose immediately in all browsers
-                            // but we rely on onclose to handle the cleanup
                         };
                     } catch (e) {
                         activeSockets.delete(port);
@@ -245,30 +239,77 @@
                 payloadObj = { text: payloadString, attachments: [], systemInstructions: "" };
             }
 
-            const nativeInputValueSetter = Object.getOwnPropertyDescriptor(window.HTMLTextAreaElement.prototype, "value").set;
+            const nativeTextAreaValueSetter = Object.getOwnPropertyDescriptor(window.HTMLTextAreaElement.prototype, "value").set;
+            const nativeInputValueSetter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, "value").set;
 
             if (payloadObj.systemInstructions) {
+                let expectedTitle = "IntelliJ Bridge - General";
+                let keyword = "IntelliJ IDE";
+
+                if (payloadObj.systemInstructions.includes("EDIT & GENERATE")) {
+                    expectedTitle = "IntelliJ Bridge - Edit";
+                    keyword = "EDIT & GENERATE";
+                } else if (payloadObj.systemInstructions.includes("ASK & ANALYZE")) {
+                    expectedTitle = "IntelliJ Bridge - Ask";
+                    keyword = "ASK & ANALYZE";
+                }
+
                 const sysCard = document.querySelector('[data-test-system-instructions-card]');
                 if (sysCard) {
                     const subtitle = sysCard.querySelector('.subtitle');
-                    const isAlreadyInjected = subtitle && subtitle.textContent.includes('You are an expert AI coding assistant');
 
-                    if (!isAlreadyInjected) {
+                    if (!subtitle || !subtitle.textContent.includes(keyword)) {
                         showToast('⚙️ Updating System Instructions...', '#FF9800', 0);
                         sysCard.click();
 
-                        const sysTextarea = await waitForElement('textarea[aria-label="System instructions"]', 3000);
-                        if (sysTextarea) {
-                            sysTextarea.focus();
-                            nativeInputValueSetter.call(sysTextarea, payloadObj.systemInstructions);
-                            sysTextarea.dispatchEvent(new Event('input', { bubbles: true }));
-
+                        const dialog = await waitForElement('mat-dialog-container', 3000);
+                        if (dialog) {
                             await new Promise(r => setTimeout(r, 500));
 
-                            const closeBtn = document.querySelector('button[data-test-close-button], button[aria-label="Close panel"]');
+                            const select = dialog.querySelector('mat-select');
+                            if (select) {
+                                select.click();
+                                await waitForElement('.mat-mdc-select-panel mat-option', 3000);
+                                await new Promise(r => setTimeout(r, 300));
+
+                                const options = Array.from(document.querySelectorAll('.mat-mdc-select-panel mat-option'));
+                                const targetOption = options.find(opt => opt.textContent.includes(expectedTitle));
+
+                                if (targetOption) {
+                                    targetOption.click();
+                                } else {
+                                    const createOption = options.find(opt => opt.textContent.includes('Create new instruction'));
+                                    if (createOption) createOption.click();
+                                }
+
+                                await new Promise(r => setTimeout(r, 500));
+
+                                const titleInput = dialog.querySelector('input[placeholder="Title"]');
+                                if (titleInput && titleInput.value !== expectedTitle) {
+                                    titleInput.focus();
+                                    nativeInputValueSetter.call(titleInput, expectedTitle);
+                                    titleInput.dispatchEvent(new Event('input', { bubbles: true }));
+                                    titleInput.dispatchEvent(new Event('change', { bubbles: true }));
+                                    titleInput.dispatchEvent(new Event('blur', { bubbles: true }));
+                                }
+
+                                const sysTextarea = dialog.querySelector('textarea[aria-label="System instructions"]');
+                                if (sysTextarea && sysTextarea.value !== payloadObj.systemInstructions) {
+                                    sysTextarea.focus();
+                                    nativeTextAreaValueSetter.call(sysTextarea, payloadObj.systemInstructions);
+                                    sysTextarea.dispatchEvent(new Event('input', { bubbles: true }));
+                                    sysTextarea.dispatchEvent(new Event('change', { bubbles: true }));
+                                    sysTextarea.dispatchEvent(new Event('blur', { bubbles: true }));
+                                }
+
+                                // Wait for auto-save to trigger
+                                await new Promise(r => setTimeout(r, 800));
+                            }
+
+                            const closeBtn = dialog.querySelector('button[aria-label="Close panel"], button[data-test-close-button]');
                             if (closeBtn) closeBtn.click();
 
-                            await new Promise(r => setTimeout(r, 300));
+                            await new Promise(r => setTimeout(r, 500));
                         }
                     }
                 }
@@ -285,7 +326,7 @@
             if (!textarea) { isProcessing = false; return; }
 
             textarea.focus();
-            nativeInputValueSetter.call(textarea, payloadObj.text);
+            nativeTextAreaValueSetter.call(textarea, payloadObj.text);
             textarea.dispatchEvent(new Event('input', { bubbles: true }));
 
             setTimeout(async () => {

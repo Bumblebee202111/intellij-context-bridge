@@ -11,9 +11,13 @@ import com.intellij.openapi.vfs.VfsUtilCore
 import com.intellij.openapi.vfs.VirtualFile
 import java.util.Base64
 
+enum class IntentMode {
+    ASK, EDIT
+}
+
 object PayloadGenerator {
 
-    fun generatePayload(project: Project, contextState: ContextState, userPrompt: String): AiPayload {
+    fun generatePayload(project: Project, contextState: ContextState, userPrompt: String, intentMode: IntentMode): AiPayload {
         val projectDir = project.guessProjectDir()
         val attachments = mutableListOf<AiAttachment>()
 
@@ -22,47 +26,59 @@ object PayloadGenerator {
         val currentCache = contextState.getDedupCache()
         val newTurn = UserTurn(prompt = userPrompt)
 
-        // 1. System Instructions (Separated from the main prompt)
+        // 1. System Instructions (Separated from the main prompt, dynamically built based on intent)
         val systemInstructionsText = buildString {
-            appendLine("You are an expert AI coding assistant natively integrated into an IntelliJ IDE. Adhere strictly to these protocols:")
+            appendLine("You are an expert AI coding assistant natively integrated into an IntelliJ IDE.")
             appendLine()
-            appendLine("1. **Context Awareness**: Files are provided as either `(Full)` or `(Skeleton)`. Skeletons have their internal logic stripped. If you need the full logic of a Skeleton file, halt and output: `REQUEST_FULL: [filepath]`.")
-            appendLine("2. **When Generating Code**: If your response includes code modifications or new files, you MUST follow these formatting rules:")
-            appendLine("   - **Strict Ordering**: Output your comprehensive explanation and reasoning FIRST, followed by the code.")
-            appendLine("   - **File Headers**: Precede every markdown code block with its exact file path header: `### \uD83D\uDCC4 path/to/file.ext`.")
-            appendLine("   - **No Chatty Code**: Never add conversational comments, `// MODIFIED`, or changelogs inside the code block itself. The code must be clean and ready to compile.")
-            appendLine("   - **The Skeleton Patch Protocol**: To ensure the IDE's diff engine aligns correctly, you must output the ENTIRE file structure for modified files.")
-            appendLine("     - For methods, classes, or structural blocks you are NOT modifying: Write the exact signature/declaration and replace the body with `// ...` (or language-equivalent comment). Do NOT omit unchanged signatures; they act as structural anchors for the diff viewer.")
-            appendLine("     - For unchanged properties, fields, or variables: Leave them exactly as they are. Do not use `// ...` for simple values.")
-            appendLine("     - For elements you ARE modifying (or new elements): Write the full updated logic.")
+            appendLine("### ENVIRONMENT: CONTEXT AWARENESS")
+            appendLine("Files are provided in the `<project_context>` as either `(Full)` or `(Skeleton)`. Skeletons have their internal logic stripped to save tokens. If you need to see the full internal logic of a Skeleton file to answer a question or make a modification, halt and output: `REQUEST_FULL: [filepath]`.")
             appendLine()
-            appendLine("Example Output:")
-            appendLine("I have updated the service to also save users to the database. I kept the caching logic intact to ensure reads remain fast.")
-            appendLine()
-            appendLine("### \uD83D\uDCC4 src/main/kotlin/com/example/core/UserService.kt")
-            appendLine("```kotlin")
-            appendLine("package com.example.core")
-            appendLine()
-            appendLine("import com.example.database.Database")
-            appendLine("import com.example.model.User")
-            appendLine()
-            appendLine("class UserService(private val db: Database) {")
-            appendLine("    private val cache = mutableMapOf<String, User>()")
-            appendLine()
-            appendLine("    fun getUser(id: String): User? {")
-            appendLine("        // ...")
-            appendLine("    }")
-            appendLine()
-            appendLine("    fun updateUser(user: User) {")
-            appendLine("        cache[user.id] = user")
-            appendLine("        db.save(user)")
-            appendLine("    }")
-            appendLine()
-            appendLine("    fun deleteUser(id: String) {")
-            appendLine("        // ...")
-            appendLine("    }")
-            appendLine("}")
-            appendLine("```")
+
+            if (intentMode == IntentMode.ASK) {
+                appendLine("### CURRENT MODE: ASK & ANALYZE")
+                appendLine("The user wants to discuss architecture, review code, or plan a feature.")
+                appendLine("- Provide deep, comprehensive architectural reasoning and analysis.")
+                appendLine("- Respond in standard conversational markdown.")
+                appendLine("- **DO NOT** output IDE file headers (`### \uD83D\uDCC4`) or attempt to write code patches. If you provide code examples, use standard markdown code blocks without file path headers.")
+            } else {
+                appendLine("### CURRENT MODE: EDIT & GENERATE")
+                appendLine("The user wants you to write, modify, or refactor code. You MUST follow these formatting rules:")
+                appendLine("1. **Strict Ordering**: Output your comprehensive explanation and reasoning FIRST, followed by the code.")
+                appendLine("2. **File Headers**: Precede every markdown code block with its exact file path header: `### \uD83D\uDCC4 path/to/file.ext`.")
+                appendLine("3. **No Chatty Code**: Never add conversational comments, `// MODIFIED`, or changelogs inside the code block itself. The code must be clean and ready to compile.")
+                appendLine("4. **The Skeleton Patch Protocol**: To ensure the IDE's diff engine aligns correctly, you must output the ENTIRE file structure for modified files.")
+                appendLine("   - For methods, classes, or structural blocks you are NOT modifying: Write the exact signature/declaration and replace the body with `// ...` (or language-equivalent comment). Do NOT omit unchanged signatures; they act as structural anchors for the diff viewer.")
+                appendLine("   - For unchanged properties, fields, or variables: Leave them exactly as they are. Do not use `// ...` for simple values.")
+                appendLine("   - For elements you ARE modifying (or new elements): Write the full updated logic.")
+                appendLine()
+                appendLine("Example Output:")
+                appendLine("I have updated the service to also save users to the database. I kept the caching logic intact to ensure reads remain fast.")
+                appendLine()
+                appendLine("### \uD83D\uDCC4 src/main/kotlin/com/example/core/UserService.kt")
+                appendLine("```kotlin")
+                appendLine("package com.example.core")
+                appendLine()
+                appendLine("import com.example.database.Database")
+                appendLine("import com.example.model.User")
+                appendLine()
+                appendLine("class UserService(private val db: Database) {")
+                appendLine("    private val cache = mutableMapOf<String, User>()")
+                appendLine()
+                appendLine("    fun getUser(id: String): User? {")
+                appendLine("        // ...")
+                appendLine("    }")
+                appendLine()
+                appendLine("    fun updateUser(user: User) {")
+                appendLine("        cache[user.id] = user")
+                appendLine("        db.save(user)")
+                appendLine("    }")
+                appendLine()
+                appendLine("    fun deleteUser(id: String) {")
+                appendLine("        // ...")
+                appendLine("    }")
+                appendLine("}")
+                appendLine("```")
+            }
         }
 
         val markdownText =  buildString {

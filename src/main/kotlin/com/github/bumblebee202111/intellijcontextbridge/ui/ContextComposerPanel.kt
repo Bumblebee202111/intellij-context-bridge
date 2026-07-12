@@ -1,6 +1,7 @@
 package com.github.bumblebee202111.intellijcontextbridge.ui
 
 import com.github.bumblebee202111.intellijcontextbridge.context.AiPayload
+import com.github.bumblebee202111.intellijcontextbridge.context.IntentMode
 import com.github.bumblebee202111.intellijcontextbridge.context.PayloadGenerator
 import com.github.bumblebee202111.intellijcontextbridge.server.BrowserTab
 import com.github.bumblebee202111.intellijcontextbridge.server.ContextBridgeServer
@@ -36,6 +37,7 @@ import org.jetbrains.concurrency.CancellablePromise
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
 import java.awt.BorderLayout
+import java.awt.Component
 import java.awt.Dimension
 import java.awt.FlowLayout
 import java.awt.datatransfer.StringSelection
@@ -179,7 +181,7 @@ class ContextComposerPanel(private val project: Project) {
         })
 
         val treeContainer = JPanel(BorderLayout())
-        val topToolbar = JPanel(BorderLayout(5, 0)).apply { border = JBUI.Borders.empty(5, 5) }
+        val topToolbar = JPanel(BorderLayout(5, 0)).apply { border = JBUI.Borders.empty(5) }
 
         val buttonPanel = JPanel(FlowLayout(FlowLayout.LEFT, 0, 0)).apply {
             val addActiveFileBtn = JButton("+ Active File").apply {
@@ -188,7 +190,6 @@ class ContextComposerPanel(private val project: Project) {
                     val editor = FileEditorManager.getInstance(project).selectedTextEditor
                     val file = editor?.document?.let { FileDocumentManager.getInstance().getFile(it) }
                     if (file != null) {
-                        // Offload slow index checks to background thread
                         ReadAction.nonBlocking<Unit> {
                             contextState.applyStateRecursively(file, ContextLevel.FULL, checkIgnore = true)
                         }.finishOnUiThread(ModalityState.nonModal()) {
@@ -302,9 +303,24 @@ class ContextComposerPanel(private val project: Project) {
             }
         }
 
+        val intentComboBox = ComboBox(arrayOf(IntentMode.EDIT, IntentMode.ASK)).apply {
+            toolTipText = "Choose how the AI should respond"
+            renderer = object : DefaultListCellRenderer() {
+                override fun getListCellRendererComponent(list: JList<*>?, value: Any?, index: Int, isSelected: Boolean, cellHasFocus: Boolean): Component {
+                    val text = when (value as? IntentMode) {
+                        IntentMode.EDIT -> "⚡ Edit"
+                        IntentMode.ASK -> "💬 Ask"
+                        else -> value?.toString() ?: ""
+                    }
+                    return super.getListCellRendererComponent(list, text, index, isSelected, cellHasFocus)
+                }
+            }
+        }
+
         val copyButton = JButton("Copy").apply {
             addActionListener {
                 val promptText = promptArea.text
+                val intent = intentComboBox.selectedItem as IntentMode
                 historyIndex = -1
                 draftPrompt = ""
                 
@@ -313,7 +329,7 @@ class ContextComposerPanel(private val project: Project) {
                 isEnabled = false
 
                 ReadAction.nonBlocking<AiPayload> {
-                    PayloadGenerator.generatePayload(project, contextState, promptText)
+                    PayloadGenerator.generatePayload(project, contextState, promptText, intent)
                 }
                 .finishOnUiThread(ModalityState.nonModal()) { payloadObj ->
                     payloadObj.turn?.let { contextState.addTurn(it) }
@@ -347,6 +363,7 @@ class ContextComposerPanel(private val project: Project) {
             addActionListener {
                 val selectedTab = tabComboBox.selectedItem as? BrowserTabItem ?: return@addActionListener
                 val promptText = promptArea.text
+                val intent = intentComboBox.selectedItem as IntentMode
                 historyIndex = -1
                 draftPrompt = ""
                 
@@ -355,7 +372,7 @@ class ContextComposerPanel(private val project: Project) {
                 isEnabled = false
 
                 ReadAction.nonBlocking<AiPayload> {
-                    PayloadGenerator.generatePayload(project, contextState, promptText)
+                    PayloadGenerator.generatePayload(project, contextState, promptText, intent)
                 }
                 .finishOnUiThread(ModalityState.nonModal()) { payloadObj ->
                     payloadObj.turn?.let { contextState.addTurn(it) }
@@ -401,6 +418,7 @@ class ContextComposerPanel(private val project: Project) {
         leftButtons.add(undoButton)
         leftButtons.add(copyButton)
 
+        rightButtons.add(intentComboBox)
         rightButtons.add(tabComboBox)
         rightButtons.add(sendWsButton)
 
