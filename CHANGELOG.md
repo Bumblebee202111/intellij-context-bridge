@@ -2,31 +2,13 @@
 
 # intellij-context-bridge Changelog
 
-*Note: As this is an experimental project primarily for personal use, this changelog is maintained informally to track major milestones rather than strict semantic versioning.*
+*Note: As this is an experimental project primarily for personal use, this changelog is maintained informally. It tracks high-level capabilities rather than strict semantic versioning or granular commits.*
 
 ## [Unreleased]
-### Added
-- Initial scaffold created from [IntelliJ Platform Plugin Template](https://github.com/JetBrains/intellij-platform-plugin-template)
-- **Phase 1: MVP**
-  - 3-state File Tree UI (`None`, `Skeleton`, `Full`) with recursive folder toggling.
-  - PSI-based Skeleton Extractor for Kotlin and Java (extracts public API, safely strips bodies/private members).
-  - Hybrid XML-Markdown Payload Generator.
-- **Phase 2: State & Deduplication**
-  - Session tracker with prompt history stack (navigate via `Ctrl+Up/Down`).
-  - Universal Deduplication Engine (hashes extracted text and silently omits unchanged files from payloads).
-  - Injected strict LLM protocol prompt for `REQUEST_FULL` and file path headers.
-- **Phase 3: Diff Application**
-  - Dual-tab UI (Composer vs. Diff Receiver).
-  - Markdown parser to extract AI code blocks and match them to local file paths.
-  - IntelliJ `DiffManager` integration for safe, visual side-by-side code insertion/replacement.
-- **Phase 4: WebSocket Bridge**
-  - Embedded Ktor WebSocket server (`localhost:37373`).
-  - Tampermonkey userscript with Floating Action Button (FAB) for AI Studio.
-  - Automated prompt injection, drag-and-drop simulation for media, and native clipboard interception for pristine Markdown extraction.
-- **Phase 5: Polish & Configuration**
-  - `.aicontext` parser for auto-loading default project context on startup.
-  - Smart MIME/Type checker (excludes opaque binaries, encodes supported media to Base64 JSON payloads).
-  - UI Overhaul: Computed directory states, visual state icons, direct-click toggling, and `(cached)` deduplication badges.
-
-### Removed
-- Default template sample files and dummy actions.
+### Core Capabilities Implemented
+- **Context Management**: File Tree UI with computed visual states (Full, Skeleton, None) and `.aicontext` auto-routing.
+- **Smart Extraction**: AST-based Skeleton extractor for Kotlin/Java (retains signatures/docs, strips bodies) and capability checks for media/binaries.
+- **Intent-Based Modes**: Dynamic system instructions supporting "Ask" (read-only analysis) and "Edit" (code generation).
+- **Session History & Deduplication**: Persistent timeline of user turns with true undo capabilities and automatic context deduplication to save tokens.
+- **Mesh Networking Bridge**: Dynamic WebSocket server supporting multiple concurrent IDE instances, paired with a Tampermonkey userscript for automated AI Studio injection and extraction.
+- **Diff Application**: Markdown parsing and native IntelliJ `DiffManager` integration for safe, visual code application.

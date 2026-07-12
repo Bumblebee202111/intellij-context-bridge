@@ -1,16 +1,17 @@
-# intellij-context-bridge
-
-# Project: AI Studio Bridge Plugin (Code Name: IntelliJContextSync)
+# IntelliJ Context Bridge
 
 ## Overview
-A native IntelliJ/Android Studio plugin designed to bridge the IDE with web-based LLM playgrounds (such as Google AI Studio). Inspired by the workflow of [CodeWebChat](https://github.com/robertpiosik/CodeWebChat), it acts as a highly optimized, stateful context manager. It compiles project context into LLM-friendly payloads and syncs them via Clipboard or a local WebSocket server, bypassing the need for paid API integrations.
+A native IntelliJ/Android Studio plugin designed to connect the IDE with web-based LLM playgrounds (such as Google AI Studio). Inspired by the workflow of [CodeWebChat](https://github.com/robertpiosik/CodeWebChat), it acts as an optimized, stateful context manager. It compiles project context into LLM-friendly payloads and synchronizes them via the clipboard or a local WebSocket server, providing an alternative to direct API integrations.
+
+*Note: This project is actively developed through dogfooding—using the plugin itself alongside advanced LLMs to write, review, and refine its own codebase.*
 
 ## Core Mechanics & Philosophy
-1. **Absolute User Control:** The AI cannot autonomously read or write files. The user explicitly grants context and safely reviews/applies code changes using IntelliJ's native `DiffManager`.
-2. **Context Economy:** Prioritizes "Skeleton" mode (AST-based extraction of public signatures, class structures, and documentation) over "Full" mode to save tokens and maintain LLM focus.
-3. **Diagnostic Awareness:** Optionally injects active IDE compiler errors and warnings directly into the payload, forcing the AI to resolve deterministic constraints rather than guessing.
-4. **Zero API Dependency:** Operates via a browser userscript bridge, eliminating API costs and geographical restrictions.
-5. **Anti-Hallucination:** Prevents AI looping and context bloat by injecting strict protocol prompts and using silent local state deduplication (omitting unchanged files from subsequent prompts).
+1. **User-Directed Workflow:** The AI does not autonomously read or write files. The user explicitly selects the context to share and safely reviews or applies generated code changes using IntelliJ's native `DiffManager`.
+2. **Token Efficiency:** Prioritizes a "Skeleton" mode (AST-based extraction of signatures, class structures, and documentation) over full-text extraction to conserve tokens and maintain LLM focus.
+3. **Intent-Based Interaction:** Differentiates between read-only analysis ("Ask") and code generation ("Edit"), dynamically swapping system instructions to guide the AI's output format.
+4. **Local Network Bridge:** Operates via a companion browser userscript that communicates with the IDE over a local WebSocket, securely transferring prompts and retrieving responses.
+5. **State & Deduplication:** Tracks conversation turns and file states, automatically omitting unchanged files from subsequent payloads to prevent context window bloat.
+6. **Diagnostic Awareness:** (Planned) Supports injecting active IDE compiler errors and warnings directly into the payload, providing deterministic constraints for the AI to resolve.
 
 ## Development Setup Requirements
 * IntelliJ Platform Plugin Template (Kotlin)

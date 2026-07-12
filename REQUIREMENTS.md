@@ -1,22 +1,25 @@
 # Core Requirements & Constraints
 
 ## 1. Context Levels & File Types
-The system MUST support strictly two context extraction levels for text/code files:
+The system MUST support two primary context extraction levels for files:
 * **Skeleton:**
-  * *For code files:* Extracts strictly the "Public API". It MUST include class/interface declarations, public/protected signatures, KDoc/JavaDoc, and only the imports required by those specific signatures. It MUST explicitly strip method bodies, private signatures, internal logic, and unused imports.
-  * *For non-code files:* Acts as a simple path listing (outputs only the relative file path/name).
-* **Full:** The complete raw text of the file.
-* **Diagnostics:** The system MUST support an optional toggle to append active IDE diagnostics (compiler errors/warnings) for the selected files into the payload.
-* **Media & Binaries:** The system MUST gracefully handle supported media files (e.g., via attachments) and strictly exclude opaque binaries from text payloads to prevent encoding errors.
+  * *For code files:* Extracts the structural API. It MUST include class/interface declarations, signatures (including intra-module modifiers like `internal` or `package-private`), compile-time constants, documentation, and required imports. It MUST explicitly strip method bodies and private internal logic.
+  * *For non-code files:* Indicates the file's presence in the context while omitting its raw contents.
+* **Full:** The complete raw text or encoded media of the file.
+* **Capability Constraints:** The system MUST cap specific file types (e.g., opaque binaries, empty directories) at the Skeleton level to prevent false context expectations.
+* **Diagnostics:** The system MUST support an optional mechanism to append active IDE diagnostics (compiler errors/warnings) for selected files.
 
-## 2. Universal Context Deduplication
-The system MUST track the state of the current conversation to prevent context bloat.
-* *Rule:* The system MUST hash the extracted contents of requested files. If a file is requested at the same context level in a subsequent prompt and its extracted hash is unchanged, the system MUST omit it entirely from the new payload.
-* *Constraint:* The system MUST NOT generate chatty placeholders (e.g., `[File unchanged]`) in the payload.
+## 2. Context Deduplication & Session History
+The system MUST track the state of the conversation to prevent context bloat and maintain synchronization with the LLM.
+* *Turn Tracking:* State is maintained as a persistent timeline of user turns, allowing users to undo or delete specific payloads if they revert a turn in the web UI.
+* *Deduplication:* The system MUST hash the extracted contents of requested files. If a file is requested at the same context level in a subsequent turn and its extracted hash is unchanged, the system MUST omit it entirely from the new payload.
+* *Constraint:* The system MUST NOT generate chatty placeholders (e.g., `[File unchanged]`) in the payload for deduplicated files.
 
-## 3. The LLM Protocol Prompt
-Every generated payload MUST invisibly include a strict system directive instructing the LLM on how to behave.
-* *Mandatory Rules:* The AI must be instructed to output `REQUEST_FULL: [filepath]` and halt generation if it requires the body of a Skeleton file. It MUST also be instructed to format output code blocks with exact file path headers to facilitate IDE parsing.
+## 3. System Instructions & Intent Modes
+The system MUST separate static behavioral directives from the dynamic project context.
+* *Intent Modes:* The system MUST support distinct interaction modes (e.g., "Ask" for read-only analysis and "Edit" for code generation) to dynamically adjust the system instructions.
+* *Edit Constraints:* In generation modes, the AI MUST be instructed to output code using a "Skeleton Patch" format (where unchanged signatures are retained as structural anchors) and MUST format code blocks with exact file path headers to facilitate IDE parsing.
+* *Context Awareness:* The AI MUST be instructed to output `REQUEST_FULL: [filepath]` if it requires the body of a Skeleton file to proceed.
 
 ## 4. Project Configuration (`.aicontext`)
 The plugin MUST support reading a local configuration file (e.g., `.aicontext`) at the project root.
@@ -27,4 +30,4 @@ The plugin MUST NOT silently overwrite local files. All incoming code from the A
 
 ## 6. Non-Goals (Out of Scope)
 * Direct integration with OpenAI/Anthropic/Google REST APIs.
-* Autonomous agentic loops (the AI cannot execute terminal commands or trigger file reads without user intervention).
+* Autonomous agentic loops (the AI cannot execute terminal commands or trigger file reads without explicit user intervention).
