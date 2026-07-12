@@ -98,6 +98,16 @@ object PayloadGenerator {
                 if (file.isDirectory) {
                     if (file.children.isNotEmpty()) continue
 
+                    val currentHash = "EMPTY_DIR"
+                    val previousRecord = currentCache[relativePath]
+
+                    if (previousRecord != null && previousRecord.level == level && previousRecord.hash == currentHash) {
+                        dedupedFilesTracker.add(file)
+                        newTurn.sentFiles[relativePath] = FileStateRecord(level, currentHash)
+                        continue
+                    }
+                    newTurn.sentFiles[relativePath] = FileStateRecord(level, currentHash)
+
                     appendLine("### \uD83D\uDCC1 `$relativePath/` (Empty Directory)")
                     appendLine("*(This directory is empty)*\n")
                     continue
@@ -108,6 +118,18 @@ object PayloadGenerator {
 
                 if (!isTextFile) {
                     val mime = getMimeType(extension)
+
+                    // Use modification stamp and length to hash binaries safely without reading memory
+                    val currentHash = if (level == ContextLevel.FULL) contextState.calculateHash("${file.modificationStamp}_${file.length}") else "OMITTED_BINARY_SKELETON"
+                    val previousRecord = currentCache[relativePath]
+
+                    if (previousRecord != null && previousRecord.level == level && previousRecord.hash == currentHash) {
+                        dedupedFilesTracker.add(file)
+                        newTurn.sentFiles[relativePath] = FileStateRecord(level, currentHash)
+                        continue
+                    }
+                    newTurn.sentFiles[relativePath] = FileStateRecord(level, currentHash)
+
                     // --- ATTACHMENT & BINARY HANDLING ---
                     if (level == ContextLevel.FULL) {
                         try {
@@ -135,7 +157,7 @@ object PayloadGenerator {
                 }
 
                 // --- TEXT/CODE HANDLING (with Deduplication) ---
-                var contentToAppend: String? = null
+                var contentToAppend: String?
                 var isNonCodeSkeleton = false
                 try {
                     // 1. Extract the content based on the level
