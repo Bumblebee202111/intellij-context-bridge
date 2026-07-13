@@ -11,7 +11,7 @@ dependencies {
     testImplementation("junit:junit:4.13.2")
 
     // Ktor Server & WebSockets
-    val ktorVersion = "3.0.3"
+    val ktorVersion = "3.5.1"
     implementation("io.ktor:ktor-server-core-jvm:$ktorVersion")
     implementation("io.ktor:ktor-server-cio-jvm:$ktorVersion")
     implementation("io.ktor:ktor-server-websockets-jvm:$ktorVersion")
