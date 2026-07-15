@@ -10,6 +10,13 @@ import com.github.bumblebee202111.intellijcontextbridge.state.ContextState
 import com.github.bumblebee202111.intellijcontextbridge.utils.ContextCapabilityUtil
 import com.github.bumblebee202111.intellijcontextbridge.utils.FileFilterUtil
 import com.intellij.icons.AllIcons
+import com.intellij.openapi.actionSystem.ActionManager
+import com.intellij.openapi.actionSystem.ActionUpdateThread
+import com.intellij.openapi.actionSystem.AnAction
+import com.intellij.openapi.actionSystem.AnActionEvent
+import com.intellij.openapi.actionSystem.CustomShortcutSet
+import com.intellij.openapi.actionSystem.DefaultActionGroup
+import com.intellij.openapi.actionSystem.ToggleAction
 import com.intellij.openapi.application.ApplicationManager
 import com.intellij.openapi.application.ModalityState
 import com.intellij.openapi.application.ReadAction
@@ -17,6 +24,7 @@ import com.intellij.openapi.components.service
 import com.intellij.openapi.fileEditor.FileDocumentManager
 import com.intellij.openapi.fileEditor.FileEditorManager
 import com.intellij.openapi.fileEditor.OpenFileDescriptor
+import com.intellij.openapi.fileTypes.FileTypes
 import com.intellij.openapi.ide.CopyPasteManager
 import com.intellij.openapi.project.Project
 import com.intellij.openapi.project.guessProjectDir
@@ -28,22 +36,26 @@ import com.intellij.openapi.vfs.VirtualFileManager
 import com.intellij.openapi.vfs.newvfs.BulkFileListener
 import com.intellij.openapi.vfs.newvfs.events.VFileEvent
 import com.intellij.ui.DocumentAdapter
+import com.intellij.ui.EditorTextField
+import com.intellij.ui.IdeBorderFactory
 import com.intellij.ui.JBSplitter
 import com.intellij.ui.SearchTextField
+import com.intellij.ui.SimpleTextAttributes
+import com.intellij.ui.components.JBRadioButton
 import com.intellij.ui.components.JBScrollPane
-import com.intellij.ui.components.JBTextArea
 import com.intellij.ui.treeStructure.Tree
 import com.intellij.util.concurrency.AppExecutorUtil
+import com.intellij.util.ui.AsyncProcessIcon
 import com.intellij.util.ui.JBUI
 import com.intellij.util.ui.tree.TreeUtil
 import org.jetbrains.concurrency.CancellablePromise
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
 import java.awt.BorderLayout
-import java.awt.Component
 import java.awt.Dimension
 import java.awt.FlowLayout
 import java.awt.datatransfer.StringSelection
+import java.awt.event.InputEvent
 import java.awt.event.KeyAdapter
 import java.awt.event.KeyEvent
 import java.awt.event.MouseAdapter
@@ -68,7 +80,7 @@ class ContextComposerPanel(private val project: Project) {
     private var historyIndex = -1
     private var draftPrompt = ""
     private var lastDedupedFiles = emptySet<VirtualFile>()
-    private var isConfigLoaded = false // Tracks if .aicontext has been applied
+    private var isConfigLoaded = false
 
     private data class AggregatedState(
         val allMaxed: Boolean,
@@ -93,14 +105,13 @@ class ContextComposerPanel(private val project: Project) {
     }.apply { isRepeats = false }
 
     private val dateFormat = SimpleDateFormat("HH:mm:ss")
-    private val promptArea = JBTextArea()
-    private val undoButton = JButton("Undo Last")
 
     private var showSelectedOnly = false
     private var searchQuery = ""
     private val treeModel = DefaultTreeModel(DefaultMutableTreeNode("Loading..."))
     private val tree = Tree(treeModel).apply {
-        toolTipText = "Space/Left-click icon: Toggle. Right-click row: Clear. Double-click: Open."
+        emptyText.text = "Loading project..."
+        emptyText.appendSecondaryText("Space/Click: Toggle | Enter: Open | Right-Click: Clear", SimpleTextAttributes.GRAYED_ATTRIBUTES, null)
     }
 
     val content: JPanel = JPanel(BorderLayout())
@@ -210,10 +221,9 @@ class ContextComposerPanel(private val project: Project) {
         val treeContainer = JPanel(BorderLayout())
         val topToolbar = JPanel(BorderLayout(5, 0)).apply { border = JBUI.Borders.empty(5) }
 
-        val buttonPanel = JPanel(FlowLayout(FlowLayout.LEFT, 0, 0)).apply {
-            val addActiveFileBtn = JButton("+ Active File").apply {
-                toolTipText = "Add currently opened editor file to context as Full"
-                addActionListener {
+        val actionGroup = DefaultActionGroup().apply {
+            add(object : AnAction("Add Active File", "Add currently opened editor file to context as Full", AllIcons.General.Add) {
+                override fun actionPerformed(e: AnActionEvent) {
                     val editor = FileEditorManager.getInstance(project).selectedTextEditor
                     val file = editor?.document?.let { FileDocumentManager.getInstance().getFile(it) }
                     if (file != null) {
@@ -226,16 +236,19 @@ class ContextComposerPanel(private val project: Project) {
                         Messages.showInfoMessage("No active editor found.", "Add Active File")
                     }
                 }
-            }
+            })
+            addSeparator()
+            add(object : ToggleAction("Show Selected Context Only", "Filter to show only selected files", AllIcons.General.Filter) {
+                override fun isSelected(e: AnActionEvent): Boolean = showSelectedOnly
+                override fun setSelected(e: AnActionEvent, state: Boolean) {
+                    showSelectedOnly = state
+                    refreshUi()
+                }
+            })
+        }
 
-            val filterToggle = JToggleButton(AllIcons.General.Filter).apply {
-                toolTipText = "Show Selected Context Only"
-                addActionListener { showSelectedOnly = isSelected; refreshUi() }
-            }
-
-            add(addActiveFileBtn)
-            add(Box.createHorizontalStrut(5))
-            add(filterToggle)
+        val nativeToolbar = ActionManager.getInstance().createActionToolbar("ContextComposerTopToolbar", actionGroup, true).apply {
+            targetComponent = tree
         }
 
         var searchTimer: Timer? = null
@@ -252,168 +265,198 @@ class ContextComposerPanel(private val project: Project) {
             })
         }
 
-        topToolbar.add(buttonPanel, BorderLayout.WEST)
+        topToolbar.add(nativeToolbar.component, BorderLayout.WEST)
         topToolbar.add(searchField, BorderLayout.CENTER)
 
         treeContainer.add(topToolbar, BorderLayout.NORTH)
         treeContainer.add(JBScrollPane(tree), BorderLayout.CENTER)
 
         val bottomPanel = JPanel(BorderLayout()).apply { border = JBUI.Borders.empty(5) }
-        promptArea.apply {
-            rows = 4
-            lineWrap = true
-            wrapStyleWord = true
-            emptyText.text = "Type your prompt here... (Ctrl+Up for history)"
 
-            addKeyListener(object : KeyAdapter() {
-                override fun keyPressed(e: KeyEvent) {
-                    val isModifierDown = e.isControlDown || e.isMetaDown
-                    if (isModifierDown && e.keyCode == KeyEvent.VK_UP) {
-                        val history = contextState.getPromptHistory()
-                        if (history.isEmpty()) return
+        val promptArea = EditorTextField(project, FileTypes.PLAIN_TEXT).apply {
+            setOneLineMode(false)
+            setPlaceholder("Type your prompt here...")
+            addSettingsProvider { editor ->
+                editor.settings.isUseSoftWraps = true
+                editor.settings.additionalLinesCount = 0
+            }
+        }
 
-                        if (historyIndex == -1) {
-                            draftPrompt = text
-                            historyIndex = history.size - 1
-                            text = history[historyIndex]
-                        } else if (historyIndex > 0) {
-                            historyIndex--
-                            text = history[historyIndex]
-                        }
-                        e.consume()
-                    } else if (isModifierDown && e.keyCode == KeyEvent.VK_DOWN) {
-                        val history = contextState.getPromptHistory()
-                        if (historyIndex != -1) {
-                            if (historyIndex < history.size - 1) {
-                                historyIndex++
-                                text = history[historyIndex]
-                            } else if (historyIndex == history.size - 1) {
-                                historyIndex = -1
-                                text = draftPrompt
-                            }
-                            e.consume()
-                        }
+        promptArea.document.addDocumentListener(object : com.intellij.openapi.editor.event.DocumentListener {
+            override fun documentChanged(event: com.intellij.openapi.editor.event.DocumentEvent) {
+                if (historyIndex == -1) {
+                    draftPrompt = promptArea.text
+                }
+            }
+        })
+
+        object : AnAction() {
+            override fun actionPerformed(e: AnActionEvent) {
+                val history = contextState.getPromptHistory()
+                if (history.isEmpty()) return
+                if (historyIndex == -1) {
+                    draftPrompt = promptArea.text
+                    historyIndex = history.size - 1
+                    promptArea.text = history[historyIndex]
+                } else if (historyIndex > 0) {
+                    historyIndex--
+                    promptArea.text = history[historyIndex]
+                }
+            }
+        }.registerCustomShortcutSet(CustomShortcutSet(KeyStroke.getKeyStroke(KeyEvent.VK_UP, InputEvent.CTRL_DOWN_MASK)), promptArea)
+
+        object : AnAction() {
+            override fun actionPerformed(e: AnActionEvent) {
+                val history = contextState.getPromptHistory()
+                if (historyIndex != -1) {
+                    if (historyIndex < history.size - 1) {
+                        historyIndex++
+                        promptArea.text = history[historyIndex]
+                    } else if (historyIndex == history.size - 1) {
+                        historyIndex = -1
+                        promptArea.text = draftPrompt
                     }
+                }
+            }
+        }.registerCustomShortcutSet(CustomShortcutSet(KeyStroke.getKeyStroke(KeyEvent.VK_DOWN, InputEvent.CTRL_DOWN_MASK)), promptArea)
+
+        val editRadio = JBRadioButton("⚡ Edit", true)
+        val askRadio = JBRadioButton("💬 Ask")
+        ButtonGroup().apply {
+            add(editRadio)
+            add(askRadio)
+        }
+        val intentPanel = JPanel(FlowLayout(FlowLayout.LEFT, 5, 0)).apply {
+            border = JBUI.Borders.emptyBottom(5)
+            add(JLabel("Mode:"))
+            add(editRadio)
+            add(askRadio)
+        }
+
+        val promptContainer = JPanel(BorderLayout()).apply {
+            border = IdeBorderFactory.createTitledBorder("Prompt (Ctrl+Up for history)")
+            add(intentPanel, BorderLayout.NORTH)
+            add(promptArea, BorderLayout.CENTER)
+        }
+        bottomPanel.add(promptContainer, BorderLayout.CENTER)
+
+        val bottomActionGroup = DefaultActionGroup().apply {
+            add(object : AnAction("New Chat", "Clear context and start a new chat", AllIcons.General.Reset) {
+                override fun actionPerformed(e: AnActionEvent) {
+                    contextState.clear()
+                    isConfigLoaded = false
+                    promptArea.text = ""
+                    historyIndex = -1
+                    draftPrompt = ""
+                    refreshUi()
                 }
             })
-        }
-        bottomPanel.add(JBScrollPane(promptArea), BorderLayout.CENTER)
-
-        val actionButtonPanel = JPanel(BorderLayout(5, 0)).apply { border = JBUI.Borders.emptyTop(5) }
-
-        val leftButtons = JPanel(FlowLayout(FlowLayout.LEFT, 5, 0))
-        val rightButtons = JPanel(FlowLayout(FlowLayout.RIGHT, 5, 0))
-
-        val clearButton = JButton("New Chat").apply {
-            addActionListener {
-                contextState.clear()
-                isConfigLoaded = false
-                promptArea.text = ""
-                historyIndex = -1
-                draftPrompt = ""
-                refreshUi()
-            }
-        }
-
-        undoButton.apply {
-            addActionListener {
-                val turn = contextState.removeLastTurn()
-                if (turn != null) {
-                    promptArea.text = turn.prompt
-                    refreshUi()
-
-                    val originalText = text
-                    text = "Undone!"
-                    isEnabled = false
-                    Timer(1500) { text = originalText; updateUndoButton() }.apply { isRepeats = false }.start()
-                }
-            }
-        }
-
-        val intentComboBox = ComboBox(arrayOf(IntentMode.EDIT, IntentMode.ASK)).apply {
-            toolTipText = "Choose how the AI should respond"
-            renderer = object : DefaultListCellRenderer() {
-                override fun getListCellRendererComponent(list: JList<*>?, value: Any?, index: Int, isSelected: Boolean, cellHasFocus: Boolean): Component {
-                    val text = when (value as? IntentMode) {
-                        IntentMode.EDIT -> "⚡ Edit"
-                        IntentMode.ASK -> "💬 Ask"
-                        else -> value?.toString() ?: ""
+            add(object : AnAction("Undo Last", "Undo last sent prompt", AllIcons.Actions.Undo) {
+                override fun actionPerformed(e: AnActionEvent) {
+                    val turn = contextState.removeLastTurn()
+                    if (turn != null) {
+                        promptArea.text = turn.prompt
+                        refreshUi()
                     }
-                    return super.getListCellRendererComponent(list, text, index, isSelected, cellHasFocus)
                 }
-            }
-        }
-
-        val copyButton = JButton("Copy").apply {
-            addActionListener {
-                val promptText = promptArea.text
-                val intent = intentComboBox.selectedItem as IntentMode
-                historyIndex = -1
-                draftPrompt = ""
-                
-                val originalText = text
-                text = "Generating..."
-                isEnabled = false
-
-                ReadAction.nonBlocking<AiPayload> {
-                    PayloadGenerator.generatePayload(project, contextState, promptText, intent)
-                }
-                .finishOnUiThread(ModalityState.nonModal()) { payloadObj ->
-                    payloadObj.turn?.let { contextState.addTurn(it) }
-                    refreshUi()
-                    CopyPasteManager.getInstance().setContents(StringSelection(payloadObj.text))
-
-                    if (payloadObj.attachments.isNotEmpty()) {
-                        Messages.showWarningDialog(
-                            "You copied ${payloadObj.attachments.size} media file(s). They cannot be copied to the clipboard.",
-                            "Media Files Skipped"
-                        )
+                override fun update(e: AnActionEvent) {
+                    val lastTurn = contextState.getLastTurn()
+                    e.presentation.isEnabled = lastTurn != null
+                    if (lastTurn != null) {
+                        val snippet = lastTurn.prompt.replace("\n", " ").take(40)
+                        val displaySnippet = if (lastTurn.prompt.length > 40) "$snippet..." else snippet
+                        val time = dateFormat.format(Date(lastTurn.timestamp))
+                        e.presentation.description = "Undo Last Send ($time): $displaySnippet"
+                    } else {
+                        e.presentation.description = "No previous sends to undo"
                     }
-
-                    promptArea.text = ""
-                    text = "Copied!"
-                    Timer(1500) { text = originalText; isEnabled = true }.apply { isRepeats = false }.start()
                 }
-                .submit(AppExecutorUtil.getAppExecutorService())
-            }
+                override fun getActionUpdateThread() = ActionUpdateThread.BGT
+            })
+        }
+        val bottomToolbar = ActionManager.getInstance().createActionToolbar("ContextComposerBottomToolbar", bottomActionGroup, true).apply {
+            targetComponent = promptArea
         }
 
+        val copyButton = JButton("Copy", AllIcons.Actions.Copy)
         val tabComboBox = ComboBox<BrowserTabItem>().apply {
             toolTipText = "Select the target AI Studio tab"
             preferredSize = Dimension(180, preferredSize.height)
         }
-
         val sendWsButton = JButton("Waiting...").apply {
             isEnabled = false
             toolTipText = "Send context directly to the selected AI Studio tab"
-            
-            addActionListener {
-                val selectedTab = tabComboBox.selectedItem as? BrowserTabItem ?: return@addActionListener
-                val promptText = promptArea.text
-                val intent = intentComboBox.selectedItem as IntentMode
-                historyIndex = -1
-                draftPrompt = ""
-                
-                val originalText = text
-                text = "Generating..."
-                isEnabled = false
+            putClientProperty("JButton.buttonType", "defaultButton")
+        }
 
-                ReadAction.nonBlocking<AiPayload> {
-                    PayloadGenerator.generatePayload(project, contextState, promptText, intent)
-                }
-                .finishOnUiThread(ModalityState.nonModal()) { payloadObj ->
-                    payloadObj.turn?.let { contextState.addTurn(it) }
-                    refreshUi()
+        val loadingIcon = AsyncProcessIcon("PayloadGenerator").apply { isVisible = false }
 
-                    val jsonString = Json.encodeToString(payloadObj)
-                    server.sendToTab(selectedTab.id, jsonString)
+        fun setGeneratingState(isGenerating: Boolean) {
+            loadingIcon.isVisible = isGenerating
+            copyButton.isEnabled = !isGenerating
+            sendWsButton.isEnabled = !isGenerating && tabComboBox.itemCount > 0
+        }
 
-                    text = "Sent!"
-                    promptArea.text = ""
-                    Timer(1500) { text = originalText; isEnabled = true }.apply { isRepeats = false }.start()
-                }
-                .submit(AppExecutorUtil.getAppExecutorService())
+        copyButton.addActionListener {
+            val promptText = promptArea.text
+            val intent = if (askRadio.isSelected) IntentMode.ASK else IntentMode.EDIT
+            historyIndex = -1
+            draftPrompt = ""
+
+            setGeneratingState(true)
+
+            ReadAction.nonBlocking<AiPayload> {
+                PayloadGenerator.generatePayload(project, contextState, promptText, intent)
             }
+            .finishOnUiThread(ModalityState.nonModal()) { payloadObj ->
+                payloadObj.turn?.let { contextState.addTurn(it) }
+                refreshUi()
+                CopyPasteManager.getInstance().setContents(StringSelection(payloadObj.text))
+
+                if (payloadObj.attachments.isNotEmpty()) {
+                    Messages.showWarningDialog(
+                        "You copied ${payloadObj.attachments.size} media file(s). They cannot be copied to the clipboard.",
+                        "Media Files Skipped"
+                    )
+                }
+
+                promptArea.text = ""
+                setGeneratingState(false)
+
+                val originalText = copyButton.text
+                copyButton.text = "Copied!"
+                Timer(1500) { copyButton.text = originalText }.apply { isRepeats = false }.start()
+            }
+            .submit(AppExecutorUtil.getAppExecutorService())
+        }
+
+        sendWsButton.addActionListener {
+            val selectedTab = tabComboBox.selectedItem as? BrowserTabItem ?: return@addActionListener
+            val promptText = promptArea.text
+            val intent = if (askRadio.isSelected) IntentMode.ASK else IntentMode.EDIT
+            historyIndex = -1
+            draftPrompt = ""
+
+            setGeneratingState(true)
+
+            ReadAction.nonBlocking<AiPayload> {
+                PayloadGenerator.generatePayload(project, contextState, promptText, intent)
+            }
+            .finishOnUiThread(ModalityState.nonModal()) { payloadObj ->
+                payloadObj.turn?.let { contextState.addTurn(it) }
+                refreshUi()
+
+                val jsonString = Json.encodeToString(payloadObj)
+                server.sendToTab(selectedTab.id, jsonString)
+
+                promptArea.text = ""
+                setGeneratingState(false)
+
+                val originalText = sendWsButton.text
+                sendWsButton.text = "Sent!"
+                Timer(1500) { sendWsButton.text = originalText }.apply { isRepeats = false }.start()
+            }
+            .submit(AppExecutorUtil.getAppExecutorService())
         }
 
         val updateTabsUI = { tabs: List<BrowserTab> ->
@@ -430,7 +473,7 @@ class ContextComposerPanel(private val project: Project) {
 
                 if (tabComboBox.itemCount > 0) {
                     sendWsButton.text = "Send to AI Studio"
-                    sendWsButton.isEnabled = true
+                    if (!loadingIcon.isVisible) sendWsButton.isEnabled = true
                 } else {
                     sendWsButton.text = "Waiting..."
                     sendWsButton.isEnabled = false
@@ -441,16 +484,18 @@ class ContextComposerPanel(private val project: Project) {
         server.onTabsChanged = updateTabsUI
         updateTabsUI(server.getActiveTabs())
 
-        leftButtons.add(clearButton)
-        leftButtons.add(undoButton)
-        leftButtons.add(copyButton)
+        val actionButtonPanel = JPanel(BorderLayout(5, 0)).apply {
+            border = JBUI.Borders.emptyTop(5)
+            add(bottomToolbar.component, BorderLayout.WEST)
 
-        rightButtons.add(intentComboBox)
-        rightButtons.add(tabComboBox)
-        rightButtons.add(sendWsButton)
-
-        actionButtonPanel.add(leftButtons, BorderLayout.WEST)
-        actionButtonPanel.add(rightButtons, BorderLayout.EAST)
+            val rightButtons = JPanel(FlowLayout(FlowLayout.RIGHT, 5, 0)).apply {
+                add(tabComboBox)
+                add(copyButton)
+                add(sendWsButton)
+                add(loadingIcon)
+            }
+            add(rightButtons, BorderLayout.EAST)
+        }
 
         bottomPanel.add(actionButtonPanel, BorderLayout.SOUTH)
 
@@ -461,20 +506,6 @@ class ContextComposerPanel(private val project: Project) {
         content.add(splitPane, BorderLayout.CENTER)
 
         refreshUi()
-    }
-
-    private fun updateUndoButton() {
-        val lastTurn = contextState.getLastTurn()
-        if (lastTurn == null) {
-            undoButton.isEnabled = false
-            undoButton.toolTipText = "No previous sends to undo"
-        } else {
-            undoButton.isEnabled = true
-            val snippet = lastTurn.prompt.replace("\n", " ").take(40)
-            val displaySnippet = if (lastTurn.prompt.length > 40) "$snippet..." else snippet
-            val time = dateFormat.format(Date(lastTurn.timestamp))
-            undoButton.toolTipText = "<html><b>Undo Last Send</b><br>Sent: $time<br>Prompt: <i>$displaySnippet</i><br>Files: ${lastTurn.sentFiles.size}</html>"
-        }
     }
 
     private fun updateDedupedFiles() {
@@ -495,7 +526,6 @@ class ContextComposerPanel(private val project: Project) {
 
     fun refreshUi() {
         updateDedupedFiles()
-        updateUndoButton()
         refreshTree()
     }
 
@@ -503,7 +533,6 @@ class ContextComposerPanel(private val project: Project) {
         treeUpdateJob?.cancel()
 
         treeUpdateJob = ReadAction.nonBlocking<DefaultTreeModel> {
-            // Offload slow .aicontext loading to the background thread
             if (!isConfigLoaded) {
                 contextState.loadConfig()
                 isConfigLoaded = true
@@ -587,7 +616,6 @@ class ContextComposerPanel(private val project: Project) {
             while (enumeration.hasMoreElements()) {
                 val descendant = enumeration.nextElement() as DefaultMutableTreeNode
                 val descFile = (descendant.userObject as? NodeData)?.file ?: continue
-                // Apply to files AND empty directories!
                 if (!descFile.isDirectory || descFile.children.isEmpty()) {
                     contextState.applyStateRecursively(descFile, level, checkIgnore = false)
                 }
@@ -603,7 +631,6 @@ class ContextComposerPanel(private val project: Project) {
         val children = dir.children.filter { !FileFilterUtil.isIgnored(project, it) }
             .sortedWith(compareBy({ !it.isDirectory }, { it.name }))
 
-        // Flattening logic for middle packages
         if (dir.isDirectory && children.size == 1 && children[0].isDirectory) {
             val newPrefix = if (prefix.isEmpty()) dir.name else "$prefix.${dir.name}"
             return buildFileTree(children[0], showSelectedOnly, searchQuery, newPrefix)
