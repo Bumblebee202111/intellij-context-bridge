@@ -24,6 +24,9 @@ import com.intellij.openapi.ui.ComboBox
 import com.intellij.openapi.ui.Messages
 import com.intellij.openapi.vfs.VfsUtilCore
 import com.intellij.openapi.vfs.VirtualFile
+import com.intellij.openapi.vfs.VirtualFileManager
+import com.intellij.openapi.vfs.newvfs.BulkFileListener
+import com.intellij.openapi.vfs.newvfs.events.VFileEvent
 import com.intellij.ui.DocumentAdapter
 import com.intellij.ui.JBSplitter
 import com.intellij.ui.SearchTextField
@@ -85,6 +88,10 @@ class ContextComposerPanel(private val project: Project) {
     private val nodeStateCache = ConcurrentHashMap<DefaultMutableTreeNode, AggregatedState>()
     private var treeUpdateJob: CancellablePromise<*>? = null
 
+    private val vfsRefreshTimer = Timer(500) {
+        refreshUi()
+    }.apply { isRepeats = false }
+
     private val dateFormat = SimpleDateFormat("HH:mm:ss")
     private val promptArea = JBTextArea()
     private val undoButton = JButton("Undo Last")
@@ -99,6 +106,26 @@ class ContextComposerPanel(private val project: Project) {
     val content: JPanel = JPanel(BorderLayout())
 
     init {
+        ApplicationManager.getApplication().messageBus.connect(project).subscribe(VirtualFileManager.VFS_CHANGES, object : BulkFileListener {
+            override fun after(events: MutableList<out VFileEvent>) {
+                var needsRefresh = false
+                val projectDir = project.guessProjectDir() ?: return
+
+                for (event in events) {
+                    val file = event.file
+                    if (file != null && VfsUtilCore.isAncestor(projectDir, file, false)) {
+                        needsRefresh = true
+                        break
+                    }
+                }
+
+                if (needsRefresh) {
+                    contextState.fileStates.keys.removeIf { !it.isValid }
+                    vfsRefreshTimer.restart()
+                }
+            }
+        })
+
         tree.cellRenderer = ContextTreeCellRenderer(::getComputedLevel) { file -> lastDedupedFiles.contains(file) }
 
         fun getNextToggleLevel(node: DefaultMutableTreeNode, file: VirtualFile): ContextLevel {
