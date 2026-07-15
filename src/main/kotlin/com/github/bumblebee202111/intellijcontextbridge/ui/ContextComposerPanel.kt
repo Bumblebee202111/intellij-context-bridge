@@ -3,6 +3,7 @@ package com.github.bumblebee202111.intellijcontextbridge.ui
 import com.github.bumblebee202111.intellijcontextbridge.context.AiPayload
 import com.github.bumblebee202111.intellijcontextbridge.context.IntentMode
 import com.github.bumblebee202111.intellijcontextbridge.context.PayloadGenerator
+import com.github.bumblebee202111.intellijcontextbridge.context.PsiSkeletonExtractor
 import com.github.bumblebee202111.intellijcontextbridge.server.BrowserTab
 import com.github.bumblebee202111.intellijcontextbridge.server.ContextBridgeServer
 import com.github.bumblebee202111.intellijcontextbridge.state.ContextLevel
@@ -21,6 +22,9 @@ import com.intellij.openapi.application.ApplicationManager
 import com.intellij.openapi.application.ModalityState
 import com.intellij.openapi.application.ReadAction
 import com.intellij.openapi.components.service
+import com.intellij.openapi.editor.EditorFactory
+import com.intellij.openapi.editor.event.DocumentEvent
+import com.intellij.openapi.editor.event.DocumentListener
 import com.intellij.openapi.fileEditor.FileDocumentManager
 import com.intellij.openapi.fileEditor.FileEditorManager
 import com.intellij.openapi.fileEditor.OpenFileDescriptor
@@ -64,7 +68,7 @@ import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.concurrent.ConcurrentHashMap
 import javax.swing.*
-import javax.swing.event.DocumentEvent
+import javax.swing.event.DocumentEvent as SwingDocumentEvent
 import javax.swing.tree.DefaultMutableTreeNode
 import javax.swing.tree.DefaultTreeModel
 import javax.swing.tree.TreePath
@@ -79,6 +83,7 @@ class ContextComposerPanel(private val project: Project) {
 
     private var historyIndex = -1
     private var draftPrompt = ""
+    @Volatile
     private var lastDedupedFiles = emptySet<VirtualFile>()
     private var isConfigLoaded = false
 
@@ -117,6 +122,7 @@ class ContextComposerPanel(private val project: Project) {
     val content: JPanel = JPanel(BorderLayout())
 
     init {
+        // 1. Listen for disk saves and external changes
         ApplicationManager.getApplication().messageBus.connect(project).subscribe(VirtualFileManager.VFS_CHANGES, object : BulkFileListener {
             override fun after(events: MutableList<out VFileEvent>) {
                 var needsRefresh = false
@@ -136,6 +142,17 @@ class ContextComposerPanel(private val project: Project) {
                 }
             }
         })
+
+        // 2. Listen for live typing in the editor (unsaved changes)
+        EditorFactory.getInstance().eventMulticaster.addDocumentListener(object : DocumentListener {
+            override fun documentChanged(event: DocumentEvent) {
+                val file = FileDocumentManager.getInstance().getFile(event.document)
+                // Only trigger refresh if we are actually tracking this file in the context
+                if (file != null && contextState.fileStates.containsKey(file)) {
+                    vfsRefreshTimer.restart()
+                }
+            }
+        }, project)
 
         tree.cellRenderer = ContextTreeCellRenderer(::getComputedLevel) { file -> lastDedupedFiles.contains(file) }
 
@@ -158,7 +175,6 @@ class ContextComposerPanel(private val project: Project) {
 
                 if (SwingUtilities.isRightMouseButton(e)) {
                     applyStateToNode(node, ContextLevel.NONE)
-                    updateDedupedFiles()
                     if (showSelectedOnly) refreshUi() else {
                         tree.repaint()
                         autoCollapse(tree, node, path)
@@ -169,8 +185,7 @@ class ContextComposerPanel(private val project: Project) {
                         if (e.x >= bounds.x && e.x < bounds.x + 28) {
                             val nextLevel = getNextToggleLevel(node, file)
                             applyStateToNode(node, nextLevel)
-                            updateDedupedFiles()
-                            if (showSelectedOnly) refreshUi() else tree.repaint()
+                            refreshUi()
                             e.consume()
                         }
                     } else if (e.clickCount == 2) {
@@ -211,8 +226,7 @@ class ContextComposerPanel(private val project: Project) {
                     }
                 }
                 if (stateChanged) {
-                    updateDedupedFiles()
-                    if (showSelectedOnly) refreshUi() else tree.repaint()
+                    refreshUi()
                     e.consume()
                 }
             }
@@ -255,7 +269,7 @@ class ContextComposerPanel(private val project: Project) {
         val searchField = SearchTextField().apply {
             textEditor.emptyText.text = "Search files..."
             addDocumentListener(object : DocumentAdapter() {
-                override fun textChanged(e: DocumentEvent) {
+                override fun textChanged(e: SwingDocumentEvent) {
                     searchTimer?.stop()
                     searchTimer = Timer(300) {
                         searchQuery = text.trim()
@@ -508,47 +522,70 @@ class ContextComposerPanel(private val project: Project) {
         refreshUi()
     }
 
-    private fun updateDedupedFiles() {
-        val projectDir = project.guessProjectDir() ?: return
-        val cache = contextState.getDedupCache()
-
-        lastDedupedFiles = contextState.fileStates.entries.mapNotNull { (file, currentLevel) ->
-            val relativePath = VfsUtilCore.getRelativePath(file, projectDir) ?: file.path
-            val cachedRecord = cache[relativePath]
-
-            if (cachedRecord != null && cachedRecord.level == currentLevel) {
-                file
-            } else {
-                null
-            }
-        }.toSet()
-    }
-
     fun refreshUi() {
-        updateDedupedFiles()
         refreshTree()
     }
 
     private fun refreshTree() {
         treeUpdateJob?.cancel()
 
-        treeUpdateJob = ReadAction.nonBlocking<DefaultTreeModel> {
+        treeUpdateJob = ReadAction.nonBlocking<Pair<DefaultTreeModel, Set<VirtualFile>>> {
             if (!isConfigLoaded) {
                 contextState.loadConfig()
                 isConfigLoaded = true
             }
 
+            // 1. Re-calculate deduplication hashes in the background
+            val newDedupedFiles = mutableSetOf<VirtualFile>()
+            val projectDir = project.guessProjectDir()
+            if (projectDir != null) {
+                val cache = contextState.getDedupCache()
+                for ((file, currentLevel) in contextState.fileStates) {
+                    if (currentLevel == ContextLevel.NONE || currentLevel == ContextLevel.MIXED) continue
+
+                    val relativePath = VfsUtilCore.getRelativePath(file, projectDir) ?: file.path
+                    val cachedRecord = cache[relativePath]
+
+                    if (cachedRecord != null && cachedRecord.level == currentLevel) {
+                        try {
+                            val extension = file.extension?.lowercase() ?: ""
+                            val isTextFile = ContextCapabilityUtil.textExtensions.contains(extension) || !file.fileType.isBinary
+
+                            val currentHash = if (!isTextFile) {
+                                if (currentLevel == ContextLevel.FULL) contextState.calculateHash("${file.modificationStamp}_${file.length}") else "OMITTED_BINARY_SKELETON"
+                            } else {
+                                val extractedText = if (currentLevel == ContextLevel.FULL) {
+                                    // Use Document to capture unsaved live typing changes
+                                    val doc = FileDocumentManager.getInstance().getCachedDocument(file)
+                                    doc?.text ?: VfsUtilCore.loadText(file)
+                                } else {
+                                    PsiSkeletonExtractor.extract(project, file) ?: "OMITTED_NON_CODE_SKELETON"
+                                }
+                                contextState.calculateHash(extractedText)
+                            }
+
+                            if (currentHash == cachedRecord.hash) {
+                                newDedupedFiles.add(file)
+                            }
+                        } catch (e: Exception) {
+                            // Safely ignore file read errors during background hash checks
+                        }
+                    }
+                }
+            }
+
+            // 2. Build the visual tree
             nodeStateCache.clear()
-            val rootDir = project.guessProjectDir()
-            val rootNode = if (rootDir != null) {
-                buildFileTree(rootDir, showSelectedOnly, searchQuery) ?: DefaultMutableTreeNode(NodeData(rootDir, "No Project Root"))
+            val rootNode = if (projectDir != null) {
+                buildFileTree(projectDir, showSelectedOnly, searchQuery) ?: DefaultMutableTreeNode(NodeData(projectDir, "No Project Root"))
             } else {
                 DefaultMutableTreeNode("No Project Root")
             }
-            DefaultTreeModel(rootNode)
+            Pair(DefaultTreeModel(rootNode), newDedupedFiles)
         }
         .expireWith(project)
-        .finishOnUiThread(ModalityState.nonModal()) { newModel ->
+        .finishOnUiThread(ModalityState.nonModal()) { (newModel, newDedupedFiles) ->
+            lastDedupedFiles = newDedupedFiles
             tree.model = newModel
             if (searchQuery.isNotBlank()) {
                 TreeUtil.expandAll(tree)
