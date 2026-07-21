@@ -1,6 +1,7 @@
 package com.github.bumblebee202111.intellijcontextbridge.ui
 
 import com.github.bumblebee202111.intellijcontextbridge.context.AiPayload
+import com.github.bumblebee202111.intellijcontextbridge.context.ContextSuggestionEngine
 import com.github.bumblebee202111.intellijcontextbridge.context.IntentMode
 import com.github.bumblebee202111.intellijcontextbridge.context.PayloadGenerator
 import com.github.bumblebee202111.intellijcontextbridge.context.PsiSkeletonExtractor
@@ -9,7 +10,6 @@ import com.github.bumblebee202111.intellijcontextbridge.server.ContextBridgeServ
 import com.github.bumblebee202111.intellijcontextbridge.state.ContextLevel
 import com.github.bumblebee202111.intellijcontextbridge.state.ContextState
 import com.github.bumblebee202111.intellijcontextbridge.utils.ContextCapabilityUtil
-import com.github.bumblebee202111.intellijcontextbridge.utils.FileFilterUtil
 import com.intellij.icons.AllIcons
 import com.intellij.openapi.actionSystem.ActionManager
 import com.intellij.openapi.actionSystem.ActionUpdateThread
@@ -27,6 +27,8 @@ import com.intellij.openapi.editor.event.DocumentEvent
 import com.intellij.openapi.editor.event.DocumentListener
 import com.intellij.openapi.fileEditor.FileDocumentManager
 import com.intellij.openapi.fileEditor.FileEditorManager
+import com.intellij.openapi.fileEditor.FileEditorManagerEvent
+import com.intellij.openapi.fileEditor.FileEditorManagerListener
 import com.intellij.openapi.fileEditor.OpenFileDescriptor
 import com.intellij.openapi.fileTypes.FileTypes
 import com.intellij.openapi.ide.CopyPasteManager
@@ -66,12 +68,10 @@ import java.awt.event.MouseAdapter
 import java.awt.event.MouseEvent
 import java.text.SimpleDateFormat
 import java.util.Date
-import java.util.concurrent.ConcurrentHashMap
 import javax.swing.*
 import javax.swing.event.DocumentEvent as SwingDocumentEvent
 import javax.swing.tree.DefaultMutableTreeNode
 import javax.swing.tree.DefaultTreeModel
-import javax.swing.tree.TreePath
 
 data class BrowserTabItem(val id: String, val title: String) {
     override fun toString() = title
@@ -80,6 +80,7 @@ data class BrowserTabItem(val id: String, val title: String) {
 class ContextComposerPanel(private val project: Project) {
     private val contextState = project.service<ContextState>()
     private val server = ApplicationManager.getApplication().getService(ContextBridgeServer::class.java)
+    private val treeManager = ContextTreeManager(project, contextState)
 
     private var historyIndex = -1
     private var draftPrompt = ""
@@ -87,22 +88,6 @@ class ContextComposerPanel(private val project: Project) {
     private var lastDedupedFiles = emptySet<VirtualFile>()
     private var isConfigLoaded = false
 
-    private data class AggregatedState(
-        val allMaxed: Boolean,
-        val allSkeleton: Boolean,
-        val allNone: Boolean,
-        val hasLeaves: Boolean
-    ) {
-        val level: ContextLevel get() {
-            if (!hasLeaves) return ContextLevel.NONE
-            if (allNone) return ContextLevel.NONE
-            if (allSkeleton) return ContextLevel.SKELETON
-            if (allMaxed) return ContextLevel.FULL
-            return ContextLevel.MIXED
-        }
-    }
-
-    private val nodeStateCache = ConcurrentHashMap<DefaultMutableTreeNode, AggregatedState>()
     private var treeUpdateJob: CancellablePromise<*>? = null
 
     private val vfsRefreshTimer = Timer(500) {
@@ -113,16 +98,37 @@ class ContextComposerPanel(private val project: Project) {
 
     private var showSelectedOnly = false
     private var searchQuery = ""
+
     private val treeModel = DefaultTreeModel(DefaultMutableTreeNode("Loading..."))
     private val tree = Tree(treeModel).apply {
         emptyText.text = "Loading project..."
         emptyText.appendSecondaryText("Space/Click: Toggle | Enter: Open | Right-Click: Clear", SimpleTextAttributes.GRAYED_ATTRIBUTES, null)
     }
 
+    private val suggestionTreeModel = DefaultTreeModel(DefaultMutableTreeNode("Loading..."))
+    private val suggestionTree = Tree(suggestionTreeModel).apply {
+        emptyText.text = "No suggestions at this time."
+        isRootVisible = false
+        showsRootHandles = true
+    }
+
+    private val suggestionTreeContainer = JPanel(BorderLayout()).apply {
+        border = IdeBorderFactory.createTitledBorder("Suggested Context")
+        isVisible = false
+    }
+
+    private val promptArea = EditorTextField(project, FileTypes.PLAIN_TEXT).apply {
+        setOneLineMode(false)
+        setPlaceholder("Type your prompt here...")
+        addSettingsProvider { editor ->
+            editor.settings.isUseSoftWraps = true
+            editor.settings.additionalLinesCount = 0
+        }
+    }
+
     val content: JPanel = JPanel(BorderLayout())
 
     init {
-        // 1. Listen for disk saves and external changes
         ApplicationManager.getApplication().messageBus.connect(project).subscribe(VirtualFileManager.VFS_CHANGES, object : BulkFileListener {
             override fun after(events: MutableList<out VFileEvent>) {
                 var needsRefresh = false
@@ -143,96 +149,39 @@ class ContextComposerPanel(private val project: Project) {
             }
         })
 
-        // 2. Listen for live typing in the editor (unsaved changes)
+        project.messageBus.connect().subscribe(FileEditorManagerListener.FILE_EDITOR_MANAGER, object : FileEditorManagerListener {
+            override fun selectionChanged(event: FileEditorManagerEvent) {
+                vfsRefreshTimer.restart()
+            }
+
+            override fun fileOpened(source: FileEditorManager, file: VirtualFile) {
+                vfsRefreshTimer.restart()
+            }
+
+            override fun fileClosed(source: FileEditorManager, file: VirtualFile) {
+                vfsRefreshTimer.restart()
+            }
+        })
+
         EditorFactory.getInstance().eventMulticaster.addDocumentListener(object : DocumentListener {
             override fun documentChanged(event: DocumentEvent) {
                 val file = FileDocumentManager.getInstance().getFile(event.document)
-                // Only trigger refresh if we are actually tracking this file in the context
                 if (file != null && contextState.fileStates.containsKey(file)) {
                     vfsRefreshTimer.restart()
                 }
             }
         }, project)
 
-        tree.cellRenderer = ContextTreeCellRenderer(::getComputedLevel) { file -> lastDedupedFiles.contains(file) }
+        tree.cellRenderer = ContextTreeCellRenderer(treeManager::getComputedLevel) { file -> lastDedupedFiles.contains(file) }
+        suggestionTree.cellRenderer = ContextTreeCellRenderer(treeManager::getComputedLevel) { false }
 
-        fun getNextToggleLevel(node: DefaultMutableTreeNode, file: VirtualFile): ContextLevel {
-            val currentLevel = getComputedLevel(node)
-            val maxLevel = if (file.isDirectory && file.children.isNotEmpty()) {
-                ContextLevel.FULL
-            } else {
-                ContextCapabilityUtil.getMaxLevel(file)
-            }
-            return ContextCapabilityUtil.getNextLevel(currentLevel, maxLevel)
-        }
+        tree.addMouseListener(createTreeMouseListener(tree))
+        tree.addKeyListener(createTreeKeyListener(tree))
 
-        tree.addMouseListener(object : MouseAdapter() {
-            override fun mouseClicked(e: MouseEvent) {
-                val path = tree.getPathForLocation(e.x, e.y) ?: return
-                val bounds = tree.getPathBounds(path) ?: return
-                val node = path.lastPathComponent as? DefaultMutableTreeNode ?: return
-                val file = (node.userObject as? NodeData)?.file ?: return
+        suggestionTree.addMouseListener(createTreeMouseListener(suggestionTree))
+        suggestionTree.addKeyListener(createTreeKeyListener(suggestionTree))
 
-                if (SwingUtilities.isRightMouseButton(e)) {
-                    applyStateToNode(node, ContextLevel.NONE)
-                    if (showSelectedOnly) refreshUi() else {
-                        tree.repaint()
-                        autoCollapse(tree, node, path)
-                    }
-                    e.consume()
-                } else if (SwingUtilities.isLeftMouseButton(e)) {
-                    if (e.clickCount == 1) {
-                        if (e.x >= bounds.x && e.x < bounds.x + 28) {
-                            val nextLevel = getNextToggleLevel(node, file)
-                            applyStateToNode(node, nextLevel)
-                            refreshUi()
-                            e.consume()
-                        }
-                    } else if (e.clickCount == 2) {
-                        if (!file.isDirectory) {
-                            OpenFileDescriptor(project, file).navigate(true)
-                            e.consume()
-                        }
-                    }
-                }
-            }
-        })
-
-        tree.addKeyListener(object : KeyAdapter() {
-            override fun keyPressed(e: KeyEvent) {
-                val paths = tree.selectionPaths ?: return
-                var stateChanged = false
-
-                for (path in paths) {
-                    val node = path.lastPathComponent as? DefaultMutableTreeNode ?: continue
-                    val file = (node.userObject as? NodeData)?.file ?: continue
-
-                    when (e.keyCode) {
-                        KeyEvent.VK_ENTER -> {
-                            if (!file.isDirectory) OpenFileDescriptor(project, file).navigate(true)
-                        }
-                        KeyEvent.VK_SPACE -> {
-                            val nextLevel = getNextToggleLevel(node, file)
-                            applyStateToNode(node, nextLevel)
-                            stateChanged = true
-                        }
-                        KeyEvent.VK_S -> { applyStateToNode(node, ContextLevel.SKELETON); stateChanged = true }
-                        KeyEvent.VK_F -> { applyStateToNode(node, ContextLevel.FULL); stateChanged = true }
-                        KeyEvent.VK_BACK_SPACE, KeyEvent.VK_DELETE -> {
-                            applyStateToNode(node, ContextLevel.NONE)
-                            autoCollapse(tree, node, path)
-                            stateChanged = true
-                        }
-                    }
-                }
-                if (stateChanged) {
-                    refreshUi()
-                    e.consume()
-                }
-            }
-        })
-
-        val treeContainer = JPanel(BorderLayout())
+        val mainTreeContainer = JPanel(BorderLayout())
         val topToolbar = JPanel(BorderLayout(5, 0)).apply { border = JBUI.Borders.empty(5) }
 
         val actionGroup = DefaultActionGroup().apply {
@@ -282,25 +231,24 @@ class ContextComposerPanel(private val project: Project) {
         topToolbar.add(nativeToolbar.component, BorderLayout.WEST)
         topToolbar.add(searchField, BorderLayout.CENTER)
 
-        treeContainer.add(topToolbar, BorderLayout.NORTH)
-        treeContainer.add(JBScrollPane(tree), BorderLayout.CENTER)
+        mainTreeContainer.add(topToolbar, BorderLayout.NORTH)
+        mainTreeContainer.add(JBScrollPane(tree), BorderLayout.CENTER)
+
+        suggestionTreeContainer.add(JBScrollPane(suggestionTree), BorderLayout.CENTER)
+
+        val treeSplitter = JBSplitter(true, 0.3f).apply {
+            firstComponent = suggestionTreeContainer
+            secondComponent = mainTreeContainer
+        }
 
         val bottomPanel = JPanel(BorderLayout()).apply { border = JBUI.Borders.empty(5) }
 
-        val promptArea = EditorTextField(project, FileTypes.PLAIN_TEXT).apply {
-            setOneLineMode(false)
-            setPlaceholder("Type your prompt here...")
-            addSettingsProvider { editor ->
-                editor.settings.isUseSoftWraps = true
-                editor.settings.additionalLinesCount = 0
-            }
-        }
-
-        promptArea.document.addDocumentListener(object : com.intellij.openapi.editor.event.DocumentListener {
-            override fun documentChanged(event: com.intellij.openapi.editor.event.DocumentEvent) {
+        promptArea.document.addDocumentListener(object : DocumentListener {
+            override fun documentChanged(event: DocumentEvent) {
                 if (historyIndex == -1) {
                     draftPrompt = promptArea.text
                 }
+                vfsRefreshTimer.restart()
             }
         })
 
@@ -514,7 +462,7 @@ class ContextComposerPanel(private val project: Project) {
         bottomPanel.add(actionButtonPanel, BorderLayout.SOUTH)
 
         val splitPane = JBSplitter(true, 0.7f)
-        splitPane.firstComponent = treeContainer
+        splitPane.firstComponent = treeSplitter
         splitPane.secondComponent = bottomPanel
 
         content.add(splitPane, BorderLayout.CENTER)
@@ -522,20 +470,92 @@ class ContextComposerPanel(private val project: Project) {
         refreshUi()
     }
 
-    fun refreshUi() {
-        refreshTree()
+    private fun createTreeMouseListener(targetTree: Tree): MouseAdapter {
+        return object : MouseAdapter() {
+            override fun mouseClicked(e: MouseEvent) {
+                val path = targetTree.getPathForLocation(e.x, e.y) ?: return
+                val bounds = targetTree.getPathBounds(path) ?: return
+                val node = path.lastPathComponent as? DefaultMutableTreeNode ?: return
+                val file = (node.userObject as? NodeData)?.file ?: return
+
+                if (SwingUtilities.isRightMouseButton(e)) {
+                    treeManager.applyStateToNode(node, ContextLevel.NONE)
+                    if (showSelectedOnly) refreshUi() else {
+                        targetTree.repaint()
+                        treeManager.autoCollapse(targetTree, node, path)
+                    }
+                    e.consume()
+                } else if (SwingUtilities.isLeftMouseButton(e)) {
+                    if (e.clickCount == 1) {
+                        if (e.x >= bounds.x && e.x < bounds.x + 28) {
+                            val nextLevel = treeManager.getNextToggleLevel(node, file)
+                            treeManager.applyStateToNode(node, nextLevel)
+                            refreshUi()
+                            e.consume()
+                        }
+                    } else if (e.clickCount == 2) {
+                        if (!file.isDirectory) {
+                            OpenFileDescriptor(project, file).navigate(true)
+                            e.consume()
+                        }
+                    }
+                }
+            }
+        }
     }
 
-    private fun refreshTree() {
+    private fun createTreeKeyListener(targetTree: Tree): KeyAdapter {
+        return object : KeyAdapter() {
+            override fun keyPressed(e: KeyEvent) {
+                val paths = targetTree.selectionPaths ?: return
+                var stateChanged = false
+
+                for (path in paths) {
+                    val node = path.lastPathComponent as? DefaultMutableTreeNode ?: continue
+                    val file = (node.userObject as? NodeData)?.file ?: continue
+
+                    when (e.keyCode) {
+                        KeyEvent.VK_ENTER -> {
+                            if (!file.isDirectory) OpenFileDescriptor(project, file).navigate(true)
+                        }
+                        KeyEvent.VK_SPACE -> {
+                            val nextLevel = treeManager.getNextToggleLevel(node, file)
+                            treeManager.applyStateToNode(node, nextLevel)
+                            stateChanged = true
+                        }
+                        KeyEvent.VK_S -> { treeManager.applyStateToNode(node, ContextLevel.SKELETON); stateChanged = true }
+                        KeyEvent.VK_F -> { treeManager.applyStateToNode(node, ContextLevel.FULL); stateChanged = true }
+                        KeyEvent.VK_BACK_SPACE, KeyEvent.VK_DELETE -> {
+                            treeManager.applyStateToNode(node, ContextLevel.NONE)
+                            treeManager.autoCollapse(targetTree, node, path)
+                            stateChanged = true
+                        }
+                    }
+                }
+                if (stateChanged) {
+                    refreshUi()
+                    e.consume()
+                }
+            }
+        }
+    }
+
+    fun refreshUi() {
+        val currentPromptText = promptArea.text
+        refreshTree(currentPromptText)
+    }
+
+    private fun refreshTree(currentPromptText: String) {
         treeUpdateJob?.cancel()
 
-        treeUpdateJob = ReadAction.nonBlocking<Pair<DefaultTreeModel, Set<VirtualFile>>> {
+        treeUpdateJob = ReadAction.nonBlocking<Triple<DefaultTreeModel, DefaultTreeModel, Set<VirtualFile>>> {
             if (!isConfigLoaded) {
                 contextState.loadConfig()
                 isConfigLoaded = true
             }
 
-            // 1. Re-calculate deduplication hashes in the background
+            val suggestions = ContextSuggestionEngine.calculateSuggestions(project, contextState, currentPromptText)
+
             val newDedupedFiles = mutableSetOf<VirtualFile>()
             val projectDir = project.guessProjectDir()
             if (projectDir != null) {
@@ -548,195 +568,62 @@ class ContextComposerPanel(private val project: Project) {
 
                     if (cachedRecord != null && cachedRecord.level == currentLevel) {
                         try {
-                            val extension = file.extension?.lowercase() ?: ""
-                            val isTextFile = ContextCapabilityUtil.textExtensions.contains(extension) || !file.fileType.isBinary
-
-                            val currentHash = if (!isTextFile) {
-                                if (currentLevel == ContextLevel.FULL) contextState.calculateHash("${file.modificationStamp}_${file.length}") else "OMITTED_BINARY_SKELETON"
-                            } else {
+                            val isTextFile = ContextCapabilityUtil.textExtensions.contains(file.extension?.lowercase() ?: "") || !file.fileType.isBinary
+                            val currentHash = if (isTextFile) {
                                 val extractedText = if (currentLevel == ContextLevel.FULL) {
-                                    // Use Document to capture unsaved live typing changes
-                                    val doc = FileDocumentManager.getInstance().getCachedDocument(file)
-                                    doc?.text ?: VfsUtilCore.loadText(file)
+                                    FileDocumentManager.getInstance().getCachedDocument(file)?.text ?: VfsUtilCore.loadText(file)
                                 } else {
                                     PsiSkeletonExtractor.extract(project, file) ?: "OMITTED_NON_CODE_SKELETON"
                                 }
                                 contextState.calculateHash(extractedText)
+                            } else {
+                                if (currentLevel == ContextLevel.FULL) contextState.calculateHash("${file.modificationStamp}_${file.length}") else "OMITTED_BINARY_SKELETON"
                             }
 
                             if (currentHash == cachedRecord.hash) {
                                 newDedupedFiles.add(file)
                             }
                         } catch (e: Exception) {
-                            // Safely ignore file read errors during background hash checks
+                            // Safely ignore file read errors
                         }
                     }
                 }
             }
 
-            // 2. Build the visual tree
-            nodeStateCache.clear()
-            val rootNode = if (projectDir != null) {
-                buildFileTree(projectDir, showSelectedOnly, searchQuery) ?: DefaultMutableTreeNode(NodeData(projectDir, "No Project Root"))
+            treeManager.clearCache()
+
+            val mainRootNode = if (projectDir != null) {
+                treeManager.buildFileTree(projectDir, showSelectedOnly, searchQuery, isRoot = true) ?: DefaultMutableTreeNode(NodeData(projectDir, "No Project Root"))
             } else {
                 DefaultMutableTreeNode("No Project Root")
             }
-            Pair(DefaultTreeModel(rootNode), newDedupedFiles)
+
+            val suggestionRootNode = if (projectDir != null && suggestions.isNotEmpty()) {
+                treeManager.buildFileTree(projectDir, false, "", allowedLeaves = suggestions, isRoot = true) ?: DefaultMutableTreeNode("No Suggestions")
+            } else {
+                DefaultMutableTreeNode("No Suggestions")
+            }
+
+            Triple(DefaultTreeModel(mainRootNode), DefaultTreeModel(suggestionRootNode), newDedupedFiles)
         }
         .expireWith(project)
-        .finishOnUiThread(ModalityState.nonModal()) { (newModel, newDedupedFiles) ->
+        .finishOnUiThread(ModalityState.nonModal()) { (newMainModel, newSuggestionModel, newDedupedFiles) ->
             lastDedupedFiles = newDedupedFiles
-            tree.model = newModel
+
+            tree.model = newMainModel
             if (searchQuery.isNotBlank()) {
                 TreeUtil.expandAll(tree)
             } else {
-                expandExplicitNodes(tree, newModel.root as DefaultMutableTreeNode)
+                treeManager.expandExplicitNodes(tree, newMainModel.root as DefaultMutableTreeNode)
+            }
+
+            suggestionTree.model = newSuggestionModel
+            val hasSuggestions = (newSuggestionModel.root as DefaultMutableTreeNode).childCount > 0
+            suggestionTreeContainer.isVisible = hasSuggestions
+            if (hasSuggestions) {
+                TreeUtil.expandAll(suggestionTree)
             }
         }
         .submit(AppExecutorUtil.getAppExecutorService())
-    }
-
-    private fun getAggregatedState(node: DefaultMutableTreeNode): AggregatedState {
-        val file = (node.userObject as? NodeData)?.file ?: return AggregatedState(
-            allMaxed = true,
-            allSkeleton = true,
-            allNone = true,
-            hasLeaves = false
-        )
-        
-        if (!file.isDirectory || file.children.isEmpty()) {
-            val level = contextState.getLevel(file)
-            val maxLevel = if (file.isDirectory) ContextLevel.SKELETON else ContextCapabilityUtil.getMaxLevel(file)
-            return AggregatedState(
-                allMaxed = (level == maxLevel),
-                allSkeleton = (level == ContextLevel.SKELETON),
-                allNone = (level == ContextLevel.NONE),
-                hasLeaves = true
-            )
-        }
-
-        nodeStateCache[node]?.let { return it }
-
-        var allMaxed = true
-        var allSkeleton = true
-        var allNone = true
-        var hasLeaves = false
-
-        val enumeration = node.children()
-        while (enumeration.hasMoreElements()) {
-            val child = enumeration.nextElement() as DefaultMutableTreeNode
-            val childState = getAggregatedState(child)
-
-            if (childState.hasLeaves) {
-                hasLeaves = true
-                if (!childState.allMaxed) allMaxed = false
-                if (!childState.allSkeleton) allSkeleton = false
-                if (!childState.allNone) allNone = false
-            }
-        }
-
-        val result = AggregatedState(allMaxed, allSkeleton, allNone, hasLeaves)
-        nodeStateCache[node] = result
-        return result
-    }
-
-    private fun getComputedLevel(node: DefaultMutableTreeNode): ContextLevel {
-        return getAggregatedState(node).level
-    }
-
-    private fun applyStateToNode(node: DefaultMutableTreeNode, level: ContextLevel) {
-        val file = (node.userObject as? NodeData)?.file ?: return
-        if (!file.isDirectory) {
-            contextState.applyStateRecursively(file, level, checkIgnore = false)
-        } else {
-            val enumeration = node.depthFirstEnumeration()
-            while (enumeration.hasMoreElements()) {
-                val descendant = enumeration.nextElement() as DefaultMutableTreeNode
-                val descFile = (descendant.userObject as? NodeData)?.file ?: continue
-                if (!descFile.isDirectory || descFile.children.isEmpty()) {
-                    contextState.applyStateRecursively(descFile, level, checkIgnore = false)
-                }
-            }
-        }
-        nodeStateCache.clear()
-    }
-
-    @Suppress("UnsafeVfsRecursion")
-    private fun buildFileTree(dir: VirtualFile, showSelectedOnly: Boolean, searchQuery: String, prefix: String = ""): DefaultMutableTreeNode? {
-        if (FileFilterUtil.isIgnored(project, dir)) return null
-
-        val children = dir.children.filter { !FileFilterUtil.isIgnored(project, it) }
-            .sortedWith(compareBy({ !it.isDirectory }, { it.name }))
-
-        if (dir.isDirectory && children.size == 1 && children[0].isDirectory) {
-            val newPrefix = if (prefix.isEmpty()) dir.name else "$prefix.${dir.name}"
-            return buildFileTree(children[0], showSelectedOnly, searchQuery, newPrefix)
-        }
-
-        val displayName = if (prefix.isEmpty()) dir.name else "$prefix.${dir.name}"
-        val node = DefaultMutableTreeNode(NodeData(dir, displayName))
-
-        var hasValidChildren = false
-        val dirMatchesSearch = searchQuery.isBlank() || displayName.contains(searchQuery, ignoreCase = true)
-
-        for (child in children) {
-            if (child.isDirectory) {
-                val childNode = buildFileTree(child, showSelectedOnly, searchQuery, "")
-                if (childNode != null) {
-                    node.add(childNode)
-                    hasValidChildren = true
-                }
-            } else {
-                val level = contextState.getLevel(child)
-                val isSelected = level != ContextLevel.NONE
-
-                val passesSelection = !showSelectedOnly || isSelected
-                val passesSearch = searchQuery.isBlank() || dirMatchesSearch || child.name.contains(searchQuery, ignoreCase = true)
-
-                if (passesSelection && passesSearch) {
-                    node.add(DefaultMutableTreeNode(NodeData(child, child.name)))
-                    hasValidChildren = true
-                }
-            }
-        }
-
-        val level = getComputedLevel(node)
-        val isSelected = level != ContextLevel.NONE
-        val passesSelection = !showSelectedOnly || isSelected
-
-        if (!hasValidChildren) {
-            if (!passesSelection) return null
-            if (searchQuery.isNotBlank() && !dirMatchesSearch) return null
-            if (children.isNotEmpty()) return null
-        }
-
-        return node
-    }
-
-    private fun autoCollapse(tree: Tree, node: DefaultMutableTreeNode, path: TreePath) {
-        var currentPath = path.parentPath
-        var currentNode = node.parent as? DefaultMutableTreeNode
-
-        while (currentPath != null && currentNode != null) {
-            if (getComputedLevel(currentNode) == ContextLevel.NONE) {
-                tree.collapsePath(currentPath)
-            } else {
-                break
-            }
-            currentPath = currentPath.parentPath
-            currentNode = currentNode.parent as? DefaultMutableTreeNode
-        }
-    }
-
-    private fun expandExplicitNodes(tree: Tree, node: DefaultMutableTreeNode) {
-        val level = getComputedLevel(node)
-
-        if (level == ContextLevel.MIXED) {
-            tree.expandPath(TreePath(node.path))
-            for (i in 0 until node.childCount) {
-                val child = node.getChildAt(i) as? DefaultMutableTreeNode
-                if (child != null) expandExplicitNodes(tree, child)
-            }
-        }
     }
 }
