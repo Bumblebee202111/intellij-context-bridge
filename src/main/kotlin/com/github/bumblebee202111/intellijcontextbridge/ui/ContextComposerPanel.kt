@@ -7,6 +7,7 @@ import com.github.bumblebee202111.intellijcontextbridge.context.PayloadGenerator
 import com.github.bumblebee202111.intellijcontextbridge.context.PsiSkeletonExtractor
 import com.github.bumblebee202111.intellijcontextbridge.server.BrowserTab
 import com.github.bumblebee202111.intellijcontextbridge.server.ContextBridgeServer
+import com.github.bumblebee202111.intellijcontextbridge.services.ContextCoroutineScopeService
 import com.github.bumblebee202111.intellijcontextbridge.state.ContextLevel
 import com.github.bumblebee202111.intellijcontextbridge.state.ContextState
 import com.github.bumblebee202111.intellijcontextbridge.utils.ContextCapabilityUtil
@@ -33,6 +34,7 @@ import com.intellij.openapi.project.Project
 import com.intellij.openapi.project.guessProjectDir
 import com.intellij.openapi.ui.ComboBox
 import com.intellij.openapi.ui.Messages
+import com.intellij.openapi.util.Computable
 import com.intellij.openapi.vfs.VfsUtilCore
 import com.intellij.openapi.vfs.VirtualFile
 import com.intellij.ui.DocumentAdapter
@@ -48,7 +50,8 @@ import com.intellij.util.concurrency.AppExecutorUtil
 import com.intellij.util.ui.AsyncProcessIcon
 import com.intellij.util.ui.JBUI
 import com.intellij.util.ui.tree.TreeUtil
-import org.jetbrains.concurrency.CancellablePromise
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.launch
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
 import java.awt.BorderLayout
@@ -75,6 +78,7 @@ class ContextComposerPanel(private val project: Project) {
     private val contextState = project.service<ContextState>()
     private val server = ApplicationManager.getApplication().getService(ContextBridgeServer::class.java)
     private val treeManager = ContextTreeManager(project, contextState)
+    private val coroutineService = project.service<ContextCoroutineScopeService>()
 
     private var historyIndex = -1
     private var draftPrompt = ""
@@ -82,7 +86,7 @@ class ContextComposerPanel(private val project: Project) {
     private var lastDedupedFiles = emptySet<VirtualFile>()
     private var isConfigLoaded = false
 
-    private var treeUpdateJob: CancellablePromise<*>? = null
+    private var treeUpdateJob: Job? = null
 
     private val vfsRefreshTimer = Timer(500) {
         refreshUi()
@@ -495,9 +499,9 @@ class ContextComposerPanel(private val project: Project) {
     private fun refreshTree(currentPromptText: String) {
         treeUpdateJob?.cancel()
 
-        treeUpdateJob = ReadAction.nonBlocking<Triple<DefaultTreeModel, DefaultTreeModel, Set<VirtualFile>>> {
+        treeUpdateJob = coroutineService.scope.launch {
             if (!isConfigLoaded) {
-                contextState.loadConfig()
+                ApplicationManager.getApplication().runReadAction { contextState.loadConfig() }
                 isConfigLoaded = true
             }
 
@@ -505,33 +509,36 @@ class ContextComposerPanel(private val project: Project) {
 
             val newDedupedFiles = mutableSetOf<VirtualFile>()
             val projectDir = project.guessProjectDir()
-            if (projectDir != null) {
-                val cache = contextState.getDedupCache()
-                for ((file, currentLevel) in contextState.fileStates) {
-                    if (currentLevel == ContextLevel.NONE || currentLevel == ContextLevel.MIXED) continue
 
-                    val relativePath = VfsUtilCore.getRelativePath(file, projectDir) ?: file.path
-                    val cachedRecord = cache[relativePath]
+            ApplicationManager.getApplication().runReadAction {
+                if (projectDir != null) {
+                    val cache = contextState.getDedupCache()
+                    for ((file, currentLevel) in contextState.fileStates) {
+                        if (currentLevel == ContextLevel.NONE || currentLevel == ContextLevel.MIXED) continue
 
-                    if (cachedRecord != null && cachedRecord.level == currentLevel) {
-                        try {
-                            val isTextFile = ContextCapabilityUtil.textExtensions.contains(file.extension?.lowercase() ?: "") || !file.fileType.isBinary
-                            val currentHash = if (isTextFile) {
-                                val extractedText = if (currentLevel == ContextLevel.FULL) {
-                                    FileDocumentManager.getInstance().getCachedDocument(file)?.text ?: VfsUtilCore.loadText(file)
+                        val relativePath = VfsUtilCore.getRelativePath(file, projectDir) ?: file.path
+                        val cachedRecord = cache[relativePath]
+
+                        if (cachedRecord != null && cachedRecord.level == currentLevel) {
+                            try {
+                                val isTextFile = ContextCapabilityUtil.textExtensions.contains(file.extension?.lowercase() ?: "") || !file.fileType.isBinary
+                                val currentHash = if (isTextFile) {
+                                    val extractedText = if (currentLevel == ContextLevel.FULL) {
+                                        FileDocumentManager.getInstance().getCachedDocument(file)?.text ?: VfsUtilCore.loadText(file)
+                                    } else {
+                                        PsiSkeletonExtractor.extract(project, file) ?: "OMITTED_NON_CODE_SKELETON"
+                                    }
+                                    contextState.calculateHash(extractedText)
                                 } else {
-                                    PsiSkeletonExtractor.extract(project, file) ?: "OMITTED_NON_CODE_SKELETON"
+                                    if (currentLevel == ContextLevel.FULL) contextState.calculateHash("${file.modificationStamp}_${file.length}") else "OMITTED_BINARY_SKELETON"
                                 }
-                                contextState.calculateHash(extractedText)
-                            } else {
-                                if (currentLevel == ContextLevel.FULL) contextState.calculateHash("${file.modificationStamp}_${file.length}") else "OMITTED_BINARY_SKELETON"
-                            }
 
-                            if (currentHash == cachedRecord.hash) {
-                                newDedupedFiles.add(file)
+                                if (currentHash == cachedRecord.hash) {
+                                    newDedupedFiles.add(file)
+                                }
+                            } catch (e: Exception) {
+                                // Safely ignore file read errors
                             }
-                        } catch (e: Exception) {
-                            // Safely ignore file read errors
                         }
                     }
                 }
@@ -539,38 +546,40 @@ class ContextComposerPanel(private val project: Project) {
 
             treeManager.clearCache()
 
-            val mainRootNode = if (projectDir != null) {
-                treeManager.buildFileTree(projectDir, showSelectedOnly, searchQuery, isRoot = true) ?: DefaultMutableTreeNode(NodeData(projectDir, "No Project Root"))
-            } else {
-                DefaultMutableTreeNode("No Project Root")
-            }
+            val mainRootNode = ApplicationManager.getApplication().runReadAction(Computable {
+                if (projectDir != null) {
+                    treeManager.buildFileTree(projectDir, showSelectedOnly, searchQuery, isRoot = true) ?: DefaultMutableTreeNode(NodeData(projectDir, "No Project Root"))
+                } else {
+                    DefaultMutableTreeNode("No Project Root")
+                }
+            })
 
-            val suggestionRootNode = if (projectDir != null && suggestions.isNotEmpty()) {
-                treeManager.buildFileTree(projectDir, false, "", allowedLeaves = suggestions, isRoot = true) ?: DefaultMutableTreeNode("No Suggestions")
-            } else {
-                DefaultMutableTreeNode("No Suggestions")
-            }
+            val suggestionRootNode = ApplicationManager.getApplication().runReadAction(Computable {
+                if (projectDir != null && suggestions.isNotEmpty()) {
+                    treeManager.buildFileTree(projectDir, false, "", allowedLeaves = suggestions, isRoot = true) ?: DefaultMutableTreeNode("No Suggestions")
+                } else {
+                    DefaultMutableTreeNode("No Suggestions")
+                }
+            })
 
-            Triple(DefaultTreeModel(mainRootNode), DefaultTreeModel(suggestionRootNode), newDedupedFiles)
+            // Switch to the EDT for UI updates safely
+            ApplicationManager.getApplication().invokeLater({
+                lastDedupedFiles = newDedupedFiles
+
+                tree.model = DefaultTreeModel(mainRootNode)
+                if (searchQuery.isNotBlank()) {
+                    TreeUtil.expandAll(tree)
+                } else {
+                    treeManager.expandExplicitNodes(tree, mainRootNode as DefaultMutableTreeNode)
+                }
+
+                suggestionTree.model = DefaultTreeModel(suggestionRootNode)
+                val hasSuggestions = (suggestionRootNode as DefaultMutableTreeNode).childCount > 0
+                suggestionTreeContainer.isVisible = hasSuggestions
+                if (hasSuggestions) {
+                    TreeUtil.expandAll(suggestionTree)
+                }
+            }, ModalityState.nonModal())
         }
-        .expireWith(project)
-        .finishOnUiThread(ModalityState.nonModal()) { (newMainModel, newSuggestionModel, newDedupedFiles) ->
-            lastDedupedFiles = newDedupedFiles
-
-            tree.model = newMainModel
-            if (searchQuery.isNotBlank()) {
-                TreeUtil.expandAll(tree)
-            } else {
-                treeManager.expandExplicitNodes(tree, newMainModel.root as DefaultMutableTreeNode)
-            }
-
-            suggestionTree.model = newSuggestionModel
-            val hasSuggestions = (newSuggestionModel.root as DefaultMutableTreeNode).childCount > 0
-            suggestionTreeContainer.isVisible = hasSuggestions
-            if (hasSuggestions) {
-                TreeUtil.expandAll(suggestionTree)
-            }
-        }
-        .submit(AppExecutorUtil.getAppExecutorService())
     }
 }

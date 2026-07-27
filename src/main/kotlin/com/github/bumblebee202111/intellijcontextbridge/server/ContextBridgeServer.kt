@@ -10,9 +10,6 @@ import io.ktor.server.routing.*
 import io.ktor.server.websocket.*
 import io.ktor.websocket.*
 import kotlinx.coroutines.CoroutineScope
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.SupervisorJob
-import kotlinx.coroutines.cancel
 import kotlinx.coroutines.launch
 import java.net.ServerSocket
 import java.util.*
@@ -21,9 +18,8 @@ import kotlin.time.Duration.Companion.seconds
 data class BrowserTab(val id: String, val title: String, val session: DefaultWebSocketServerSession)
 
 @Service(Service.Level.APP)
-class ContextBridgeServer : Disposable {
+class ContextBridgeServer(private val scope: CoroutineScope) : Disposable {
 
-    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private var server: EmbeddedServer<CIOApplicationEngine, CIOApplicationEngine.Configuration>? = null
 
     private val activeTabs = Collections.synchronizedMap(LinkedHashMap<String, BrowserTab>())
@@ -109,7 +105,7 @@ class ContextBridgeServer : Disposable {
     fun sendToTab(tabId: String, message: String) {
         val tab = activeTabs[tabId]
         if (tab != null) {
-            scope.launch(Dispatchers.IO) {
+            scope.launch {
                 try {
                     tab.session.send(message)
                 } catch (e: Exception) {
@@ -120,7 +116,7 @@ class ContextBridgeServer : Disposable {
     }
 
     override fun dispose() {
-        scope.cancel()
+        // The platform automatically cancels the injected scope, so we only need to stop Ktor
         server?.stop(1000, 2000)
         server = null
         activeTabs.clear()
