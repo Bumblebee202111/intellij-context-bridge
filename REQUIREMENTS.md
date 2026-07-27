@@ -21,13 +21,20 @@ The system MUST separate static behavioral directives from the dynamic project c
 * *Edit Constraints:* In generation modes, the AI MUST be instructed to output code using a "Skeleton Patch" format (where unchanged signatures are retained as structural anchors) and MUST format code blocks with exact file path headers to facilitate IDE parsing.
 * *Context Awareness:* The AI MUST be instructed to output `REQUEST_FULL: [filepath]` if it requires the body of a Skeleton file to proceed.
 
-## 4. Project Configuration (`.aicontext`)
+## 4. Proactive Context Suggestions
+The system MUST provide an intelligent, reactive suggestion engine to reduce user cognitive load when selecting context.
+* *Heuristics:* The engine MUST evaluate files based on Git modifications, active/open editor tabs, prompt text mentions, and 1st-degree incoming/outgoing PSI relationships.
+* *Graph Exclusion:* The engine MUST explicitly exclude files already loaded into the context as `SKELETON` from acting as seeds for graph traversal to prevent peripheral noise.
+* *Relevance Filtering:* Unbounded usage searches MUST be mathematically penalized (e.g., Inverse Document Frequency) to prevent ubiquitous utility classes from flooding the suggestions.
+* *Performance Constraints:* The engine MUST run asynchronously, MUST be debounced to prevent index thrashing on every keystroke, and MUST cleanly abort via `ReadAction.nonBlocking` cancellation if the user interrupts it or the IDE begins indexing.
+
+## 5. Project Configuration (`.aicontext`)
 The plugin MUST support reading a local configuration file (e.g., `.aicontext`) at the project root.
 * *Function:* Defines default context routing by auto-selecting directories and files (e.g., always load `.` as Skeleton, and specific instruction files like `AGENTS.md` as Full) upon session initialization.
 
-## 5. Diff-Based Application
+## 6. Diff-Based Application
 The plugin MUST NOT silently overwrite local files. All incoming code from the AI MUST be routed through a visual side-by-side diff interface before being applied to the disk.
 
-## 6. Non-Goals (Out of Scope)
+## 7. Non-Goals (Out of Scope)
 * Direct integration with OpenAI/Anthropic/Google REST APIs.
 * Autonomous agentic loops (the AI cannot execute terminal commands or trigger file reads without explicit user intervention).

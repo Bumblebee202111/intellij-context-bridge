@@ -7,7 +7,8 @@
 - Session History, True Undo, & Deduplication
 - Diff-Based Code Application
 - Multi-IDE Automation Bridge (WebSocket Mesh & Userscript)
-- Intent Modes (Ask vs. Edit) & UI Polish
+- Intent Modes (Ask vs. Edit)
+- Native UI Overhaul & Proactive Context Suggestions
 
 ## Upcoming Focus
 **Engineering Context (Git & Diagnostics)**
