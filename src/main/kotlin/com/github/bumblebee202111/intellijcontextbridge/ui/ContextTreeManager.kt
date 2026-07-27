@@ -188,15 +188,41 @@ class ContextTreeManager(private val project: Project, private val contextState:
         }
     }
 
-    fun expandExplicitNodes(tree: Tree, node: DefaultMutableTreeNode) {
-        val level = getComputedLevel(node)
-
-        if (level == ContextLevel.MIXED) {
-            tree.expandPath(TreePath(node.path))
-            for (i in 0 until node.childCount) {
-                val child = node.getChildAt(i) as? DefaultMutableTreeNode
-                if (child != null) expandExplicitNodes(tree, child)
+    /**
+     * Captures the absolute paths of all currently expanded folders in the tree.
+     */
+    fun getExpandedFilePaths(tree: Tree): Set<String> {
+        val expanded = mutableSetOf<String>()
+        for (i in 0 until tree.rowCount) {
+            if (tree.isExpanded(i)) {
+                val path = tree.getPathForRow(i)
+                val node = path.lastPathComponent as? DefaultMutableTreeNode
+                val file = (node?.userObject as? NodeData)?.file
+                if (file != null) {
+                    expanded.add(file.path)
+                }
             }
         }
+        return expanded
+    }
+
+    /**
+     * Re-expands folders in the new model based on the captured paths.
+     */
+    fun restoreExpandedFilePaths(tree: Tree, expandedFiles: Set<String>) {
+        val root = tree.model.root as? DefaultMutableTreeNode ?: return
+
+        fun traverseAndExpand(node: DefaultMutableTreeNode, path: TreePath) {
+            val file = (node.userObject as? NodeData)?.file
+            if (file != null && expandedFiles.contains(file.path)) {
+                tree.expandPath(path)
+            }
+            for (i in 0 until node.childCount) {
+                val child = node.getChildAt(i) as? DefaultMutableTreeNode ?: continue
+                traverseAndExpand(child, path.pathByAddingChild(child))
+            }
+        }
+
+        traverseAndExpand(root, TreePath(root))
     }
 }

@@ -572,11 +572,21 @@ class ContextComposerPanel(private val project: Project) {
             ApplicationManager.getApplication().invokeLater({
                 lastDedupedFiles = newDedupedFiles
 
+                // CAPTURE: Record which folders the user currently has open
+                val expandedFiles = treeManager.getExpandedFilePaths(tree)
+
+                // SWAP: Replace the model
                 tree.model = DefaultTreeModel(mainRootNode)
+
+                // RESTORE: Re-open the folders precisely
                 if (searchQuery.isNotBlank()) {
                     TreeUtil.expandAll(tree)
                 } else {
-                    treeManager.expandExplicitNodes(tree, mainRootNode as DefaultMutableTreeNode)
+                    treeManager.restoreExpandedFilePaths(tree, expandedFiles)
+                    // If it's the very first load and nothing was expanded, open the root
+                    if (expandedFiles.isEmpty() && tree.rowCount > 0) {
+                        tree.expandRow(0)
+                    }
                 }
 
                 suggestionTree.model = DefaultTreeModel(suggestionRootNode)
