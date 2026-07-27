@@ -22,13 +22,10 @@ import com.intellij.openapi.application.ApplicationManager
 import com.intellij.openapi.application.ModalityState
 import com.intellij.openapi.application.ReadAction
 import com.intellij.openapi.components.service
-import com.intellij.openapi.editor.EditorFactory
 import com.intellij.openapi.editor.event.DocumentEvent
 import com.intellij.openapi.editor.event.DocumentListener
 import com.intellij.openapi.fileEditor.FileDocumentManager
 import com.intellij.openapi.fileEditor.FileEditorManager
-import com.intellij.openapi.fileEditor.FileEditorManagerEvent
-import com.intellij.openapi.fileEditor.FileEditorManagerListener
 import com.intellij.openapi.fileEditor.OpenFileDescriptor
 import com.intellij.openapi.fileTypes.FileTypes
 import com.intellij.openapi.ide.CopyPasteManager
@@ -38,9 +35,6 @@ import com.intellij.openapi.ui.ComboBox
 import com.intellij.openapi.ui.Messages
 import com.intellij.openapi.vfs.VfsUtilCore
 import com.intellij.openapi.vfs.VirtualFile
-import com.intellij.openapi.vfs.VirtualFileManager
-import com.intellij.openapi.vfs.newvfs.BulkFileListener
-import com.intellij.openapi.vfs.newvfs.events.VFileEvent
 import com.intellij.ui.DocumentAdapter
 import com.intellij.ui.EditorTextField
 import com.intellij.ui.IdeBorderFactory
@@ -126,62 +120,80 @@ class ContextComposerPanel(private val project: Project) {
         }
     }
 
+    private val editRadio = JBRadioButton("⚡ Edit", true)
+    private val askRadio = JBRadioButton("💬 Ask")
+    private val copyButton = JButton("Copy", AllIcons.Actions.Copy)
+    private val tabComboBox = ComboBox<BrowserTabItem>().apply {
+        toolTipText = "Select the target AI Studio tab"
+        preferredSize = Dimension(180, preferredSize.height)
+    }
+    private val sendWsButton = JButton("Waiting...").apply {
+        isEnabled = false
+        toolTipText = "Send context directly to the selected AI Studio tab"
+        putClientProperty("JButton.buttonType", "defaultButton")
+    }
+    private val loadingIcon = AsyncProcessIcon("PayloadGenerator").apply { isVisible = false }
+
     val content: JPanel = JPanel(BorderLayout())
 
     init {
-        ApplicationManager.getApplication().messageBus.connect(project).subscribe(VirtualFileManager.VFS_CHANGES, object : BulkFileListener {
-            override fun after(events: MutableList<out VFileEvent>) {
-                var needsRefresh = false
-                val projectDir = project.guessProjectDir() ?: return
-
-                for (event in events) {
-                    val file = event.file
-                    if (file != null && VfsUtilCore.isAncestor(projectDir, file, false)) {
-                        needsRefresh = true
-                        break
-                    }
-                }
-
-                if (needsRefresh) {
-                    contextState.fileStates.keys.removeIf { !it.isValid }
-                    vfsRefreshTimer.restart()
-                }
-            }
-        })
-
-        project.messageBus.connect().subscribe(FileEditorManagerListener.FILE_EDITOR_MANAGER, object : FileEditorManagerListener {
-            override fun selectionChanged(event: FileEditorManagerEvent) {
-                vfsRefreshTimer.restart()
-            }
-
-            override fun fileOpened(source: FileEditorManager, file: VirtualFile) {
-                vfsRefreshTimer.restart()
-            }
-
-            override fun fileClosed(source: FileEditorManager, file: VirtualFile) {
-                vfsRefreshTimer.restart()
-            }
-        })
-
-        EditorFactory.getInstance().eventMulticaster.addDocumentListener(object : DocumentListener {
-            override fun documentChanged(event: DocumentEvent) {
-                val file = FileDocumentManager.getInstance().getFile(event.document)
-                if (file != null && contextState.fileStates.containsKey(file)) {
-                    vfsRefreshTimer.restart()
-                }
-            }
-        }, project)
+        ContextChangeTracker(project, contextState) { vfsRefreshTimer.restart() }
 
         tree.cellRenderer = ContextTreeCellRenderer(treeManager::getComputedLevel) { file -> lastDedupedFiles.contains(file) }
         suggestionTree.cellRenderer = ContextTreeCellRenderer(treeManager::getComputedLevel) { false }
 
         tree.addMouseListener(createTreeMouseListener(tree))
         tree.addKeyListener(createTreeKeyListener(tree))
-
         suggestionTree.addMouseListener(createTreeMouseListener(suggestionTree))
         suggestionTree.addKeyListener(createTreeKeyListener(suggestionTree))
 
         val mainTreeContainer = JPanel(BorderLayout())
+        mainTreeContainer.add(setupTopToolbar(), BorderLayout.NORTH)
+        mainTreeContainer.add(JBScrollPane(tree), BorderLayout.CENTER)
+
+        suggestionTreeContainer.add(JBScrollPane(suggestionTree), BorderLayout.CENTER)
+
+        val treeSplitter = JBSplitter(true, 0.3f).apply {
+            firstComponent = suggestionTreeContainer
+            secondComponent = mainTreeContainer
+        }
+
+        val splitPane = JBSplitter(true, 0.7f).apply {
+            firstComponent = treeSplitter
+            secondComponent = setupBottomPanel()
+        }
+
+        content.add(splitPane, BorderLayout.CENTER)
+
+        val updateTabsUI = { tabs: List<BrowserTab> ->
+            SwingUtilities.invokeLater {
+                val currentSelection = tabComboBox.selectedItem as? BrowserTabItem
+                tabComboBox.removeAllItems()
+                tabs.forEach { tabComboBox.addItem(BrowserTabItem(it.id, it.title)) }
+
+                if (currentSelection != null && tabs.any { it.id == currentSelection.id }) {
+                    tabComboBox.selectedItem = tabs.first { it.id == currentSelection.id }.let { BrowserTabItem(it.id, it.title) }
+                } else if (tabComboBox.itemCount > 0) {
+                    tabComboBox.selectedIndex = 0
+                }
+
+                if (tabComboBox.itemCount > 0) {
+                    sendWsButton.text = "Send to AI Studio"
+                    if (!loadingIcon.isVisible) sendWsButton.isEnabled = true
+                } else {
+                    sendWsButton.text = "Waiting..."
+                    sendWsButton.isEnabled = false
+                }
+            }
+        }
+
+        server.onTabsChanged = updateTabsUI
+        updateTabsUI(server.getActiveTabs())
+
+        refreshUi()
+    }
+
+    private fun setupTopToolbar(): JPanel {
         val topToolbar = JPanel(BorderLayout(5, 0)).apply { border = JBUI.Borders.empty(5) }
 
         val actionGroup = DefaultActionGroup().apply {
@@ -230,17 +242,10 @@ class ContextComposerPanel(private val project: Project) {
 
         topToolbar.add(nativeToolbar.component, BorderLayout.WEST)
         topToolbar.add(searchField, BorderLayout.CENTER)
+        return topToolbar
+    }
 
-        mainTreeContainer.add(topToolbar, BorderLayout.NORTH)
-        mainTreeContainer.add(JBScrollPane(tree), BorderLayout.CENTER)
-
-        suggestionTreeContainer.add(JBScrollPane(suggestionTree), BorderLayout.CENTER)
-
-        val treeSplitter = JBSplitter(true, 0.3f).apply {
-            firstComponent = suggestionTreeContainer
-            secondComponent = mainTreeContainer
-        }
-
+    private fun setupBottomPanel(): JPanel {
         val bottomPanel = JPanel(BorderLayout()).apply { border = JBUI.Borders.empty(5) }
 
         promptArea.document.addDocumentListener(object : DocumentListener {
@@ -252,38 +257,8 @@ class ContextComposerPanel(private val project: Project) {
             }
         })
 
-        object : AnAction() {
-            override fun actionPerformed(e: AnActionEvent) {
-                val history = contextState.getPromptHistory()
-                if (history.isEmpty()) return
-                if (historyIndex == -1) {
-                    draftPrompt = promptArea.text
-                    historyIndex = history.size - 1
-                    promptArea.text = history[historyIndex]
-                } else if (historyIndex > 0) {
-                    historyIndex--
-                    promptArea.text = history[historyIndex]
-                }
-            }
-        }.registerCustomShortcutSet(CustomShortcutSet(KeyStroke.getKeyStroke(KeyEvent.VK_UP, InputEvent.CTRL_DOWN_MASK)), promptArea)
+        setupPromptHistoryShortcuts()
 
-        object : AnAction() {
-            override fun actionPerformed(e: AnActionEvent) {
-                val history = contextState.getPromptHistory()
-                if (historyIndex != -1) {
-                    if (historyIndex < history.size - 1) {
-                        historyIndex++
-                        promptArea.text = history[historyIndex]
-                    } else if (historyIndex == history.size - 1) {
-                        historyIndex = -1
-                        promptArea.text = draftPrompt
-                    }
-                }
-            }
-        }.registerCustomShortcutSet(CustomShortcutSet(KeyStroke.getKeyStroke(KeyEvent.VK_DOWN, InputEvent.CTRL_DOWN_MASK)), promptArea)
-
-        val editRadio = JBRadioButton("⚡ Edit", true)
-        val askRadio = JBRadioButton("💬 Ask")
         ButtonGroup().apply {
             add(editRadio)
             add(askRadio)
@@ -340,111 +315,11 @@ class ContextComposerPanel(private val project: Project) {
             targetComponent = promptArea
         }
 
-        val copyButton = JButton("Copy", AllIcons.Actions.Copy)
-        val tabComboBox = ComboBox<BrowserTabItem>().apply {
-            toolTipText = "Select the target AI Studio tab"
-            preferredSize = Dimension(180, preferredSize.height)
-        }
-        val sendWsButton = JButton("Waiting...").apply {
-            isEnabled = false
-            toolTipText = "Send context directly to the selected AI Studio tab"
-            putClientProperty("JButton.buttonType", "defaultButton")
-        }
-
-        val loadingIcon = AsyncProcessIcon("PayloadGenerator").apply { isVisible = false }
-
-        fun setGeneratingState(isGenerating: Boolean) {
-            loadingIcon.isVisible = isGenerating
-            copyButton.isEnabled = !isGenerating
-            sendWsButton.isEnabled = !isGenerating && tabComboBox.itemCount > 0
-        }
-
-        copyButton.addActionListener {
-            val promptText = promptArea.text
-            val intent = if (askRadio.isSelected) IntentMode.ASK else IntentMode.EDIT
-            historyIndex = -1
-            draftPrompt = ""
-
-            setGeneratingState(true)
-
-            ReadAction.nonBlocking<AiPayload> {
-                PayloadGenerator.generatePayload(project, contextState, promptText, intent)
-            }
-            .finishOnUiThread(ModalityState.nonModal()) { payloadObj ->
-                payloadObj.turn?.let { contextState.addTurn(it) }
-                refreshUi()
-                CopyPasteManager.getInstance().setContents(StringSelection(payloadObj.text))
-
-                if (payloadObj.attachments.isNotEmpty()) {
-                    Messages.showWarningDialog(
-                        "You copied ${payloadObj.attachments.size} media file(s). They cannot be copied to the clipboard.",
-                        "Media Files Skipped"
-                    )
-                }
-
-                promptArea.text = ""
-                setGeneratingState(false)
-
-                val originalText = copyButton.text
-                copyButton.text = "Copied!"
-                Timer(1500) { copyButton.text = originalText }.apply { isRepeats = false }.start()
-            }
-            .submit(AppExecutorUtil.getAppExecutorService())
-        }
-
+        copyButton.addActionListener { executePayloadAction(isWsSend = false) }
         sendWsButton.addActionListener {
             val selectedTab = tabComboBox.selectedItem as? BrowserTabItem ?: return@addActionListener
-            val promptText = promptArea.text
-            val intent = if (askRadio.isSelected) IntentMode.ASK else IntentMode.EDIT
-            historyIndex = -1
-            draftPrompt = ""
-
-            setGeneratingState(true)
-
-            ReadAction.nonBlocking<AiPayload> {
-                PayloadGenerator.generatePayload(project, contextState, promptText, intent)
-            }
-            .finishOnUiThread(ModalityState.nonModal()) { payloadObj ->
-                payloadObj.turn?.let { contextState.addTurn(it) }
-                refreshUi()
-
-                val jsonString = Json.encodeToString(payloadObj)
-                server.sendToTab(selectedTab.id, jsonString)
-
-                promptArea.text = ""
-                setGeneratingState(false)
-
-                val originalText = sendWsButton.text
-                sendWsButton.text = "Sent!"
-                Timer(1500) { sendWsButton.text = originalText }.apply { isRepeats = false }.start()
-            }
-            .submit(AppExecutorUtil.getAppExecutorService())
+            executePayloadAction(isWsSend = true, selectedTab = selectedTab)
         }
-
-        val updateTabsUI = { tabs: List<BrowserTab> ->
-            SwingUtilities.invokeLater {
-                val currentSelection = tabComboBox.selectedItem as? BrowserTabItem
-                tabComboBox.removeAllItems()
-                tabs.forEach { tabComboBox.addItem(BrowserTabItem(it.id, it.title)) }
-
-                if (currentSelection != null && tabs.any { it.id == currentSelection.id }) {
-                    tabComboBox.selectedItem = tabs.first { it.id == currentSelection.id }.let { BrowserTabItem(it.id, it.title) }
-                } else if (tabComboBox.itemCount > 0) {
-                    tabComboBox.selectedIndex = 0
-                }
-
-                if (tabComboBox.itemCount > 0) {
-                    sendWsButton.text = "Send to AI Studio"
-                    if (!loadingIcon.isVisible) sendWsButton.isEnabled = true
-                } else {
-                    sendWsButton.text = "Waiting..."
-                    sendWsButton.isEnabled = false
-                }
-            }
-        }
-
-        server.onTabsChanged = updateTabsUI
-        updateTabsUI(server.getActiveTabs())
 
         val actionButtonPanel = JPanel(BorderLayout(5, 0)).apply {
             border = JBUI.Borders.emptyTop(5)
@@ -460,14 +335,86 @@ class ContextComposerPanel(private val project: Project) {
         }
 
         bottomPanel.add(actionButtonPanel, BorderLayout.SOUTH)
+        return bottomPanel
+    }
 
-        val splitPane = JBSplitter(true, 0.7f)
-        splitPane.firstComponent = treeSplitter
-        splitPane.secondComponent = bottomPanel
+    private fun setupPromptHistoryShortcuts() {
+        object : AnAction() {
+            override fun actionPerformed(e: AnActionEvent) {
+                val history = contextState.getPromptHistory()
+                if (history.isEmpty()) return
+                if (historyIndex == -1) {
+                    draftPrompt = promptArea.text
+                    historyIndex = history.size - 1
+                    promptArea.text = history[historyIndex]
+                } else if (historyIndex > 0) {
+                    historyIndex--
+                    promptArea.text = history[historyIndex]
+                }
+            }
+        }.registerCustomShortcutSet(CustomShortcutSet(KeyStroke.getKeyStroke(KeyEvent.VK_UP, InputEvent.CTRL_DOWN_MASK)), promptArea)
 
-        content.add(splitPane, BorderLayout.CENTER)
+        object : AnAction() {
+            override fun actionPerformed(e: AnActionEvent) {
+                val history = contextState.getPromptHistory()
+                if (historyIndex != -1) {
+                    if (historyIndex < history.size - 1) {
+                        historyIndex++
+                        promptArea.text = history[historyIndex]
+                    } else if (historyIndex == history.size - 1) {
+                        historyIndex = -1
+                        promptArea.text = draftPrompt
+                    }
+                }
+            }
+        }.registerCustomShortcutSet(CustomShortcutSet(KeyStroke.getKeyStroke(KeyEvent.VK_DOWN, InputEvent.CTRL_DOWN_MASK)), promptArea)
+    }
 
-        refreshUi()
+    private fun executePayloadAction(isWsSend: Boolean, selectedTab: BrowserTabItem? = null) {
+        val promptText = promptArea.text
+        val intent = if (askRadio.isSelected) IntentMode.ASK else IntentMode.EDIT
+        historyIndex = -1
+        draftPrompt = ""
+
+        setGeneratingState(true)
+
+        ReadAction.nonBlocking<AiPayload> {
+            PayloadGenerator.generatePayload(project, contextState, promptText, intent)
+        }
+        .finishOnUiThread(ModalityState.nonModal()) { payloadObj ->
+            payloadObj.turn?.let { contextState.addTurn(it) }
+            refreshUi()
+
+            if (isWsSend && selectedTab != null) {
+                val jsonString = Json.encodeToString(payloadObj)
+                server.sendToTab(selectedTab.id, jsonString)
+
+                val originalText = sendWsButton.text
+                sendWsButton.text = "Sent!"
+                Timer(1500) { sendWsButton.text = originalText }.apply { isRepeats = false }.start()
+            } else {
+                CopyPasteManager.getInstance().setContents(StringSelection(payloadObj.text))
+                if (payloadObj.attachments.isNotEmpty()) {
+                    Messages.showWarningDialog(
+                        "You copied ${payloadObj.attachments.size} media file(s). They cannot be copied to the clipboard.",
+                        "Media Files Skipped"
+                    )
+                }
+                val originalText = copyButton.text
+                copyButton.text = "Copied!"
+                Timer(1500) { copyButton.text = originalText }.apply { isRepeats = false }.start()
+            }
+
+            promptArea.text = ""
+            setGeneratingState(false)
+        }
+        .submit(AppExecutorUtil.getAppExecutorService())
+    }
+
+    private fun setGeneratingState(isGenerating: Boolean) {
+        loadingIcon.isVisible = isGenerating
+        copyButton.isEnabled = !isGenerating
+        sendWsButton.isEnabled = !isGenerating && tabComboBox.itemCount > 0
     }
 
     private fun createTreeMouseListener(targetTree: Tree): MouseAdapter {
