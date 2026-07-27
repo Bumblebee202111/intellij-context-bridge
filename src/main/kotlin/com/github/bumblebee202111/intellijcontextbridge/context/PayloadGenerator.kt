@@ -17,6 +17,13 @@ enum class IntentMode {
 
 object PayloadGenerator {
 
+    private fun loadPrompt(filename: String): String {
+        return PayloadGenerator::class.java.getResourceAsStream("/prompts/$filename")
+            ?.bufferedReader(Charsets.UTF_8)
+            ?.use { it.readText() }
+            ?: throw IllegalStateException("Missing required prompt resource: $filename")
+    }
+
     fun generatePayload(project: Project, contextState: ContextState, userPrompt: String, intentMode: IntentMode): AiPayload {
         val projectDir = project.guessProjectDir()
         val attachments = mutableListOf<AiAttachment>()
@@ -27,59 +34,13 @@ object PayloadGenerator {
         val newTurn = UserTurn(prompt = userPrompt)
 
         // 1. System Instructions (Separated from the main prompt, dynamically built based on intent)
-        val systemInstructionsText = buildString {
-            appendLine("You are an expert AI coding assistant natively integrated into an IntelliJ IDE.")
-            appendLine()
-            appendLine("### ENVIRONMENT: CONTEXT AWARENESS")
-            appendLine("Files are provided in the `<project_context>` as either `(Full)` or `(Skeleton)`. Skeletons have their internal logic stripped to save tokens. If you need to see the full internal logic of a Skeleton file to answer a question or make a modification, halt and output: `REQUEST_FULL: [filepath]`.")
-            appendLine()
-
-            if (intentMode == IntentMode.ASK) {
-                appendLine("### CURRENT MODE: ASK & ANALYZE")
-                appendLine("The user wants to discuss architecture, review code, or plan a feature.")
-                appendLine("- Provide deep, comprehensive architectural reasoning and analysis.")
-                appendLine("- Respond in standard conversational markdown.")
-                appendLine("- **DO NOT** output IDE file headers (`### \uD83D\uDCC4`) or attempt to write code patches. If you provide code examples, use standard markdown code blocks without file path headers.")
-            } else {
-                appendLine("### CURRENT MODE: EDIT & GENERATE")
-                appendLine("The user wants you to write, modify, or refactor code. You MUST follow these formatting rules:")
-                appendLine("1. **Strict Ordering**: Output your comprehensive explanation and reasoning FIRST, followed by the code.")
-                appendLine("2. **File Headers**: Precede every markdown code block with its exact file path header: `### \uD83D\uDCC4 path/to/file.ext`.")
-                appendLine("3. **No Chatty Code**: Never add conversational comments, `// MODIFIED`, or changelogs inside the code block itself. The code must be clean and ready to compile.")
-                appendLine("4. **The Skeleton Patch Protocol**: To ensure the IDE's diff engine aligns correctly, you must output the ENTIRE file structure for modified files.")
-                appendLine("   - For methods, classes, or structural blocks you are NOT modifying: Write the exact signature/declaration and replace the body with `// ...` (or language-equivalent comment). Do NOT omit unchanged signatures; they act as structural anchors for the diff viewer.")
-                appendLine("   - For unchanged properties, fields, or variables: Leave them exactly as they are. Do not use `// ...` for simple values.")
-                appendLine("   - For elements you ARE modifying (or new elements): Write the full updated logic.")
-                appendLine()
-                appendLine("Example Output:")
-                appendLine("I have updated the service to also save users to the database. I kept the caching logic intact to ensure reads remain fast.")
-                appendLine()
-                appendLine("### \uD83D\uDCC4 src/main/kotlin/com/example/core/UserService.kt")
-                appendLine("```kotlin")
-                appendLine("package com.example.core")
-                appendLine()
-                appendLine("import com.example.database.Database")
-                appendLine("import com.example.model.User")
-                appendLine()
-                appendLine("class UserService(private val db: Database) {")
-                appendLine("    private val cache = mutableMapOf<String, User>()")
-                appendLine()
-                appendLine("    fun getUser(id: String): User? {")
-                appendLine("        // ...")
-                appendLine("    }")
-                appendLine()
-                appendLine("    fun updateUser(user: User) {")
-                appendLine("        cache[user.id] = user")
-                appendLine("        db.save(user)")
-                appendLine("    }")
-                appendLine()
-                appendLine("    fun deleteUser(id: String) {")
-                appendLine("        // ...")
-                appendLine("    }")
-                appendLine("}")
-                appendLine("```")
-            }
+        val basePrompt = loadPrompt("system_base.md")
+        val intentPrompt = if (intentMode == IntentMode.ASK) {
+            loadPrompt("intent_ask.md")
+        } else {
+            loadPrompt("intent_edit.md")
         }
+        val systemInstructionsText = "$basePrompt\n\n$intentPrompt"
 
         val markdownText =  buildString {
             // 2. Project Context
