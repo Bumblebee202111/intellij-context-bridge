@@ -5,6 +5,7 @@ import com.github.bumblebee202111.intellijcontextbridge.state.ContextState
 import com.github.bumblebee202111.intellijcontextbridge.state.FileStateRecord
 import com.github.bumblebee202111.intellijcontextbridge.state.UserTurn
 import com.github.bumblebee202111.intellijcontextbridge.utils.ContextCapabilityUtil
+import com.intellij.openapi.fileEditor.FileDocumentManager
 import com.intellij.openapi.project.Project
 import com.intellij.openapi.project.guessProjectDir
 import com.intellij.openapi.vfs.VfsUtilCore
@@ -80,8 +81,8 @@ object PayloadGenerator {
                 if (!isTextFile) {
                     val mime = getMimeType(extension)
 
-                    // Use modification stamp and length to hash binaries safely without reading memory
-                    val currentHash = if (level == ContextLevel.FULL) contextState.calculateHash("${file.modificationStamp}_${file.length}") else "OMITTED_BINARY_SKELETON"
+                    // Retrieve the cached hash instantly
+                    val currentHash = contextState.getFileHash(project, file, level)
                     val previousRecord = currentCache[relativePath]
 
                     if (previousRecord != null && previousRecord.level == level && previousRecord.hash == currentHash) {
@@ -121,28 +122,27 @@ object PayloadGenerator {
                 var contentToAppend: String?
                 var isNonCodeSkeleton = false
                 try {
-                    // 1. Extract the content based on the level
-                    val extractedText = if (level == ContextLevel.FULL) {
-                        VfsUtilCore.loadText(file)
-                    } else {
-                        val skeleton = PsiSkeletonExtractor.extract(project, file)
-                        if (skeleton == null) {
-                            isNonCodeSkeleton = true
-                        }
-                        skeleton
-                    }
-
-                    // 2. Hash the extracted text
-                    val currentHash = contextState.calculateHash(extractedText ?: "OMITTED_NON_CODE_SKELETON")
+                    // Retrieve the cached hash instantly
+                    val currentHash = contextState.getFileHash(project, file, level)
                     val previousRecord = currentCache[relativePath]
 
-                    // 3. Compare Level AND Hash
                     if (previousRecord != null && previousRecord.level == level && previousRecord.hash == currentHash) {
                         dedupedFilesTracker.add(file)
                         newTurn.sentFiles[relativePath] = FileStateRecord(level, currentHash)
                         continue
                     } else {
                         newTurn.sentFiles[relativePath] = FileStateRecord(level, currentHash)
+
+                        // Extract the content because it was NOT deduplicated
+                        val extractedText = if (level == ContextLevel.FULL) {
+                            FileDocumentManager.getInstance().getCachedDocument(file)?.text ?: VfsUtilCore.loadText(file)
+                        } else {
+                            val skeleton = PsiSkeletonExtractor.extract(project, file)
+                            if (skeleton == null) {
+                                isNonCodeSkeleton = true
+                            }
+                            skeleton
+                        }
                         contentToAppend = extractedText
                     }
                 } catch (e: Exception) {

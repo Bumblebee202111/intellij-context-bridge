@@ -4,13 +4,11 @@ import com.github.bumblebee202111.intellijcontextbridge.context.AiPayload
 import com.github.bumblebee202111.intellijcontextbridge.context.ContextSuggestionEngine
 import com.github.bumblebee202111.intellijcontextbridge.context.IntentMode
 import com.github.bumblebee202111.intellijcontextbridge.context.PayloadGenerator
-import com.github.bumblebee202111.intellijcontextbridge.context.PsiSkeletonExtractor
 import com.github.bumblebee202111.intellijcontextbridge.server.BrowserTab
 import com.github.bumblebee202111.intellijcontextbridge.server.ContextBridgeServer
 import com.github.bumblebee202111.intellijcontextbridge.services.ContextCoroutineScopeService
 import com.github.bumblebee202111.intellijcontextbridge.state.ContextLevel
 import com.github.bumblebee202111.intellijcontextbridge.state.ContextState
-import com.github.bumblebee202111.intellijcontextbridge.utils.ContextCapabilityUtil
 import com.intellij.icons.AllIcons
 import com.intellij.openapi.actionSystem.ActionManager
 import com.intellij.openapi.actionSystem.ActionUpdateThread
@@ -540,18 +538,7 @@ class ContextComposerPanel(private val project: Project) {
 
                         if (cachedRecord != null && cachedRecord.level == currentLevel) {
                             try {
-                                val isTextFile = ContextCapabilityUtil.textExtensions.contains(file.extension?.lowercase() ?: "") || !file.fileType.isBinary
-                                val currentHash = if (isTextFile) {
-                                    val extractedText = if (currentLevel == ContextLevel.FULL) {
-                                        FileDocumentManager.getInstance().getCachedDocument(file)?.text ?: VfsUtilCore.loadText(file)
-                                    } else {
-                                        PsiSkeletonExtractor.extract(project, file) ?: "OMITTED_NON_CODE_SKELETON"
-                                    }
-                                    contextState.calculateHash(extractedText)
-                                } else {
-                                    if (currentLevel == ContextLevel.FULL) contextState.calculateHash("${file.modificationStamp}_${file.length}") else "OMITTED_BINARY_SKELETON"
-                                }
-
+                                val currentHash = contextState.getFileHash(project, file, currentLevel)
                                 if (currentHash == cachedRecord.hash) {
                                     newDedupedFiles.add(file)
                                 }
