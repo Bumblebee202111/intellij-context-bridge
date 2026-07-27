@@ -88,8 +88,10 @@ class ContextComposerPanel(private val project: Project) {
 
     private var treeUpdateJob: Job? = null
 
-    private val vfsRefreshTimer = Timer(500) {
-        refreshUi()
+    // Unified Debouncer for all UI updates (300ms)
+    private val uiRefreshTimer = Timer(300) {
+        val currentPromptText = promptArea.text
+        refreshTree(currentPromptText)
     }.apply { isRepeats = false }
 
     private val dateFormat = SimpleDateFormat("HH:mm:ss")
@@ -141,7 +143,8 @@ class ContextComposerPanel(private val project: Project) {
     val content: JPanel = JPanel(BorderLayout())
 
     init {
-        ContextChangeTracker(project, contextState) { vfsRefreshTimer.restart() }
+        // Register decoupled IDE event listeners to trigger the debouncer
+        ContextChangeTracker(project, contextState) { refreshUi() }
 
         tree.cellRenderer = ContextTreeCellRenderer(treeManager::getComputedLevel) { file -> lastDedupedFiles.contains(file) }
         suggestionTree.cellRenderer = ContextTreeCellRenderer(treeManager::getComputedLevel) { false }
@@ -169,6 +172,7 @@ class ContextComposerPanel(private val project: Project) {
 
         content.add(splitPane, BorderLayout.CENTER)
 
+        // Setup WebSocket UI hook
         val updateTabsUI = { tabs: List<BrowserTab> ->
             SwingUtilities.invokeLater {
                 val currentSelection = tabComboBox.selectedItem as? BrowserTabItem
@@ -257,7 +261,7 @@ class ContextComposerPanel(private val project: Project) {
                 if (historyIndex == -1) {
                     draftPrompt = promptArea.text
                 }
-                vfsRefreshTimer.restart()
+                refreshUi()
             }
         })
 
@@ -431,16 +435,21 @@ class ContextComposerPanel(private val project: Project) {
 
                 if (SwingUtilities.isRightMouseButton(e)) {
                     treeManager.applyStateToNode(node, ContextLevel.NONE)
-                    if (showSelectedOnly) refreshUi() else {
-                        targetTree.repaint()
-                        treeManager.autoCollapse(targetTree, node, path)
-                    }
+                    treeManager.collapseDescendants(targetTree, node, path)
+
+                    // OPTIMISTIC UPDATE: Paint instantly, calculate heavily later
+                    targetTree.repaint()
+                    refreshUi()
                     e.consume()
                 } else if (SwingUtilities.isLeftMouseButton(e)) {
                     if (e.clickCount == 1) {
                         if (e.x >= bounds.x && e.x < bounds.x + 28) {
                             val nextLevel = treeManager.getNextToggleLevel(node, file)
                             treeManager.applyStateToNode(node, nextLevel)
+                            treeManager.collapseDescendants(targetTree, node, path)
+
+                            // OPTIMISTIC UPDATE: Paint instantly, calculate heavily later
+                            targetTree.repaint()
                             refreshUi()
                             e.consume()
                         }
@@ -472,18 +481,29 @@ class ContextComposerPanel(private val project: Project) {
                         KeyEvent.VK_SPACE -> {
                             val nextLevel = treeManager.getNextToggleLevel(node, file)
                             treeManager.applyStateToNode(node, nextLevel)
+                            treeManager.collapseDescendants(targetTree, node, path)
                             stateChanged = true
                         }
-                        KeyEvent.VK_S -> { treeManager.applyStateToNode(node, ContextLevel.SKELETON); stateChanged = true }
-                        KeyEvent.VK_F -> { treeManager.applyStateToNode(node, ContextLevel.FULL); stateChanged = true }
+                        KeyEvent.VK_S -> {
+                            treeManager.applyStateToNode(node, ContextLevel.SKELETON)
+                            treeManager.collapseDescendants(targetTree, node, path)
+                            stateChanged = true
+                        }
+                        KeyEvent.VK_F -> {
+                            treeManager.applyStateToNode(node, ContextLevel.FULL)
+                            treeManager.collapseDescendants(targetTree, node, path)
+                            stateChanged = true
+                        }
                         KeyEvent.VK_BACK_SPACE, KeyEvent.VK_DELETE -> {
                             treeManager.applyStateToNode(node, ContextLevel.NONE)
-                            treeManager.autoCollapse(targetTree, node, path)
+                            treeManager.collapseDescendants(targetTree, node, path)
                             stateChanged = true
                         }
                     }
                 }
                 if (stateChanged) {
+                    // OPTIMISTIC UPDATE: Paint instantly, calculate heavily later
+                    targetTree.repaint()
                     refreshUi()
                     e.consume()
                 }
@@ -492,8 +512,7 @@ class ContextComposerPanel(private val project: Project) {
     }
 
     fun refreshUi() {
-        val currentPromptText = promptArea.text
-        refreshTree(currentPromptText)
+        uiRefreshTimer.restart()
     }
 
     private fun refreshTree(currentPromptText: String) {

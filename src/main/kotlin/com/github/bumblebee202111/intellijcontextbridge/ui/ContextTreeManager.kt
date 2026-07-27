@@ -175,18 +175,16 @@ class ContextTreeManager(private val project: Project, private val contextState:
         return node
     }
 
-    fun autoCollapse(tree: Tree, node: DefaultMutableTreeNode, path: TreePath) {
-        var currentPath: TreePath? = path.parentPath
-        var currentNode = node.parent as? DefaultMutableTreeNode
+    fun collapseDescendants(tree: Tree, node: DefaultMutableTreeNode, path: TreePath) {
+        for (i in 0 until node.childCount) {
+            val child = node.getChildAt(i) as? DefaultMutableTreeNode ?: continue
+            val childPath = path.pathByAddingChild(child)
 
-        while (currentPath != null && currentNode != null) {
-            if (getComputedLevel(currentNode) == ContextLevel.NONE) {
-                tree.collapsePath(currentPath)
-            } else {
-                break
-            }
-            currentPath = currentPath.parentPath
-            currentNode = currentNode.parent as? DefaultMutableTreeNode
+            // Recursively collapse grandchildren first to reset deep state
+            collapseDescendants(tree, child, childPath)
+
+            // Collapse the direct child, leaving the actioned node's immediate children visible
+            tree.collapsePath(childPath)
         }
     }
 
