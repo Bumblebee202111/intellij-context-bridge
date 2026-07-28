@@ -3,11 +3,10 @@ package com.github.bumblebee202111.intellijcontextbridge.context
 import com.github.bumblebee202111.intellijcontextbridge.state.ContextLevel
 import com.github.bumblebee202111.intellijcontextbridge.state.ContextState
 import com.github.bumblebee202111.intellijcontextbridge.utils.FileFilterUtil
-import com.intellij.openapi.application.ApplicationManager
+import com.intellij.openapi.application.readAction
 import com.intellij.openapi.fileEditor.FileEditorManager
 import com.intellij.openapi.progress.ProgressManager
 import com.intellij.openapi.project.Project
-import com.intellij.openapi.util.Computable
 import com.intellij.openapi.vcs.changes.ChangeListManager
 import com.intellij.openapi.vfs.VirtualFile
 import com.intellij.psi.PsiElement
@@ -38,9 +37,12 @@ object ContextSuggestionEngine {
 
         val psiManager = PsiManager.getInstance(project)
         val projectScope = GlobalSearchScope.projectScope(project)
-        val allFilenames = ApplicationManager.getApplication().runReadAction(Computable { FilenameIndex.getAllFilenames(project) })
 
-        ApplicationManager.getApplication().runReadAction {
+        // Yielding Read Action: Will suspend if the user types
+        val allFilenames = readAction { FilenameIndex.getAllFilenames(project) }
+
+        // Yielding Read Action
+        readAction {
             // 1. Active File (+50)
             val fileEditorManager = FileEditorManager.getInstance(project)
             val activeFiles = fileEditorManager.selectedFiles.toSet()
@@ -119,11 +121,12 @@ object ContextSuggestionEngine {
 
         // 7. Unbounded Graph Traversal (Incoming Usages)
         for (seed in seedFiles) {
-            val primaryElements = ApplicationManager.getApplication().runReadAction(Computable {
+            // Yielding Read Action
+            val primaryElements = readAction {
                 val elements = mutableListOf<PsiElement>()
-                if (!seed.isValid) return@Computable elements
+                if (!seed.isValid) return@readAction elements
 
-                val psiFile = psiManager.findFile(seed) ?: return@Computable elements
+                val psiFile = psiManager.findFile(seed) ?: return@readAction elements
                 if (psiFile is KtFile) {
                     val topLevelDeclarations = psiFile.declarations.filter { decl ->
                         !decl.hasModifier(KtTokens.PRIVATE_KEYWORD) &&
@@ -134,15 +137,15 @@ object ContextSuggestionEngine {
                     elements.addAll(psiFile.classes)
                 }
                 elements
-            })
+            }
 
             for (element in primaryElements) {
                 // CPU THROTTLE: Yield the coroutine thread completely between elements.
-                // This replaces Thread.sleep() and keeps the IDE responsive and battery-friendly.
                 delay(10)
 
-                ApplicationManager.getApplication().runReadAction {
-                    if (!element.isValid) return@runReadAction
+                // Yielding Read Action: Will suspend if the user types during the search
+                readAction {
+                    if (!element.isValid) return@readAction
 
                     val usageFiles = mutableSetOf<VirtualFile>()
 

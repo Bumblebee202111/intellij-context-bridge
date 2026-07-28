@@ -20,6 +20,7 @@ import com.intellij.openapi.actionSystem.ToggleAction
 import com.intellij.openapi.application.ApplicationManager
 import com.intellij.openapi.application.ModalityState
 import com.intellij.openapi.application.ReadAction
+import com.intellij.openapi.application.readAction
 import com.intellij.openapi.components.service
 import com.intellij.openapi.editor.event.DocumentEvent
 import com.intellij.openapi.editor.event.DocumentListener
@@ -32,7 +33,6 @@ import com.intellij.openapi.project.Project
 import com.intellij.openapi.project.guessProjectDir
 import com.intellij.openapi.ui.ComboBox
 import com.intellij.openapi.ui.Messages
-import com.intellij.openapi.util.Computable
 import com.intellij.openapi.vfs.VfsUtilCore
 import com.intellij.openapi.vfs.VirtualFile
 import com.intellij.ui.DocumentAdapter
@@ -518,7 +518,7 @@ class ContextComposerPanel(private val project: Project) {
 
         treeUpdateJob = coroutineService.scope.launch {
             if (!isConfigLoaded) {
-                ApplicationManager.getApplication().runReadAction { contextState.loadConfig() }
+                readAction { contextState.loadConfig() }
                 isConfigLoaded = true
             }
 
@@ -527,7 +527,7 @@ class ContextComposerPanel(private val project: Project) {
             val newDedupedFiles = mutableSetOf<VirtualFile>()
             val projectDir = project.guessProjectDir()
 
-            ApplicationManager.getApplication().runReadAction {
+            readAction {
                 if (projectDir != null) {
                     val cache = contextState.getDedupCache()
                     for ((file, currentLevel) in contextState.fileStates) {
@@ -552,21 +552,21 @@ class ContextComposerPanel(private val project: Project) {
 
             treeManager.clearCache()
 
-            val mainRootNode = ApplicationManager.getApplication().runReadAction(Computable {
+            val mainRootNode = readAction {
                 if (projectDir != null) {
                     treeManager.buildFileTree(projectDir, showSelectedOnly, searchQuery, isRoot = true) ?: DefaultMutableTreeNode(NodeData(projectDir, "No Project Root"))
                 } else {
                     DefaultMutableTreeNode("No Project Root")
                 }
-            })
+            }
 
-            val suggestionRootNode = ApplicationManager.getApplication().runReadAction(Computable {
+            val suggestionRootNode = readAction {
                 if (projectDir != null && suggestions.isNotEmpty()) {
                     treeManager.buildFileTree(projectDir, false, "", allowedLeaves = suggestions, isRoot = true) ?: DefaultMutableTreeNode("No Suggestions")
                 } else {
                     DefaultMutableTreeNode("No Suggestions")
                 }
-            })
+            }
 
             // Switch to the EDT for UI updates safely
             ApplicationManager.getApplication().invokeLater({
@@ -590,7 +590,7 @@ class ContextComposerPanel(private val project: Project) {
                 }
 
                 suggestionTree.model = DefaultTreeModel(suggestionRootNode)
-                val hasSuggestions = (suggestionRootNode as DefaultMutableTreeNode).childCount > 0
+                val hasSuggestions = suggestionRootNode.childCount > 0
                 suggestionTreeContainer.isVisible = hasSuggestions
                 if (hasSuggestions) {
                     TreeUtil.expandAll(suggestionTree)
