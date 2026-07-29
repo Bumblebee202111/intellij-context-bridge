@@ -23,7 +23,7 @@ class ContextTreeManager(private val project: Project, private val contextState:
             if (!hasLeaves) return ContextLevel.NONE
             if (allNone) return ContextLevel.NONE
             if (allSkeleton) return ContextLevel.SKELETON
-            if (allMaxed) return ContextLevel.FULL
+            if (allMaxed) return ContextLevel.COMPLETE
             return ContextLevel.MIXED
         }
     }
@@ -41,7 +41,7 @@ class ContextTreeManager(private val project: Project, private val contextState:
     fun getNextToggleLevel(node: DefaultMutableTreeNode, file: VirtualFile): ContextLevel {
         val currentLevel = getComputedLevel(node)
         val maxLevel = if (file.isDirectory && file.children.isNotEmpty()) {
-            ContextLevel.FULL
+            ContextLevel.COMPLETE
         } else {
             ContextCapabilityUtil.getMaxLevel(file)
         }

@@ -93,7 +93,7 @@ object PayloadGenerator {
                     newTurn.sentFiles[relativePath] = FileStateRecord(level, currentHash)
 
                     // --- ATTACHMENT & BINARY HANDLING ---
-                    if (level == ContextLevel.FULL) {
+                    if (level == ContextLevel.COMPLETE) {
                         try {
                             if (mime != "application/octet-stream") {
                                 val bytes = file.contentsToByteArray()
@@ -134,7 +134,7 @@ object PayloadGenerator {
                         newTurn.sentFiles[relativePath] = FileStateRecord(level, currentHash)
 
                         // Extract the content because it was NOT deduplicated
-                        val extractedText = if (level == ContextLevel.FULL) {
+                        val extractedText = if (level == ContextLevel.COMPLETE) {
                             FileDocumentManager.getInstance().getCachedDocument(file)?.text ?: VfsUtilCore.loadText(file)
                         } else {
                             val skeleton = PsiSkeletonExtractor.extract(project, file)
@@ -157,8 +157,8 @@ object PayloadGenerator {
 
                 if (contentToAppend == null) continue
 
-                val levelTag = if (level == ContextLevel.FULL) "(Full)" else "(Skeleton)"
-                appendLine("### \uD83D\uDCC4 `$relativePath` $levelTag")
+                val levelTag = if (level == ContextLevel.COMPLETE) "" else " (Skeleton)"
+                appendLine("### \uD83D\uDCC4 `$relativePath`$levelTag")
                 appendLine("```${getMarkdownLang(extension)}")
                 appendLine(contentToAppend)
                 appendLine("```\n")

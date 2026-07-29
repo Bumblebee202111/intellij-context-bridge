@@ -22,15 +22,15 @@ The plugin consists of four decoupled layers. Implementation details for each la
 
 ## 3. State & Memory Manager
 * **Session Tracker:** Maintains the lifecycle of the conversation using a persistent timeline of user turns, enabling true undo capabilities and deep auditing.
-* **Project Configurator:** Parses local configuration files (e.g., `.aicontext`) on load to automatically route specific files and directories to their preferred context levels.
-* **State Engine:** Tracks context levels dynamically via a fast, thread-safe in-memory cache, aggregating directory states bottom-up based on their children.
+* **Project Configurator:** Parses local configuration files (e.g., `.aicontext`) on load to automatically route specific files and directories to their preferred context states.
+* **State Engine:** Tracks context states dynamically via a fast, thread-safe in-memory cache, aggregating directory states bottom-up based on their children.
 * **Universal Deduplication Engine:**
   * Hashes the extracted text or metadata of a file.
-  * If a file is requested again at the exact same context level and its hash is unchanged, it is typically omitted from the payload to prevent context bloat.
+  * If a file is requested again at the exact same context state and its hash is unchanged, it is typically omitted from the payload to prevent context bloat.
   * The deduplication cache is dynamically folded from the session history, ensuring perfect synchronization even if past turns are deleted.
 
 ## 4. Transport & Application Layer
-* **Payload Generator:** Compiles extracted context, user prompts, and dynamically scoped system instructions into a structured JSON object.
+* **Payload Generator:** Compiles extracted context, user prompts, and dynamically scoped system instructions into a structured JSON object. Files are included in their entirety by default, while files reduced to their AST signatures are explicitly marked with a `(Skeleton)` tag in the markdown headers.
 * **Bridge Mechanism:**
   * *Server:* A local WebSocket server embedded in the IDE, utilizing dynamic port binding to support multiple concurrent IDE instances (Mesh Networking).
   * *Client:* A browser userscript that maintains connections to active IDEs. It routes payloads to the targeted AI Studio tab, injects system instructions, simulates media attachments, and intercepts native UI copy events to securely return code.

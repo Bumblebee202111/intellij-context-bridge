@@ -1,7 +1,6 @@
 package com.github.bumblebee202111.intellijcontextbridge.ui
 
 import com.github.bumblebee202111.intellijcontextbridge.state.ContextLevel
-import com.github.bumblebee202111.intellijcontextbridge.state.ContextState
 import com.intellij.icons.AllIcons
 import com.intellij.openapi.vfs.VirtualFile
 import com.intellij.ui.ColoredTreeCellRenderer
@@ -33,7 +32,7 @@ class StateIcon(private val level: ContextLevel) : Icon {
         val disabledColor = JBUI.CurrentTheme.Label.disabledForeground()
 
         when (level) {
-            ContextLevel.FULL -> {
+            ContextLevel.COMPLETE -> {
                 g2d.color = accentColor
                 g2d.fillOval(x + 2, y + 2, 12, 12)
             }
@@ -113,7 +112,7 @@ class ContextTreeCellRenderer(
 
             icon = rowIcon
 
-            if (level == ContextLevel.FULL) {
+            if (level == ContextLevel.COMPLETE) {
                 append(nodeData.displayName, SimpleTextAttributes.REGULAR_BOLD_ATTRIBUTES)
             } else {
                 append(nodeData.displayName)

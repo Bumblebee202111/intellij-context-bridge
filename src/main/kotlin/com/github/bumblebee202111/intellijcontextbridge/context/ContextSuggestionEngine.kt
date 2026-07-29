@@ -81,9 +81,9 @@ object ContextSuggestionEngine {
                 }
             }
 
-            // 5. Expand Seeds with FULL Context Files (Excluding SKELETON)
+            // 5. Expand Seeds with COMPLETE Context Files (Excluding SKELETON)
             contextState.fileStates.forEach { (file, level) ->
-                if (level == ContextLevel.FULL) {
+                if (level == ContextLevel.COMPLETE) {
                     seedFiles.add(file)
                 }
             }

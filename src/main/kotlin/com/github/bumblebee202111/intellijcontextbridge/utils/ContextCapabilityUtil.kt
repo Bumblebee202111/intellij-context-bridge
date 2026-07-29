@@ -25,8 +25,8 @@ object ContextCapabilityUtil {
         val extension = file.extension?.lowercase() ?: ""
         val isTextFile = textExtensions.contains(extension) || !file.fileType.isBinary
 
-        if (isTextFile) return ContextLevel.FULL
-        if (isSupportedMedia(extension)) return ContextLevel.FULL
+        if (isTextFile) return ContextLevel.COMPLETE
+        if (isSupportedMedia(extension)) return ContextLevel.COMPLETE
 
         return ContextLevel.SKELETON // Opaque binaries
     }
@@ -40,13 +40,13 @@ object ContextCapabilityUtil {
             when (current) {
                 ContextLevel.NONE, ContextLevel.MIXED -> ContextLevel.SKELETON
                 ContextLevel.SKELETON -> ContextLevel.SKELETON // Never cycle to NONE
-                ContextLevel.FULL -> ContextLevel.SKELETON // Fallback
+                ContextLevel.COMPLETE -> ContextLevel.SKELETON // Fallback
             }
         } else {
             when (current) {
-                ContextLevel.NONE, ContextLevel.MIXED -> ContextLevel.FULL
-                ContextLevel.FULL -> ContextLevel.SKELETON
-                ContextLevel.SKELETON -> ContextLevel.FULL // Cycle back to FULL, never NONE
+                ContextLevel.NONE, ContextLevel.MIXED -> ContextLevel.COMPLETE
+                ContextLevel.COMPLETE -> ContextLevel.SKELETON
+                ContextLevel.SKELETON -> ContextLevel.COMPLETE // Cycle back to COMPLTETE, never NONE
             }
         }
     }

@@ -50,7 +50,6 @@ import com.intellij.util.ui.JBUI
 import com.intellij.util.ui.tree.TreeUtil
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.launch
-import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
 import java.awt.BorderLayout
 import java.awt.Dimension
@@ -203,13 +202,13 @@ class ContextComposerPanel(private val project: Project) {
         val topToolbar = JPanel(BorderLayout(5, 0)).apply { border = JBUI.Borders.empty(5) }
 
         val actionGroup = DefaultActionGroup().apply {
-            add(object : AnAction("Add Active File", "Add currently opened editor file to context as Full", AllIcons.General.Add) {
+            add(object : AnAction("Add Active File", "Add currently opened editor file to context", AllIcons.General.Add) {
                 override fun actionPerformed(e: AnActionEvent) {
                     val editor = FileEditorManager.getInstance(project).selectedTextEditor
                     val file = editor?.document?.let { FileDocumentManager.getInstance().getFile(it) }
                     if (file != null) {
                         ReadAction.nonBlocking<Unit> {
-                            contextState.applyStateRecursively(file, ContextLevel.FULL, checkIgnore = true)
+                            contextState.applyStateRecursively(file, ContextLevel.COMPLETE, checkIgnore = true)
                         }.finishOnUiThread(ModalityState.nonModal()) {
                             refreshUi()
                         }.submit(AppExecutorUtil.getAppExecutorService())
@@ -488,7 +487,7 @@ class ContextComposerPanel(private val project: Project) {
                             stateChanged = true
                         }
                         KeyEvent.VK_F -> {
-                            treeManager.applyStateToNode(node, ContextLevel.FULL)
+                            treeManager.applyStateToNode(node, ContextLevel.COMPLETE)
                             treeManager.collapseDescendants(targetTree, node, path)
                             stateChanged = true
                         }

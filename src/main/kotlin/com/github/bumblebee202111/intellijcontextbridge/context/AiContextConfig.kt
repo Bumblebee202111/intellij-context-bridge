@@ -5,5 +5,5 @@ import kotlinx.serialization.Serializable
 @Serializable
 data class AiContextConfig(
     val skeleton: List<String> = emptyList(),
-    val full: List<String> = emptyList()
+    val complete: List<String> = emptyList()
 )

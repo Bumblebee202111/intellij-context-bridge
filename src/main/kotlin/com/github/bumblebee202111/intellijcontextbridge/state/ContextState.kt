@@ -20,7 +20,7 @@ import java.util.UUID
 import java.util.concurrent.ConcurrentHashMap
 
 enum class ContextLevel {
-    NONE, SKELETON, FULL, MIXED
+    NONE, SKELETON, COMPLETE, MIXED
 }
 
 data class FileStateRecord(
@@ -75,7 +75,7 @@ class ContextState(private val project: Project) : PersistentStateComponent<Cont
 
         if (file.isDirectory) {
             if (file.children.isEmpty()) {
-                val cappedLevel = if (level == ContextLevel.FULL) ContextLevel.SKELETON else level
+                val cappedLevel = if (level == ContextLevel.COMPLETE) ContextLevel.SKELETON else level
                 if (cappedLevel == ContextLevel.NONE || cappedLevel == ContextLevel.MIXED) {
                     fileStates.remove(file)
                 } else {
@@ -87,7 +87,7 @@ class ContextState(private val project: Project) : PersistentStateComponent<Cont
             }
         } else {
             val maxLevel = ContextCapabilityUtil.getMaxLevel(file)
-            val cappedLevel = if (level == ContextLevel.FULL && maxLevel == ContextLevel.SKELETON) ContextLevel.SKELETON else level
+            val cappedLevel = if (level == ContextLevel.COMPLETE && maxLevel == ContextLevel.SKELETON) ContextLevel.SKELETON else level
 
             if (cappedLevel == ContextLevel.NONE || cappedLevel == ContextLevel.MIXED) {
                 fileStates.remove(file)
@@ -107,10 +107,10 @@ class ContextState(private val project: Project) : PersistentStateComponent<Cont
                 jsonParser.decodeFromString<AiContextConfig>(configText)
             } catch (e: Exception) {
                 thisLogger().warn("Failed to parse .aicontext: ${e.message}")
-                AiContextConfig(skeleton = listOf("."), full = listOf("README.md"))
+                AiContextConfig(skeleton = listOf("."), complete = listOf("README.md"))
             }
         } else {
-            AiContextConfig(skeleton = listOf("."), full = listOf("README.md"))
+            AiContextConfig(skeleton = listOf("."), complete = listOf("README.md"))
         }
 
         config.skeleton.forEach { path ->
@@ -118,9 +118,9 @@ class ContextState(private val project: Project) : PersistentStateComponent<Cont
             if (file != null && file.exists()) applyStateRecursively(file, ContextLevel.SKELETON, checkIgnore = true)
         }
 
-        config.full.forEach { path ->
+        config.complete.forEach { path ->
             val file = if (path == "." || path == "/") projectDir else projectDir.findFileByRelativePath(path)
-            if (file != null && file.exists()) applyStateRecursively(file, ContextLevel.FULL, checkIgnore = true)
+            if (file != null && file.exists()) applyStateRecursively(file, ContextLevel.COMPLETE, checkIgnore = true)
         }
     }
 
@@ -145,14 +145,14 @@ class ContextState(private val project: Project) : PersistentStateComponent<Cont
         val isTextFile = ContextCapabilityUtil.textExtensions.contains(extension) || !file.fileType.isBinary
 
         val hash = if (isTextFile) {
-            val extractedText = if (level == ContextLevel.FULL) {
+            val extractedText = if (level == ContextLevel.COMPLETE) {
                 FileDocumentManager.getInstance().getCachedDocument(file)?.text ?: VfsUtilCore.loadText(file)
             } else {
                 PsiSkeletonExtractor.extract(project, file) ?: "OMITTED_NON_CODE_SKELETON"
             }
             calculateHash(extractedText)
         } else {
-            if (level == ContextLevel.FULL) calculateHash("${file.modificationStamp}_${file.length}") else "OMITTED_BINARY_SKELETON"
+            if (level == ContextLevel.COMPLETE) calculateHash("${file.modificationStamp}_${file.length}") else "OMITTED_BINARY_SKELETON"
         }
 
         hashCache[file] = HashCacheEntry(currentStamp, level, hash)

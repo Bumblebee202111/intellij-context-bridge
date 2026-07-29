@@ -5,7 +5,7 @@
 > * **No Pre-built Binaries:** You must build the plugin from source yourself.
 > * **No Support:** You may open issues for discussion or to report UI breaks, but I do not guarantee updates or bug fixes.
 > * **No Pull Requests:** I am not accepting PRs at this time.
-> * **Web UI Automation:** The companion userscript interacts with Google AI Studio by automating the web UI (DOM manipulation) rather than using an official API. This means it will naturally break whenever Google updates their frontend layout. Use and adapt it at your own discretion.
+> * **Web UI Automation:** The companion userscript interacts with Google AI Studio by automating the web UI (DOM manipulation) rather than using an official API. This means it will naturally break whenever Google updates their frontend layout. Use and adapt it at your discretion.
 
 ## Overview
 A native IntelliJ/Android Studio plugin designed to connect the IDE with web-based LLM playgrounds (such as Google AI Studio). Inspired by the workflow of [CodeWebChat](https://github.com/robertpiosik/CodeWebChat), it acts as an optimized, stateful context manager. It compiles project context into LLM-friendly payloads and synchronizes them via the clipboard or a local WebSocket server, providing an alternative to direct API integrations.
@@ -14,7 +14,7 @@ A native IntelliJ/Android Studio plugin designed to connect the IDE with web-bas
 
 ## Core Mechanics & Philosophy
 1. **User-Directed Workflow:** The AI does not autonomously read or write files. The user explicitly selects the context to share and safely reviews or applies generated code changes using IntelliJ's native `DiffManager`.
-2. **Token Efficiency:** Prioritizes a "Skeleton" mode (AST-based extraction of signatures, class structures, and documentation) over full-text extraction to conserve tokens and maintain LLM focus.
+2. **Token Efficiency:** Balances complete file contexts with a specialized "Skeleton" modifier (AST-based extraction of signatures and structures) for peripheral dependencies. This conserves tokens and maintains LLM focus without losing architectural awareness.
 3. **Proactive Context Suggestions:** A lightweight, background engine intelligently suggests relevant files based on Git changes, active editor tabs, prompt mentions, and deep AST graph traversal (dependencies & usages).
 4. **Intent-Based Interaction:** Differentiates between read-only analysis ("Ask") and code generation ("Edit"), dynamically swapping system instructions to guide the AI's output format.
 5. **Local Network Bridge:** Operates via a companion browser userscript that communicates with the IDE over a local WebSocket, securely transferring prompts and retrieving responses.

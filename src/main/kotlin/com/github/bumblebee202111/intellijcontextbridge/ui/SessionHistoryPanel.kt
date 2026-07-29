@@ -66,7 +66,7 @@ class SessionHistoryPanel(private val project: Project, private val onHistoryCha
         filesList.cellRenderer = object : ColoredListCellRenderer<Map.Entry<String, FileStateRecord>>() {
             override fun customizeCellRenderer(list: JList<out Map.Entry<String, FileStateRecord>>, value: Map.Entry<String, FileStateRecord>, index: Int, selected: Boolean, hasFocus: Boolean) {
                 append(value.key, SimpleTextAttributes.REGULAR_ATTRIBUTES)
-                val levelText = if (value.value.level == ContextLevel.FULL) "Full" else "Skeleton"
+                val levelText = if (value.value.level == ContextLevel.COMPLETE) "Complete" else "Skeleton"
                 append(" ($levelText)", SimpleTextAttributes.GRAYED_ATTRIBUTES)
             }
         }
