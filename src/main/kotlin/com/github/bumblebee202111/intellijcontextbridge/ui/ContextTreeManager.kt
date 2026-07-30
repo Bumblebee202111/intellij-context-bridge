@@ -38,9 +38,9 @@ class ContextTreeManager(private val project: Project, private val contextState:
         return getAggregatedState(node).level
     }
 
-    fun getNextToggleLevel(node: DefaultMutableTreeNode, file: VirtualFile): ContextLevel {
+    fun getNextToggleLevel(node: DefaultMutableTreeNode, file: VirtualFile?): ContextLevel {
         val currentLevel = getComputedLevel(node)
-        val maxLevel = if (file.isDirectory && file.children.isNotEmpty()) {
+        val maxLevel = if (file == null || (file.isDirectory && file.children.isNotEmpty())) {
             ContextLevel.COMPLETE
         } else {
             ContextCapabilityUtil.getMaxLevel(file)
@@ -49,14 +49,9 @@ class ContextTreeManager(private val project: Project, private val contextState:
     }
 
     private fun getAggregatedState(node: DefaultMutableTreeNode): AggregatedState {
-        val file = (node.userObject as? NodeData)?.file ?: return AggregatedState(
-            allMaxed = true,
-            allSkeleton = true,
-            allNone = true,
-            hasLeaves = false
-        )
+        val file = (node.userObject as? NodeData)?.file
         
-        if (!file.isDirectory || file.children.isEmpty()) {
+        if (file != null && (!file.isDirectory || file.children.isEmpty())) {
             val level = contextState.getLevel(file)
             val maxLevel = if (file.isDirectory) ContextLevel.SKELETON else ContextCapabilityUtil.getMaxLevel(file)
             return AggregatedState(
@@ -93,10 +88,8 @@ class ContextTreeManager(private val project: Project, private val contextState:
     }
 
     fun applyStateToNode(node: DefaultMutableTreeNode, level: ContextLevel) {
-        val file = (node.userObject as? NodeData)?.file ?: return
-        if (!file.isDirectory) {
-            contextState.applyStateRecursively(file, level, checkIgnore = false)
-        } else {
+        val file = (node.userObject as? NodeData)?.file
+        if (file == null || file.isDirectory) {
             val enumeration = node.depthFirstEnumeration()
             while (enumeration.hasMoreElements()) {
                 val descendant = enumeration.nextElement() as DefaultMutableTreeNode
@@ -105,6 +98,8 @@ class ContextTreeManager(private val project: Project, private val contextState:
                     contextState.applyStateRecursively(descFile, level, checkIgnore = false)
                 }
             }
+        } else {
+            contextState.applyStateRecursively(file, level, checkIgnore = false)
         }
         nodeStateCache.clear()
     }
@@ -161,7 +156,7 @@ class ContextTreeManager(private val project: Project, private val contextState:
         if (!isRoot && validChildNodes.size == 1) {
             val singleChildNode = validChildNodes[0]
             val singleChildData = singleChildNode.userObject as? NodeData
-            if (singleChildData != null && singleChildData.file.isDirectory) {
+            if (singleChildData != null && singleChildData.file != null && singleChildData.file.isDirectory) {
                 val compactedDisplayName = "${dir.name}.${singleChildData.displayName}"
                 singleChildNode.userObject = NodeData(singleChildData.file, compactedDisplayName)
                 return singleChildNode
@@ -197,9 +192,10 @@ class ContextTreeManager(private val project: Project, private val contextState:
             if (tree.isExpanded(i)) {
                 val path = tree.getPathForRow(i)
                 val node = path.lastPathComponent as? DefaultMutableTreeNode
-                val file = (node?.userObject as? NodeData)?.file
-                if (file != null) {
-                    expanded.add(file.path)
+                val nodeData = node?.userObject as? NodeData
+                if (nodeData != null) {
+                    val pathStr = nodeData.file?.path ?: nodeData.displayName
+                    expanded.add(pathStr)
                 }
             }
         }
@@ -213,9 +209,12 @@ class ContextTreeManager(private val project: Project, private val contextState:
         val root = tree.model.root as? DefaultMutableTreeNode ?: return
 
         fun traverseAndExpand(node: DefaultMutableTreeNode, path: TreePath) {
-            val file = (node.userObject as? NodeData)?.file
-            if (file != null && expandedFiles.contains(file.path)) {
-                tree.expandPath(path)
+            val nodeData = node.userObject as? NodeData
+            if (nodeData != null) {
+                val pathStr = nodeData.file?.path ?: nodeData.displayName
+                if (expandedFiles.contains(pathStr)) {
+                    tree.expandPath(path)
+                }
             }
             for (i in 0 until node.childCount) {
                 val child = node.getChildAt(i) as? DefaultMutableTreeNode ?: continue

@@ -46,7 +46,7 @@ object ContextCapabilityUtil {
             when (current) {
                 ContextLevel.NONE, ContextLevel.MIXED -> ContextLevel.COMPLETE
                 ContextLevel.COMPLETE -> ContextLevel.SKELETON
-                ContextLevel.SKELETON -> ContextLevel.COMPLETE // Cycle back to COMPLTETE, never NONE
+                ContextLevel.SKELETON -> ContextLevel.COMPLETE // Cycle back to COMPLETE, never NONE
             }
         }
     }

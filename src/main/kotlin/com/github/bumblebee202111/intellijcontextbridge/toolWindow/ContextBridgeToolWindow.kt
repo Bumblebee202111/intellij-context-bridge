@@ -1,5 +1,6 @@
 package com.github.bumblebee202111.intellijcontextbridge.toolWindow
 
+import com.github.bumblebee202111.intellijcontextbridge.parser.ToolCallParser
 import com.github.bumblebee202111.intellijcontextbridge.server.ContextBridgeServer
 import com.github.bumblebee202111.intellijcontextbridge.ui.ContextComposerPanel
 import com.github.bumblebee202111.intellijcontextbridge.ui.DiffReceiverPanel
@@ -41,8 +42,14 @@ class ContextBridgeToolWindow(private val project: Project) {
 
             server.onMessageReceived = { markdownText ->
                 SwingUtilities.invokeLater {
-                    tabbedPane.selectedIndex = 1
-                    receiverPanel.handleIncomingMarkdown(markdownText)
+                    val toolCall = ToolCallParser.parse(markdownText)
+                    if (toolCall != null && toolCall.name == "read_file") {
+                        tabbedPane.selectedIndex = 0
+                        composerPanel.handleReadFileToolCall(toolCall.paths, toolCall.reason)
+                    } else {
+                        tabbedPane.selectedIndex = 1
+                        receiverPanel.handleIncomingMarkdown(markdownText)
+                    }
                 }
             }
 

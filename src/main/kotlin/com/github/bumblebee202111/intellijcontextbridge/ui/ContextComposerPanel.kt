@@ -50,6 +50,7 @@ import com.intellij.util.ui.JBUI
 import com.intellij.util.ui.tree.TreeUtil
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.launch
+import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
 import java.awt.BorderLayout
 import java.awt.Dimension
@@ -83,6 +84,9 @@ class ContextComposerPanel(private val project: Project) {
     private var lastDedupedFiles = emptySet<VirtualFile>()
     private var isConfigLoaded = false
 
+    // Holds files requested by the AI until the next payload is sent
+    private var pendingAiRequests = emptySet<VirtualFile>()
+
     private var treeUpdateJob: Job? = null
 
     // Unified Debouncer for all UI updates (300ms)
@@ -109,8 +113,20 @@ class ContextComposerPanel(private val project: Project) {
         showsRootHandles = true
     }
 
+    private val requestedTreeModel = DefaultTreeModel(DefaultMutableTreeNode("Loading..."))
+    private val requestedTree = Tree(requestedTreeModel).apply {
+        emptyText.text = "No pending requests."
+        isRootVisible = true
+        showsRootHandles = true
+    }
+
     private val suggestionTreeContainer = JPanel(BorderLayout()).apply {
         border = IdeBorderFactory.createTitledBorder("Suggested Context")
+        isVisible = false
+    }
+
+    private val requestedTreeContainer = JPanel(BorderLayout()).apply {
+        border = IdeBorderFactory.createTitledBorder("Pending AI Requests")
         isVisible = false
     }
 
@@ -145,20 +161,31 @@ class ContextComposerPanel(private val project: Project) {
 
         tree.cellRenderer = ContextTreeCellRenderer(treeManager::getComputedLevel) { file -> lastDedupedFiles.contains(file) }
         suggestionTree.cellRenderer = ContextTreeCellRenderer(treeManager::getComputedLevel) { false }
+        requestedTree.cellRenderer = ContextTreeCellRenderer(treeManager::getComputedLevel) { false }
 
         tree.addMouseListener(createTreeMouseListener(tree))
         tree.addKeyListener(createTreeKeyListener(tree))
+
         suggestionTree.addMouseListener(createTreeMouseListener(suggestionTree))
         suggestionTree.addKeyListener(createTreeKeyListener(suggestionTree))
+
+        requestedTree.addMouseListener(createTreeMouseListener(requestedTree))
+        requestedTree.addKeyListener(createTreeKeyListener(requestedTree))
 
         val mainTreeContainer = JPanel(BorderLayout())
         mainTreeContainer.add(setupTopToolbar(), BorderLayout.NORTH)
         mainTreeContainer.add(JBScrollPane(tree), BorderLayout.CENTER)
 
         suggestionTreeContainer.add(JBScrollPane(suggestionTree), BorderLayout.CENTER)
+        requestedTreeContainer.add(JBScrollPane(requestedTree), BorderLayout.CENTER)
+
+        val topTreesSplitter = JBSplitter(true, 0.5f).apply {
+            firstComponent = requestedTreeContainer
+            secondComponent = suggestionTreeContainer
+        }
 
         val treeSplitter = JBSplitter(true, 0.3f).apply {
-            firstComponent = suggestionTreeContainer
+            firstComponent = topTreesSplitter
             secondComponent = mainTreeContainer
         }
 
@@ -196,6 +223,29 @@ class ContextComposerPanel(private val project: Project) {
         updateTabsUI(server.getActiveTabs())
 
         refreshUi()
+    }
+
+    fun handleReadFileToolCall(paths: List<String>, reason: String) {
+        val projectDir = project.guessProjectDir() ?: return
+        val requestedFiles = mutableSetOf<VirtualFile>()
+
+        paths.forEach { path ->
+            val file = projectDir.findFileByRelativePath(path)
+            if (file != null && file.exists() && !file.isDirectory) {
+                requestedFiles.add(file)
+            }
+        }
+
+        if (requestedFiles.isNotEmpty()) {
+            pendingAiRequests = requestedFiles
+            promptArea.text = "AI requested files to: $reason\n\n"
+            refreshUi()
+        } else {
+            Messages.showWarningDialog(
+                "The AI requested files, but none were found in the project.\n\nReason: $reason\nPaths: ${paths.joinToString()}",
+                "Tool Call: read_file"
+            )
+        }
     }
 
     private fun setupTopToolbar(): JPanel {
@@ -290,6 +340,7 @@ class ContextComposerPanel(private val project: Project) {
                     promptArea.text = ""
                     historyIndex = -1
                     draftPrompt = ""
+                    pendingAiRequests = emptySet()
                     refreshUi()
                 }
             })
@@ -381,6 +432,9 @@ class ContextComposerPanel(private val project: Project) {
         historyIndex = -1
         draftPrompt = ""
 
+        // Clear pending requests upon successful transmission
+        pendingAiRequests = emptySet()
+
         setGeneratingState(true)
 
         ReadAction.nonBlocking<AiPayload> {
@@ -428,7 +482,9 @@ class ContextComposerPanel(private val project: Project) {
                 val path = targetTree.getPathForLocation(e.x, e.y) ?: return
                 val bounds = targetTree.getPathBounds(path) ?: return
                 val node = path.lastPathComponent as? DefaultMutableTreeNode ?: return
-                val file = (node.userObject as? NodeData)?.file ?: return
+
+                val nodeData = node.userObject as? NodeData ?: return
+                val file = nodeData.file
 
                 if (SwingUtilities.isRightMouseButton(e)) {
                     treeManager.applyStateToNode(node, ContextLevel.NONE)
@@ -451,7 +507,7 @@ class ContextComposerPanel(private val project: Project) {
                             e.consume()
                         }
                     } else if (e.clickCount == 2) {
-                        if (!file.isDirectory) {
+                        if (file != null && !file.isDirectory) {
                             OpenFileDescriptor(project, file).navigate(true)
                             e.consume()
                         }
@@ -469,11 +525,12 @@ class ContextComposerPanel(private val project: Project) {
 
                 for (path in paths) {
                     val node = path.lastPathComponent as? DefaultMutableTreeNode ?: continue
-                    val file = (node.userObject as? NodeData)?.file ?: continue
+                    val nodeData = node.userObject as? NodeData ?: continue
+                    val file = nodeData.file
 
                     when (e.keyCode) {
                         KeyEvent.VK_ENTER -> {
-                            if (!file.isDirectory) OpenFileDescriptor(project, file).navigate(true)
+                            if (file != null && !file.isDirectory) OpenFileDescriptor(project, file).navigate(true)
                         }
                         KeyEvent.VK_SPACE -> {
                             val nextLevel = treeManager.getNextToggleLevel(node, file)
@@ -567,23 +624,35 @@ class ContextComposerPanel(private val project: Project) {
                 }
             }
 
+            val requestedRootNode = readAction {
+                if (projectDir != null && pendingAiRequests.isNotEmpty()) {
+                    val node = treeManager.buildFileTree(projectDir, false, "", allowedLeaves = pendingAiRequests, isRoot = true)
+                    if (node != null) {
+                        node.userObject = NodeData(null, "[AI Requested Files]")
+                        node
+                    } else null
+                } else null
+            }
+
             // Switch to the EDT for UI updates safely
             ApplicationManager.getApplication().invokeLater({
                 lastDedupedFiles = newDedupedFiles
 
-                // CAPTURE: Record which folders the user currently has open
-                val expandedFiles = treeManager.getExpandedFilePaths(tree)
+                // CAPTURE: Record which folders the user currently has open across all 3 trees
+                val expandedMain = treeManager.getExpandedFilePaths(tree)
+                val expandedSugg = treeManager.getExpandedFilePaths(suggestionTree)
+                val expandedReq = treeManager.getExpandedFilePaths(requestedTree)
 
-                // SWAP: Replace the model
+                // SWAP: Replace the models
                 tree.model = DefaultTreeModel(mainRootNode)
 
                 // RESTORE: Re-open the folders precisely
                 if (searchQuery.isNotBlank()) {
                     TreeUtil.expandAll(tree)
                 } else {
-                    treeManager.restoreExpandedFilePaths(tree, expandedFiles)
+                    treeManager.restoreExpandedFilePaths(tree, expandedMain)
                     // If it's the very first load and nothing was expanded, open the root
-                    if (expandedFiles.isEmpty() && tree.rowCount > 0) {
+                    if (expandedMain.isEmpty() && tree.rowCount > 0) {
                         tree.expandRow(0)
                     }
                 }
@@ -592,8 +661,20 @@ class ContextComposerPanel(private val project: Project) {
                 val hasSuggestions = suggestionRootNode.childCount > 0
                 suggestionTreeContainer.isVisible = hasSuggestions
                 if (hasSuggestions) {
-                    TreeUtil.expandAll(suggestionTree)
+                    treeManager.restoreExpandedFilePaths(suggestionTree, expandedSugg)
+                    if (expandedSugg.isEmpty()) TreeUtil.expandAll(suggestionTree)
                 }
+
+                if (requestedRootNode != null) {
+                    requestedTree.model = DefaultTreeModel(requestedRootNode)
+                    requestedTreeContainer.isVisible = true
+                    treeManager.restoreExpandedFilePaths(requestedTree, expandedReq)
+                    if (expandedReq.isEmpty()) TreeUtil.expandAll(requestedTree)
+                } else {
+                    requestedTree.model = DefaultTreeModel(DefaultMutableTreeNode("No pending requests."))
+                    requestedTreeContainer.isVisible = false
+                }
+
             }, ModalityState.nonModal())
         }
     }
