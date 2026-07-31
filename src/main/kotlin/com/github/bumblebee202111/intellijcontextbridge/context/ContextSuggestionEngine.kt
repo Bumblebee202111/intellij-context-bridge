@@ -2,12 +2,15 @@ package com.github.bumblebee202111.intellijcontextbridge.context
 
 import com.github.bumblebee202111.intellijcontextbridge.state.ContextLevel
 import com.github.bumblebee202111.intellijcontextbridge.state.ContextState
+import com.github.bumblebee202111.intellijcontextbridge.utils.ContextCapabilityUtil
 import com.github.bumblebee202111.intellijcontextbridge.utils.FileFilterUtil
 import com.intellij.openapi.application.readAction
 import com.intellij.openapi.fileEditor.FileEditorManager
 import com.intellij.openapi.progress.ProgressManager
 import com.intellij.openapi.project.Project
+import com.intellij.openapi.project.guessProjectDir
 import com.intellij.openapi.vcs.changes.ChangeListManager
+import com.intellij.openapi.vfs.VfsUtilCore
 import com.intellij.openapi.vfs.VirtualFile
 import com.intellij.psi.PsiElement
 import com.intellij.psi.PsiJavaFile
@@ -170,14 +173,43 @@ object ContextSuggestionEngine {
         }
 
         // 8. Filter & Sort
-        return scores.entries
-            .filter { (file, score) ->
-                contextState.getLevel(file) == ContextLevel.NONE && // EXCLUSION: Disappear if already in context
-                score >= 15 // Minimum threshold to be suggested
+        val projectDir = project.guessProjectDir()
+        val dedupCache = contextState.getDedupCache()
+        val validSuggestions = mutableSetOf<VirtualFile>()
+
+        for ((file, score) in scores.entries.sortedByDescending { it.value }) {
+            if (score < 15) continue
+            if (validSuggestions.size >= 15) break // Cap tree size to prevent UI vertical clutter
+
+            val currentLevel = contextState.getLevel(file)
+            val maxLevel = ContextCapabilityUtil.getMaxLevel(file)
+
+            // EXCLUSION: Disappear if it has reached its maximum capability
+            if (currentLevel == maxLevel) continue
+
+            // SMART OMISSION: Check if the AI already has the max level in its memory
+            var isMaxLevelCached = false
+            if (projectDir != null) {
+                val relativePath = VfsUtilCore.getRelativePath(file, projectDir) ?: file.path
+                val cachedRecord = dedupCache[relativePath]
+
+                if (cachedRecord != null && cachedRecord.level == maxLevel) {
+                    try {
+                        val currentHash = readAction { contextState.getFileHash(project, file, maxLevel) }
+                        if (currentHash == cachedRecord.hash) {
+                            isMaxLevelCached = true
+                        }
+                    } catch (e: Exception) {
+                        // Safely ignore
+                    }
+                }
             }
-            .sortedByDescending { it.value }
-            .take(15) // Cap tree size to prevent UI vertical clutter
-            .map { it.key }
-            .toSet()
+
+            if (!isMaxLevelCached) {
+                validSuggestions.add(file)
+            }
+        }
+
+        return validSuggestions
     }
 }
