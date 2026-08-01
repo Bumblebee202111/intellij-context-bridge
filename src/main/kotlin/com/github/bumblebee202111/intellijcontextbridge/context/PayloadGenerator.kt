@@ -34,14 +34,8 @@ object PayloadGenerator {
         val currentCache = contextState.getDedupCache()
         val newTurn = UserTurn(prompt = userPrompt)
 
-        // 1. System Instructions (Separated from the main prompt, dynamically built based on intent)
-        val basePrompt = loadPrompt("system_base.md")
-        val intentPrompt = if (intentMode == IntentMode.ASK) {
-            loadPrompt("intent_ask.md")
-        } else {
-            loadPrompt("intent_edit.md")
-        }
-        val systemInstructionsText = "$basePrompt\n\n$intentPrompt"
+        // 1. System Instructions
+        val systemInstructionsText = loadPrompt("system_base.md")
 
         val markdownText =  buildString {
             // 2. Project Context
@@ -168,7 +162,8 @@ object PayloadGenerator {
             appendLine()
 
             // 3. User Prompt
-            appendLine("<user_prompt>")
+            val modeString = if (intentMode == IntentMode.ASK) "ASK" else "EDIT"
+            appendLine("<user_prompt mode=\"$modeString\">")
             appendLine(userPrompt.trim())
             appendLine("</user_prompt>")
         }

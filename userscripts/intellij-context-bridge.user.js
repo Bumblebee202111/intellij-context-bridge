@@ -17,6 +17,7 @@
 
     win.__cbActive = false;
     win.__cbIntercepted = false;
+    win.__cbCurrentMode = 'ASK'; // Default mode for web UI
 
     const PORTS = Array.from({length: 10}, (_, i) => 37373 + i);
     const activeSockets = new Map();
@@ -190,6 +191,91 @@
 
         setInterval(injectTurnButtons, 1000);
 
+        // --- WEB UI: MODE TOGGLE ---
+
+        function updateToggleStyles() {
+            const askBtn = document.getElementById('cb-mode-ask');
+            const editBtn = document.getElementById('cb-mode-edit');
+            if (!askBtn || !editBtn) return;
+
+            const activeStyle = 'background: #4CAF50; color: white; border: 1px solid #4CAF50; border-radius: 12px; padding: 4px 12px; cursor: pointer; font-weight: bold; transition: all 0.2s;';
+            const inactiveStyle = 'background: transparent; color: #aaa; border: 1px solid #555; border-radius: 12px; padding: 4px 12px; cursor: pointer; transition: all 0.2s;';
+
+            askBtn.style.cssText = win.__cbCurrentMode === 'ASK' ? activeStyle : inactiveStyle;
+            editBtn.style.cssText = win.__cbCurrentMode === 'EDIT' ? activeStyle : inactiveStyle;
+        }
+
+        function injectModeToggle() {
+            if (document.getElementById('cb-mode-toggle')) return;
+            const textarea = document.querySelector('textarea[formcontrolname="promptText"]') || document.querySelector('textarea[aria-label="Enter a prompt"]');
+            if (!textarea) return;
+
+            const container = textarea.closest('ms-prompt-input-bar') || textarea.closest('.input-container') || textarea.parentElement;
+            if (!container) return;
+
+            const toggleContainer = document.createElement('div');
+            toggleContainer.id = 'cb-mode-toggle';
+            toggleContainer.style.cssText = `
+                display: flex; gap: 8px; margin-bottom: 8px; padding-left: 8px;
+                font-family: Inter, sans-serif; font-size: 13px;
+            `;
+
+            const askBtn = document.createElement('button');
+            askBtn.id = 'cb-mode-ask';
+            askBtn.textContent = '💬 Ask';
+            askBtn.onclick = (e) => { e.preventDefault(); win.__cbCurrentMode = 'ASK'; updateToggleStyles(); };
+
+            const editBtn = document.createElement('button');
+            editBtn.id = 'cb-mode-edit';
+            editBtn.textContent = '⚡ Edit';
+            editBtn.onclick = (e) => { e.preventDefault(); win.__cbCurrentMode = 'EDIT'; updateToggleStyles(); };
+
+            toggleContainer.appendChild(askBtn);
+            toggleContainer.appendChild(editBtn);
+
+            container.parentElement.insertBefore(toggleContainer, container);
+            updateToggleStyles();
+        }
+
+        setInterval(injectModeToggle, 1000);
+
+        // --- WEB UI: INTERCEPT MANUAL SUBMISSIONS ---
+
+        const nativeTextAreaValueSetter = Object.getOwnPropertyDescriptor(window.HTMLTextAreaElement.prototype, "value").set;
+
+        function interceptAndWrap(textarea) {
+            let val = textarea.value;
+            if (!val.trim()) return;
+            if (val.includes('<user_prompt mode=')) return; // Already wrapped by the IDE
+
+            const mode = win.__cbCurrentMode || 'ASK';
+            const wrapped = `<user_prompt mode="${mode}">\n${val}\n</user_prompt>`;
+
+            nativeTextAreaValueSetter.call(textarea, wrapped);
+            textarea.dispatchEvent(new Event('input', { bubbles: true }));
+        }
+
+        // Intercept Enter key
+        document.addEventListener('keydown', (e) => {
+            if (e.key === 'Enter' && !e.shiftKey) {
+                const textarea = e.target;
+                if (textarea.tagName === 'TEXTAREA' && (textarea.getAttribute('formcontrolname') === 'promptText' || textarea.getAttribute('aria-label') === 'Enter a prompt')) {
+                    interceptAndWrap(textarea);
+                }
+            }
+        }, true); // Capture phase
+
+        // Intercept Submit button click
+        document.addEventListener('click', (e) => {
+            const btn = e.target.closest('button[type="submit"]');
+            if (btn) {
+                const textarea = document.querySelector('textarea[formcontrolname="promptText"]') || document.querySelector('textarea[aria-label="Enter a prompt"]');
+                if (textarea) interceptAndWrap(textarea);
+            }
+        }, true); // Capture phase
+
+        // --- UTILS ---
+
         async function waitForElement(selector, timeout = 15000) {
             return new Promise((resolve) => {
                 if (document.querySelector(selector)) return resolve(document.querySelector(selector));
@@ -228,6 +314,8 @@
             });
         }
 
+        // --- IDE PAYLOAD HANDLER ---
+
         async function handleIncomingPayload(payloadString) {
             if (isProcessing) return;
             isProcessing = true;
@@ -239,26 +327,27 @@
                 payloadObj = { text: payloadString, attachments: [], systemInstructions: "" };
             }
 
-            const nativeTextAreaValueSetter = Object.getOwnPropertyDescriptor(window.HTMLTextAreaElement.prototype, "value").set;
+            // Sync the web UI toggle with the IDE's intent
+            if (payloadObj.text) {
+                const modeMatch = payloadObj.text.match(/<user_prompt mode="(ASK|EDIT)">/);
+                if (modeMatch) {
+                    win.__cbCurrentMode = modeMatch[1];
+                    updateToggleStyles();
+                }
+            }
+
             const nativeInputValueSetter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, "value").set;
 
+            // Fast-Path System Instructions Check
             if (payloadObj.systemInstructions) {
-                let expectedTitle = "IntelliJ Bridge - General";
-                let keyword = "IntelliJ IDE";
-
-                if (payloadObj.systemInstructions.includes("EDIT & GENERATE")) {
-                    expectedTitle = "IntelliJ Bridge - Edit";
-                    keyword = "EDIT & GENERATE";
-                } else if (payloadObj.systemInstructions.includes("ASK & ANALYZE")) {
-                    expectedTitle = "IntelliJ Bridge - Ask";
-                    keyword = "ASK & ANALYZE";
-                }
+                const expectedTitle = "IntelliJ Context Bridge";
+                const expectedFirstSentence = "You are an expert AI coding assistant";
 
                 const sysCard = document.querySelector('[data-test-system-instructions-card]');
                 if (sysCard) {
                     const subtitle = sysCard.querySelector('.subtitle');
 
-                    if (!subtitle || !subtitle.textContent.includes(keyword)) {
+                    if (!subtitle || !subtitle.textContent.includes(expectedFirstSentence)) {
                         showToast('⚙️ Updating System Instructions...', '#FF9800', 0);
                         sysCard.click();
 
