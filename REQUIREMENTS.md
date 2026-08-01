@@ -17,16 +17,16 @@ The system MUST track the state of the conversation to prevent context bloat and
 
 ## 3. System Instructions & Intent Modes
 The system MUST separate static behavioral directives from the dynamic project context.
-* *Intent Modes:* The system MUST support distinct interaction modes (e.g., "Ask" for read-only analysis and "Edit" for code generation) to dynamically adjust the system instructions.
+* *Intent Modes:* The system MUST support distinct interaction modes (e.g., "Ask" for read-only analysis and "Edit" for code generation) to dynamically adjust the system instructions or prompt anchors.
 * *Edit Constraints:* In generation modes, the AI MUST be instructed to output code using a "Skeleton Patch" format (where unchanged signatures are retained as structural anchors) and MUST format code blocks with exact file path headers to facilitate IDE parsing.
-* *Context Awareness:* The AI MUST be instructed to output `REQUEST_FULL: [filepath]` if it requires the complete implementation of a Skeleton file to proceed.
+* *Context Awareness & Tool Calling:* The AI MUST be provided with an XML-based tool schema (e.g., `read_file`) to request the complete implementation of Skeleton files. The system MUST intercept these tool calls and present them in the UI for manual user approval.
 
 ## 4. Proactive Context Suggestions
-The system MUST provide an intelligent, reactive suggestion engine to reduce user cognitive load when selecting context.
+The system MUST provide an intelligent, reactive suggestion engine to act as a staging area and reduce user cognitive load when selecting context.
 * *Heuristics:* The engine MUST evaluate files based on Git modifications, active/open editor tabs, prompt text mentions, and 1st-degree incoming/outgoing PSI relationships.
-* *Graph Exclusion:* The engine MUST explicitly exclude files already loaded into the context as `SKELETON` from acting as seeds for graph traversal to prevent peripheral noise.
+* *Smart Omission:* The engine MUST explicitly exclude files that have already reached their maximum context capability or whose maximum state is already stored in the deduplication cache.
 * *Relevance Filtering:* Unbounded usage searches MUST be mathematically penalized (e.g., Inverse Document Frequency) to prevent ubiquitous utility classes from flooding the suggestions.
-* *Performance Constraints:* The engine MUST run asynchronously, MUST be debounced to prevent index thrashing on every keystroke, and MUST cleanly abort via `ReadAction.nonBlocking` cancellation if the user interrupts it or the IDE begins indexing.
+* *Performance Constraints:* The engine MUST run asynchronously within IDE-managed Coroutines, MUST be debounced to prevent index thrashing, and MUST cleanly yield via suspending `readAction`s if the user interrupts it or types in the editor.
 
 ## 5. Project Configuration (`.aicontext`)
 The plugin MUST support reading a local configuration file (e.g., `.aicontext`) at the project root.
@@ -37,4 +37,4 @@ The plugin MUST NOT silently overwrite local files. All incoming code from the A
 
 ## 7. Non-Goals (Out of Scope)
 * Direct integration with OpenAI/Anthropic/Google REST APIs.
-* Autonomous agentic loops (the AI cannot execute terminal commands or trigger file reads without explicit user intervention).
+* Autonomous agentic loops (the AI cannot execute terminal commands or trigger file reads without explicit, manual user intervention and approval).

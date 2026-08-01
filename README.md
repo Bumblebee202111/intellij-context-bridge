@@ -13,13 +13,13 @@ A native IntelliJ/Android Studio plugin designed to connect the IDE with web-bas
 *Note: This project is actively developed through dogfooding—using the plugin itself alongside advanced LLMs to write, review, and refine its own codebase.*
 
 ## Core Mechanics & Philosophy
-1. **User-Directed Workflow:** The AI does not autonomously read or write files. The user explicitly selects the context to share and safely reviews or applies generated code changes using IntelliJ's native `DiffManager`.
+1. **User-Directed Workflow:** The AI does not autonomously read or write files. The user explicitly selects the context to share, manually approves XML-based AI tool requests, and safely reviews generated code changes using IntelliJ's native `DiffManager`.
 2. **Token Efficiency:** Balances complete file contexts with a specialized "Skeleton" modifier (AST-based extraction of signatures and structures) for peripheral dependencies. This conserves tokens and maintains LLM focus without losing architectural awareness.
-3. **Proactive Context Suggestions:** A lightweight, background engine intelligently suggests relevant files based on Git changes, active editor tabs, prompt mentions, and deep AST graph traversal (dependencies & usages).
+3. **Proactive Context Suggestions:** A lightweight, background engine intelligently suggests relevant files based on Git changes, active editor tabs, prompt mentions, and deep AST graph traversal, actively suppressing files already cached in the AI's memory.
 4. **Intent-Based Interaction:** Differentiates between read-only analysis ("Ask") and code generation ("Edit"), dynamically swapping system instructions to guide the AI's output format.
 5. **Local Network Bridge:** Operates via a companion browser userscript that communicates with the IDE over a local WebSocket, securely transferring prompts and retrieving responses.
 6. **State & Deduplication:** Tracks conversation turns and file states, automatically omitting unchanged files from subsequent payloads to prevent context window bloat.
-7. **Native IDE Feel:** Built using standard IntelliJ UI components to ensure keyboard shortcuts, editor behaviors, and layout scaling feel identical to native IDE features.
+7. **Native IDE Feel:** Built using standard IntelliJ UI components to ensure keyboard shortcuts, editor behaviors, and layout scaling feel identical to native IDE features, backed by yielding Coroutines to prevent typing freezes.
 8. **Diagnostic Awareness:** (Planned) Supports injecting active IDE compiler errors and warnings directly into the payload, providing deterministic constraints for the AI to resolve.
 
 ## Development Setup Requirements

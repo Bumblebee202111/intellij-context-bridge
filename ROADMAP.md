@@ -11,6 +11,10 @@
 - Native UI Overhaul & Proactive Context Suggestions
 
 ## Upcoming Focus
+**Intent Architecture & Prompt Adherence**
+* [ ] Refine Ask/Edit modes to use a unified static system prompt combined with XML micro-anchoring (e.g., `<user_prompt mode="...">`).
+* [ ] Improve LLM adherence to read-only vs. code-generation constraints to prevent premature coding in Ask mode.
+
 **Engineering Context (Git & Diagnostics)**
 * [ ] Add UI toggle to include active editor compiler errors/warnings in the payload.
 * [ ] Add action to auto-select uncommitted/modified files based on `git status`.
