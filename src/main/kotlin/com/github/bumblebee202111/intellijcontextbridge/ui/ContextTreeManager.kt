@@ -108,7 +108,6 @@ class ContextTreeManager(private val project: Project, private val contextState:
     fun buildFileTree(
         dir: VirtualFile,
         showSelectedOnly: Boolean,
-        searchQuery: String,
         allowedLeaves: Set<VirtualFile>? = null,
         isRoot: Boolean = false
     ): DefaultMutableTreeNode? {
@@ -119,11 +118,10 @@ class ContextTreeManager(private val project: Project, private val contextState:
             .sortedWith(compareBy({ !it.isDirectory }, { it.name }))
 
         val validChildNodes = mutableListOf<DefaultMutableTreeNode>()
-        val dirMatchesSearch = searchQuery.isBlank() || dir.name.contains(searchQuery, ignoreCase = true)
 
         for (child in children) {
             if (child.isDirectory) {
-                val childNode = buildFileTree(child, showSelectedOnly, searchQuery, allowedLeaves, false)
+                val childNode = buildFileTree(child, showSelectedOnly, allowedLeaves, false)
                 if (childNode != null) {
                     validChildNodes.add(childNode)
                 }
@@ -134,9 +132,8 @@ class ContextTreeManager(private val project: Project, private val contextState:
                 val isSelected = level != ContextLevel.NONE
 
                 val passesSelection = !showSelectedOnly || isSelected || allowedLeaves != null
-                val passesSearch = searchQuery.isBlank() || dirMatchesSearch || child.name.contains(searchQuery, ignoreCase = true)
 
-                if (passesSelection && passesSearch) {
+                if (passesSelection) {
                     validChildNodes.add(DefaultMutableTreeNode(NodeData(child, child.name)))
                 }
             }
@@ -148,7 +145,6 @@ class ContextTreeManager(private val project: Project, private val contextState:
             val passesSelection = !showSelectedOnly || isSelected || allowedLeaves != null
 
             if (!passesSelection) return null
-            if (searchQuery.isNotBlank() && !dirMatchesSearch) return null
             if (children.isNotEmpty()) return null
         }
 

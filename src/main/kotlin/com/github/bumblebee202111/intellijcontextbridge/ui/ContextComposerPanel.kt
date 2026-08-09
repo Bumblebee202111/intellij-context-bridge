@@ -35,12 +35,11 @@ import com.intellij.openapi.ui.ComboBox
 import com.intellij.openapi.ui.Messages
 import com.intellij.openapi.vfs.VfsUtilCore
 import com.intellij.openapi.vfs.VirtualFile
-import com.intellij.ui.DocumentAdapter
 import com.intellij.ui.EditorTextField
 import com.intellij.ui.IdeBorderFactory
 import com.intellij.ui.JBSplitter
-import com.intellij.ui.SearchTextField
 import com.intellij.ui.SimpleTextAttributes
+import com.intellij.ui.TreeSpeedSearch
 import com.intellij.ui.components.JBRadioButton
 import com.intellij.ui.components.JBScrollPane
 import com.intellij.ui.treeStructure.Tree
@@ -64,7 +63,6 @@ import java.awt.event.MouseEvent
 import java.text.SimpleDateFormat
 import java.util.Date
 import javax.swing.*
-import javax.swing.event.DocumentEvent as SwingDocumentEvent
 import javax.swing.tree.DefaultMutableTreeNode
 import javax.swing.tree.DefaultTreeModel
 
@@ -171,6 +169,11 @@ class ContextComposerPanel(private val project: Project) {
 
         requestedTree.addMouseListener(createTreeMouseListener(requestedTree))
         requestedTree.addKeyListener(createTreeKeyListener(requestedTree))
+
+        // Install Native Speed Search
+        TreeSpeedSearch(tree)
+        TreeSpeedSearch(suggestionTree)
+        TreeSpeedSearch(requestedTree)
 
         val mainTreeContainer = JPanel(BorderLayout())
         mainTreeContainer.add(setupTopToolbar(), BorderLayout.NORTH)
@@ -281,22 +284,7 @@ class ContextComposerPanel(private val project: Project) {
             targetComponent = tree
         }
 
-        var searchTimer: Timer? = null
-        val searchField = SearchTextField().apply {
-            textEditor.emptyText.text = "Search files..."
-            addDocumentListener(object : DocumentAdapter() {
-                override fun textChanged(e: SwingDocumentEvent) {
-                    searchTimer?.stop()
-                    searchTimer = Timer(300) {
-                        searchQuery = text.trim()
-                        refreshUi()
-                    }.apply { isRepeats = false; start() }
-                }
-            })
-        }
-
         topToolbar.add(nativeToolbar.component, BorderLayout.WEST)
-        topToolbar.add(searchField, BorderLayout.CENTER)
         return topToolbar
     }
 
@@ -619,7 +607,7 @@ class ContextComposerPanel(private val project: Project) {
 
             val mainRootNode = readAction {
                 if (projectDir != null) {
-                    treeManager.buildFileTree(projectDir, showSelectedOnly, searchQuery, isRoot = true) ?: DefaultMutableTreeNode(NodeData(projectDir, "No Project Root"))
+                    treeManager.buildFileTree(projectDir, showSelectedOnly, isRoot = true) ?: DefaultMutableTreeNode(NodeData(projectDir, "No Project Root"))
                 } else {
                     DefaultMutableTreeNode("No Project Root")
                 }
@@ -627,7 +615,7 @@ class ContextComposerPanel(private val project: Project) {
 
             val suggestionRootNode = readAction {
                 if (projectDir != null && suggestions.isNotEmpty()) {
-                    treeManager.buildFileTree(projectDir, false, "", allowedLeaves = suggestions, isRoot = true) ?: DefaultMutableTreeNode("No Suggestions")
+                    treeManager.buildFileTree(projectDir, false, allowedLeaves = suggestions, isRoot = true) ?: DefaultMutableTreeNode("No Suggestions")
                 } else {
                     DefaultMutableTreeNode("No Suggestions")
                 }
@@ -635,7 +623,7 @@ class ContextComposerPanel(private val project: Project) {
 
             val requestedRootNode = readAction {
                 if (projectDir != null && pendingAiRequests.isNotEmpty()) {
-                    val node = treeManager.buildFileTree(projectDir, false, "", allowedLeaves = pendingAiRequests, isRoot = true)
+                    val node = treeManager.buildFileTree(projectDir, false, allowedLeaves = pendingAiRequests, isRoot = true)
                     if (node != null) {
                         node.userObject = NodeData(null, "[AI Requested Files]")
                         node
@@ -656,14 +644,10 @@ class ContextComposerPanel(private val project: Project) {
                 tree.model = DefaultTreeModel(mainRootNode)
 
                 // RESTORE: Re-open the folders precisely
-                if (searchQuery.isNotBlank()) {
-                    TreeUtil.expandAll(tree)
-                } else {
-                    treeManager.restoreExpandedFilePaths(tree, expandedMain)
-                    // If it's the very first load and nothing was expanded, open the root
-                    if (expandedMain.isEmpty() && tree.rowCount > 0) {
-                        tree.expandRow(0)
-                    }
+                treeManager.restoreExpandedFilePaths(tree, expandedMain)
+                // If it's the very first load and nothing was expanded, open the root
+                if (expandedMain.isEmpty() && tree.rowCount > 0) {
+                    tree.expandRow(0)
                 }
 
                 suggestionTree.model = DefaultTreeModel(suggestionRootNode)
