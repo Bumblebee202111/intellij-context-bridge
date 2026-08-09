@@ -3,6 +3,7 @@
     "."
   ],
   "full": [
+    "AGENTS.md",
     "README.md",
     "ROADMAP.md",
     "ARCHITECTURE.md",
