@@ -45,8 +45,6 @@ class KotlinSkeletonExtractor : LanguageSkeletonExtractor {
         // Strip private members (Internal is kept for intra-module LLM context)
         if (declaration.hasModifier(KtTokens.PRIVATE_KEYWORD)) return null
 
-        val doc = declaration.docComment?.text?.let { "$indent$it\n" } ?: ""
-
         return when (declaration) {
             is KtEnumEntry -> {
                 val body = declaration.body
@@ -56,9 +54,9 @@ class KotlinSkeletonExtractor : LanguageSkeletonExtractor {
                 val children = declaration.body?.declarations?.mapNotNull { processKtDeclaration(it, "$indent    ") } ?: emptyList()
 
                 if (children.isEmpty()) {
-                    "$doc$indent$headerText"
+                    "$indent$headerText"
                 } else {
-                    "$doc$indent$headerText {\n${children.joinToString("\n\n")}\n$indent}"
+                    "$indent$headerText {\n${children.joinToString("\n\n")}\n$indent}"
                 }
             }
             is KtClassOrObject -> {
@@ -69,9 +67,9 @@ class KotlinSkeletonExtractor : LanguageSkeletonExtractor {
                 val children = declaration.body?.declarations?.mapNotNull { processKtDeclaration(it, "$indent    ") } ?: emptyList()
 
                 if (children.isEmpty()) {
-                    "$doc$indent$headerText {}"
+                    "$indent$headerText {}"
                 } else {
-                    "$doc$indent$headerText {\n${children.joinToString("\n\n")}\n$indent}"
+                    "$indent$headerText {\n${children.joinToString("\n\n")}\n$indent}"
                 }
             }
             is KtNamedFunction -> {
@@ -82,13 +80,14 @@ class KotlinSkeletonExtractor : LanguageSkeletonExtractor {
                 val endOffset = equalsToken?.textRange?.startOffset ?: body?.textRange?.startOffset ?: declaration.textRange.endOffset
                 val sig = declaration.containingFile.text.substring(declaration.textRange.startOffset, endOffset).trimEnd()
 
-                "$doc$indent$sig"
+                "$indent$sig"
             }
             is KtSecondaryConstructor -> {
                 val body = declaration.bodyExpression
                 val endOffset = body?.textRange?.startOffset ?: declaration.textRange.endOffset
                 val sig = declaration.containingFile.text.substring(declaration.textRange.startOffset, endOffset).trimEnd()
-                "$doc$indent$sig"
+
+                "$indent$sig"
             }
             is KtProperty -> {
                 val initializer = declaration.initializer
@@ -116,10 +115,10 @@ class KotlinSkeletonExtractor : LanguageSkeletonExtractor {
                 }
 
                 val sig = declaration.containingFile.text.substring(declaration.textRange.startOffset, endOffset).trimEnd()
-                "$doc$indent$sig"
+                "$indent$sig"
             }
             is KtAnonymousInitializer -> null // Purely internal implementation logic, omit entirely
-            else -> "$doc$indent${declaration.text}" // Fallback for TypeAliases, etc.
+            else -> "$indent${declaration.text}" // Fallback for TypeAliases, etc.
         }
     }
 }

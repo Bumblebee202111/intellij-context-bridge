@@ -49,8 +49,6 @@ class JavaSkeletonExtractor : LanguageSkeletonExtractor {
 
         psiClass.fields.forEach { field ->
             if (!field.hasModifierProperty(PsiModifier.PRIVATE)) {
-                val fDoc = field.docComment?.text?.let { "$indent    $it\n" } ?: ""
-
                 val initializer = field.initializer
                 val isStaticFinal = field.hasModifierProperty(PsiModifier.STATIC) && field.hasModifierProperty(PsiModifier.FINAL)
 
@@ -66,20 +64,18 @@ class JavaSkeletonExtractor : LanguageSkeletonExtractor {
 
                 var fText = field.containingFile.text.substring(field.textRange.startOffset, endOffset).trimEnd()
                 if (!fText.endsWith(";")) fText += ";"
-                children.add("$fDoc$indent    $fText")
+                children.add("$indent    $fText")
             }
         }
 
         psiClass.methods.forEach { method ->
             if (!method.hasModifierProperty(PsiModifier.PRIVATE)) {
-                val mDoc = method.docComment?.text?.let { "$indent    $it\n" } ?: ""
-
                 val body = method.body
                 val endOffset = body?.textRange?.startOffset ?: method.textRange.endOffset
 
                 var mText = method.containingFile.text.substring(method.textRange.startOffset, endOffset).trimEnd()
                 if (!mText.endsWith(";")) mText += ";"
-                children.add("$mDoc$indent    $mText")
+                children.add("$indent    $mText")
             }
         }
 
