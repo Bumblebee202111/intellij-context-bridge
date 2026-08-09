@@ -124,6 +124,25 @@ class ContextState(private val project: Project) : PersistentStateComponent<Cont
         }
     }
 
+    fun restoreFromLastTurn() {
+        val lastTurn = getLastTurn()
+        if (lastTurn == null) {
+            fileStates.clear()
+            loadConfig()
+            return
+        }
+
+        val projectDir = project.guessProjectDir() ?: return
+
+        fileStates.clear()
+        for ((path, record) in lastTurn.sentFiles) {
+            val file = projectDir.findFileByRelativePath(path)
+            if (file != null && file.exists()) {
+                fileStates[file] = record.level
+            }
+        }
+    }
+
     fun calculateHash(content: String): String {
         val bytes = MessageDigest.getInstance("MD5").digest(content.toByteArray(Charsets.UTF_8))
         return bytes.joinToString("") { "%02x".format(it) }

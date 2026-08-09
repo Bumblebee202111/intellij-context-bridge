@@ -349,6 +349,9 @@ class ContextComposerPanel(private val project: Project) {
                     val turn = contextState.removeLastTurn()
                     if (turn != null) {
                         promptArea.text = turn.prompt
+                        ApplicationManager.getApplication().runReadAction {
+                            contextState.restoreFromLastTurn()
+                        }
                         refreshUi()
                     }
                 }
@@ -574,7 +577,13 @@ class ContextComposerPanel(private val project: Project) {
 
         treeUpdateJob = coroutineService.scope.launch {
             if (!isConfigLoaded) {
-                readAction { contextState.loadConfig() }
+                readAction {
+                    if (contextState.getLastTurn() == null) {
+                        contextState.loadConfig()
+                    } else {
+                        contextState.restoreFromLastTurn()
+                    }
+                }
                 isConfigLoaded = true
             }
 
