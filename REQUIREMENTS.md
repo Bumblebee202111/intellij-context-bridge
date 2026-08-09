@@ -17,8 +17,8 @@ The system MUST track the state of the conversation to prevent context bloat and
 
 ## 3. System Instructions & Intent Modes
 The system MUST separate static behavioral directives from the dynamic project context.
-* *Intent Modes:* The system MUST support distinct interaction modes (e.g., "Ask" for read-only analysis and "Edit" for code generation) to dynamically adjust the system instructions or prompt anchors.
-* *Edit Constraints:* In generation modes, the AI MUST be instructed to output code using a "Skeleton Patch" format (where unchanged signatures are retained as structural anchors) and MUST format code blocks with exact file path headers to facilitate IDE parsing.
+* *Intent Modes:* The system MUST support distinct interaction modes (e.g., "Ask" for read-only analysis and "Edit" for code generation). This MUST be enforced via unified system instructions and XML micro-anchoring (e.g., `<user_prompt mode="...">`) to ensure strong LLM adherence.
+* *Edit Constraints:* In generation modes, the AI MUST be instructed to output code using a "Skeleton Patch" format (where unchanged structural blocks like signatures or tags are retained as diff anchors) and MUST format code blocks with exact file path headers to facilitate IDE parsing.
 * *Context Awareness & Tool Calling:* The AI MUST be provided with an XML-based tool schema (e.g., `read_file`) to request the complete implementation of Skeleton files. The system MUST intercept these tool calls and present them in the UI for manual user approval.
 
 ## 4. Proactive Context Suggestions

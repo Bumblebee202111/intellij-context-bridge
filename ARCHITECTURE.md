@@ -31,8 +31,8 @@ The plugin consists of four decoupled layers. Implementation details for each la
   * The deduplication cache is dynamically folded from the session history, ensuring perfect synchronization even if past turns are deleted.
 
 ## 4. Transport & Application Layer
-* **Payload Generator:** Compiles extracted context, user prompts, and context-aware system instructions into a structured JSON object. Files are included in their entirety by default, while files reduced to their AST signatures are explicitly marked with a `(Skeleton)` tag in the markdown headers.
+* **Payload Generator:** Compiles extracted context, unified system instructions, and user prompts into a structured JSON object. Files are included in their entirety by default, while files reduced to their AST signatures are explicitly marked with a `(Skeleton)` tag in the markdown headers. The user's intent (Ask vs. Edit) is explicitly anchored at the end of the context using a `<user_prompt mode="...">` wrapper to maximize LLM adherence.
 * **Bridge Mechanism:**
   * *Server:* A local WebSocket server embedded in the IDE, utilizing dynamic port binding to support multiple concurrent IDE instances (Mesh Networking).
-  * *Client:* A browser userscript that maintains connections to active IDEs. It routes payloads to the targeted AI Studio tab, injects system instructions, simulates media attachments, and intercepts native UI copy events to securely return code.
+  * *Client:* A browser userscript that maintains connections to active IDEs. It automates the modern AI Studio web UI (handling system instruction cards, model selectors, and drag-and-drop attachments), routes payloads, and intercepts native UI copy events to securely return code.
 * **Tool Call & Diff Manager:** Parses incoming Markdown responses from the AI. It extracts XML-based tool calls (e.g., `read_file`) to route back to the UI for manual approval, while matching code blocks to local file paths to open IntelliJ's native side-by-side `DiffRequest` window for user review.
