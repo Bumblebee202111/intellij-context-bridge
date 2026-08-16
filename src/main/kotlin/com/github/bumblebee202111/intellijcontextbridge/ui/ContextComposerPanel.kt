@@ -1,5 +1,8 @@
 package com.github.bumblebee202111.intellijcontextbridge.ui
 
+import com.github.bumblebee202111.intellijcontextbridge.commands.CommandContextAction
+import com.github.bumblebee202111.intellijcontextbridge.commands.CommandRegistryService
+import com.github.bumblebee202111.intellijcontextbridge.commands.SlashCommand
 import com.github.bumblebee202111.intellijcontextbridge.context.AiPayload
 import com.github.bumblebee202111.intellijcontextbridge.context.ContextSuggestionEngine
 import com.github.bumblebee202111.intellijcontextbridge.context.IntentMode
@@ -10,17 +13,12 @@ import com.github.bumblebee202111.intellijcontextbridge.services.ContextCoroutin
 import com.github.bumblebee202111.intellijcontextbridge.state.ContextLevel
 import com.github.bumblebee202111.intellijcontextbridge.state.ContextState
 import com.intellij.icons.AllIcons
-import com.intellij.openapi.actionSystem.ActionManager
-import com.intellij.openapi.actionSystem.ActionUpdateThread
-import com.intellij.openapi.actionSystem.AnAction
-import com.intellij.openapi.actionSystem.AnActionEvent
-import com.intellij.openapi.actionSystem.CustomShortcutSet
-import com.intellij.openapi.actionSystem.DefaultActionGroup
-import com.intellij.openapi.actionSystem.ToggleAction
+import com.intellij.openapi.actionSystem.*
 import com.intellij.openapi.application.ApplicationManager
 import com.intellij.openapi.application.ModalityState
 import com.intellij.openapi.application.ReadAction
 import com.intellij.openapi.application.readAction
+import com.intellij.openapi.command.WriteCommandAction
 import com.intellij.openapi.components.service
 import com.intellij.openapi.editor.event.DocumentEvent
 import com.intellij.openapi.editor.event.DocumentListener
@@ -33,13 +31,12 @@ import com.intellij.openapi.project.Project
 import com.intellij.openapi.project.guessProjectDir
 import com.intellij.openapi.ui.ComboBox
 import com.intellij.openapi.ui.Messages
+import com.intellij.openapi.ui.popup.JBPopupFactory
+import com.intellij.openapi.ui.popup.PopupStep
+import com.intellij.openapi.ui.popup.util.BaseListPopupStep
 import com.intellij.openapi.vfs.VfsUtilCore
 import com.intellij.openapi.vfs.VirtualFile
-import com.intellij.ui.EditorTextField
-import com.intellij.ui.IdeBorderFactory
-import com.intellij.ui.JBSplitter
-import com.intellij.ui.SimpleTextAttributes
-import com.intellij.ui.TreeSpeedSearch
+import com.intellij.ui.*
 import com.intellij.ui.components.JBRadioButton
 import com.intellij.ui.components.JBScrollPane
 import com.intellij.ui.treeStructure.Tree
@@ -55,14 +52,11 @@ import java.awt.BorderLayout
 import java.awt.Dimension
 import java.awt.FlowLayout
 import java.awt.datatransfer.StringSelection
-import java.awt.event.InputEvent
-import java.awt.event.KeyAdapter
-import java.awt.event.KeyEvent
-import java.awt.event.MouseAdapter
-import java.awt.event.MouseEvent
+import java.awt.event.*
 import java.text.SimpleDateFormat
-import java.util.Date
+import java.util.*
 import javax.swing.*
+import javax.swing.Timer
 import javax.swing.tree.DefaultMutableTreeNode
 import javax.swing.tree.DefaultTreeModel
 
@@ -251,6 +245,73 @@ class ContextComposerPanel(private val project: Project) {
         }
     }
 
+    fun applyCommand(command: SlashCommand, triggerOffset: Int = -1) {
+        if (command.mode == IntentMode.ASK) {
+            askRadio.isSelected = true
+        } else {
+            editRadio.isSelected = true
+        }
+
+        val editor = promptArea.editor
+        if (editor != null && triggerOffset >= 0) {
+            WriteCommandAction.runWriteCommandAction(project) {
+                val doc = editor.document
+                doc.replaceString(triggerOffset, triggerOffset + 1, command.promptBody)
+                editor.caretModel.moveToOffset(triggerOffset + command.promptBody.length)
+            }
+        } else {
+            promptArea.text = command.promptBody
+            if (editor != null) {
+                editor.caretModel.moveToOffset(editor.document.textLength)
+            }
+        }
+        promptArea.requestFocusInWindow()
+
+        ReadAction.nonBlocking<Unit> {
+            if (command.contextAction == CommandContextAction.REPLACE) {
+                contextState.clearFileStates()
+            }
+
+            val projectDir = project.guessProjectDir() ?: return@nonBlocking
+            for (path in command.includeFiles) {
+                val file = projectDir.findFileByRelativePath(path)
+                if (file != null && file.exists()) {
+                    contextState.applyStateRecursively(file, ContextLevel.COMPLETE, checkIgnore = true)
+                }
+            }
+        }
+        .finishOnUiThread(ModalityState.nonModal()) {
+            refreshUi()
+        }
+        .submit(AppExecutorUtil.getAppExecutorService())
+    }
+
+    private fun showCommandPopup(triggerOffset: Int) {
+        val registry = project.service<CommandRegistryService>()
+        val commands = registry.getCommands()
+        if (commands.isEmpty()) return
+
+        val step = object : BaseListPopupStep<SlashCommand>("Slash Commands", commands) {
+            override fun getTextFor(value: SlashCommand): String {
+                return "/${value.name} - ${value.description}"
+            }
+
+            override fun getIconFor(value: SlashCommand): Icon {
+                return AllIcons.Nodes.Function
+            }
+
+            override fun onChosen(selectedValue: SlashCommand, finalChoice: Boolean): PopupStep<*>? {
+                ApplicationManager.getApplication().invokeLater {
+                    applyCommand(selectedValue, triggerOffset)
+                }
+                return FINAL_CHOICE
+            }
+        }
+
+        val editor = promptArea.editor ?: return
+        JBPopupFactory.getInstance().createListPopup(step).showInBestPositionFor(editor)
+    }
+
     private fun setupTopToolbar(): JPanel {
         val topToolbar = JPanel(BorderLayout(5, 0)).apply { border = JBUI.Borders.empty(5) }
 
@@ -297,6 +358,17 @@ class ContextComposerPanel(private val project: Project) {
                     draftPrompt = promptArea.text
                 }
                 refreshUi()
+
+                val newText = event.newFragment.toString()
+                if (newText == "/") {
+                    val offset = event.offset
+                    val docText = event.document.text
+                    if (offset == 0 || docText.getOrNull(offset - 1) == '\n') {
+                        ApplicationManager.getApplication().invokeLater {
+                            showCommandPopup(offset)
+                        }
+                    }
+                }
             }
         })
 

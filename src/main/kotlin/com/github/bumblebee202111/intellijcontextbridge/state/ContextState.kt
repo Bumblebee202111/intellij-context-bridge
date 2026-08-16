@@ -206,6 +206,10 @@ class ContextState(private val project: Project) : PersistentStateComponent<Cont
         return cache
     }
 
+    fun clearFileStates() {
+        fileStates.clear()
+    }
+
     fun clear() {
         fileStates.clear()
         myState.turns.clear()
