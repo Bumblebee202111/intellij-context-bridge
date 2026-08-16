@@ -9,11 +9,20 @@ import com.github.bumblebee202111.intellijcontextbridge.context.IntentMode
 import com.github.bumblebee202111.intellijcontextbridge.context.PayloadGenerator
 import com.github.bumblebee202111.intellijcontextbridge.server.BrowserTab
 import com.github.bumblebee202111.intellijcontextbridge.server.ContextBridgeServer
+import com.github.bumblebee202111.intellijcontextbridge.server.SyncCommand
 import com.github.bumblebee202111.intellijcontextbridge.services.ContextCoroutineScopeService
 import com.github.bumblebee202111.intellijcontextbridge.state.ContextLevel
 import com.github.bumblebee202111.intellijcontextbridge.state.ContextState
+import com.intellij.codeInsight.AutoPopupController
+import com.intellij.codeInsight.lookup.LookupElementBuilder
 import com.intellij.icons.AllIcons
-import com.intellij.openapi.actionSystem.*
+import com.intellij.openapi.actionSystem.ActionManager
+import com.intellij.openapi.actionSystem.ActionUpdateThread
+import com.intellij.openapi.actionSystem.AnAction
+import com.intellij.openapi.actionSystem.AnActionEvent
+import com.intellij.openapi.actionSystem.CustomShortcutSet
+import com.intellij.openapi.actionSystem.DefaultActionGroup
+import com.intellij.openapi.actionSystem.ToggleAction
 import com.intellij.openapi.application.ApplicationManager
 import com.intellij.openapi.application.ModalityState
 import com.intellij.openapi.application.ReadAction
@@ -31,12 +40,14 @@ import com.intellij.openapi.project.Project
 import com.intellij.openapi.project.guessProjectDir
 import com.intellij.openapi.ui.ComboBox
 import com.intellij.openapi.ui.Messages
-import com.intellij.openapi.ui.popup.JBPopupFactory
-import com.intellij.openapi.ui.popup.PopupStep
-import com.intellij.openapi.ui.popup.util.BaseListPopupStep
 import com.intellij.openapi.vfs.VfsUtilCore
 import com.intellij.openapi.vfs.VirtualFile
-import com.intellij.ui.*
+import com.intellij.ui.IdeBorderFactory
+import com.intellij.ui.JBSplitter
+import com.intellij.ui.SimpleTextAttributes
+import com.intellij.ui.TextFieldWithAutoCompletion
+import com.intellij.ui.TextFieldWithAutoCompletionListProvider
+import com.intellij.ui.TreeSpeedSearch
 import com.intellij.ui.components.JBRadioButton
 import com.intellij.ui.components.JBScrollPane
 import com.intellij.ui.treeStructure.Tree
@@ -52,11 +63,14 @@ import java.awt.BorderLayout
 import java.awt.Dimension
 import java.awt.FlowLayout
 import java.awt.datatransfer.StringSelection
-import java.awt.event.*
+import java.awt.event.InputEvent
+import java.awt.event.KeyAdapter
+import java.awt.event.KeyEvent
+import java.awt.event.MouseAdapter
+import java.awt.event.MouseEvent
 import java.text.SimpleDateFormat
-import java.util.*
+import java.util.Date
 import javax.swing.*
-import javax.swing.Timer
 import javax.swing.tree.DefaultMutableTreeNode
 import javax.swing.tree.DefaultTreeModel
 
@@ -76,12 +90,10 @@ class ContextComposerPanel(private val project: Project) {
     private var lastDedupedFiles = emptySet<VirtualFile>()
     private var isConfigLoaded = false
 
-    // Holds files requested by the AI until the next payload is sent
     private var pendingAiRequests = emptySet<VirtualFile>()
 
     private var treeUpdateJob: Job? = null
 
-    // Unified Debouncer for all UI updates (300ms)
     private val uiRefreshTimer = Timer(300) {
         val currentPromptText = promptArea.text
         refreshTree(currentPromptText)
@@ -90,7 +102,6 @@ class ContextComposerPanel(private val project: Project) {
     private val dateFormat = SimpleDateFormat("HH:mm:ss")
 
     private var showSelectedOnly = false
-    private var searchQuery = ""
 
     private val treeModel = DefaultTreeModel(DefaultMutableTreeNode("Loading..."))
     private val tree = Tree(treeModel).apply {
@@ -122,9 +133,34 @@ class ContextComposerPanel(private val project: Project) {
         isVisible = false
     }
 
-    private val promptArea = EditorTextField(project, FileTypes.PLAIN_TEXT).apply {
-        setOneLineMode(false)
-        setPlaceholder("Type your prompt here...")
+    private val commandCompletionProvider = object : TextFieldWithAutoCompletionListProvider<SlashCommand>(emptyList()) {
+        override fun getLookupString(item: SlashCommand): String = "/${item.name}"
+        override fun getTailText(item: SlashCommand): String = " - ${item.description}"
+        override fun getTypeText(item: SlashCommand): String = item.mode.name
+        override fun compare(item1: SlashCommand, item2: SlashCommand): Int = item1.name.compareTo(item2.name)
+
+        override fun createLookupBuilder(item: SlashCommand): LookupElementBuilder {
+            return super.createLookupBuilder(item)
+                .withIcon(AllIcons.Nodes.Function)
+                .withInsertHandler { context, _ ->
+                    val start = context.startOffset
+                    val end = context.tailOffset
+                    context.document.deleteString(start, end)
+
+                    ApplicationManager.getApplication().invokeLater {
+                        applyCommand(item, start)
+                    }
+                }
+        }
+    }
+
+    private val promptArea = TextFieldWithAutoCompletion<SlashCommand>(
+        project,
+        commandCompletionProvider,
+        false,
+        ""
+    ).apply {
+        setPlaceholder("Type your prompt here or start with '/' for commands...")
         addSettingsProvider { editor ->
             editor.settings.isUseSoftWraps = true
             editor.settings.additionalLinesCount = 0
@@ -148,7 +184,6 @@ class ContextComposerPanel(private val project: Project) {
     val content: JPanel = JPanel(BorderLayout())
 
     init {
-        // Register decoupled IDE event listeners to trigger the debouncer
         ContextChangeTracker(project, contextState) { refreshUi() }
 
         tree.cellRenderer = ContextTreeCellRenderer(treeManager::getComputedLevel) { file -> lastDedupedFiles.contains(file) }
@@ -164,7 +199,6 @@ class ContextComposerPanel(private val project: Project) {
         requestedTree.addMouseListener(createTreeMouseListener(requestedTree))
         requestedTree.addKeyListener(createTreeKeyListener(requestedTree))
 
-        // Install Native Speed Search
         TreeSpeedSearch(tree)
         TreeSpeedSearch(suggestionTree)
         TreeSpeedSearch(requestedTree)
@@ -193,7 +227,6 @@ class ContextComposerPanel(private val project: Project) {
 
         content.add(splitPane, BorderLayout.CENTER)
 
-        // Setup WebSocket UI hook
         val updateTabsUI = { tabs: List<BrowserTab> ->
             SwingUtilities.invokeLater {
                 val currentSelection = tabComboBox.selectedItem as? BrowserTabItem
@@ -218,6 +251,13 @@ class ContextComposerPanel(private val project: Project) {
 
         server.onTabsChanged = updateTabsUI
         updateTabsUI(server.getActiveTabs())
+
+        server.onHandshakeReceived = { tabId ->
+            val commands = project.service<CommandRegistryService>().getCommands()
+            val dtos = commands.map { SyncCommand(it.name, it.mode.name, it.promptBody) }
+            val json = Json.encodeToString(dtos)
+            server.sendToTab(tabId, "[COMMANDS]$json")
+        }
 
         refreshUi()
     }
@@ -256,7 +296,7 @@ class ContextComposerPanel(private val project: Project) {
         if (editor != null && triggerOffset >= 0) {
             WriteCommandAction.runWriteCommandAction(project) {
                 val doc = editor.document
-                doc.replaceString(triggerOffset, triggerOffset + 1, command.promptBody)
+                doc.replaceString(triggerOffset, triggerOffset, command.promptBody)
                 editor.caretModel.moveToOffset(triggerOffset + command.promptBody.length)
             }
         } else {
@@ -284,32 +324,6 @@ class ContextComposerPanel(private val project: Project) {
             refreshUi()
         }
         .submit(AppExecutorUtil.getAppExecutorService())
-    }
-
-    private fun showCommandPopup(triggerOffset: Int) {
-        val registry = project.service<CommandRegistryService>()
-        val commands = registry.getCommands()
-        if (commands.isEmpty()) return
-
-        val step = object : BaseListPopupStep<SlashCommand>("Slash Commands", commands) {
-            override fun getTextFor(value: SlashCommand): String {
-                return "/${value.name} - ${value.description}"
-            }
-
-            override fun getIconFor(value: SlashCommand): Icon {
-                return AllIcons.Nodes.Function
-            }
-
-            override fun onChosen(selectedValue: SlashCommand, finalChoice: Boolean): PopupStep<*>? {
-                ApplicationManager.getApplication().invokeLater {
-                    applyCommand(selectedValue, triggerOffset)
-                }
-                return FINAL_CHOICE
-            }
-        }
-
-        val editor = promptArea.editor ?: return
-        JBPopupFactory.getInstance().createListPopup(step).showInBestPositionFor(editor)
     }
 
     private fun setupTopToolbar(): JPanel {
@@ -365,7 +379,9 @@ class ContextComposerPanel(private val project: Project) {
                     val docText = event.document.text
                     if (offset == 0 || docText.getOrNull(offset - 1) == '\n') {
                         ApplicationManager.getApplication().invokeLater {
-                            showCommandPopup(offset)
+                            promptArea.editor?.let { editor ->
+                                AutoPopupController.getInstance(project).scheduleAutoPopup(editor)
+                            }
                         }
                     }
                 }
@@ -629,6 +645,7 @@ class ContextComposerPanel(private val project: Project) {
     }
 
     fun refreshUi() {
+        commandCompletionProvider.setItems(project.service<CommandRegistryService>().getCommands())
         uiRefreshTimer.restart()
     }
 

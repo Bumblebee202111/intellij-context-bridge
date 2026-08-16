@@ -11,11 +11,15 @@ import io.ktor.server.websocket.*
 import io.ktor.websocket.*
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.launch
+import kotlinx.serialization.Serializable
 import java.net.ServerSocket
 import java.util.*
 import kotlin.time.Duration.Companion.seconds
 
 data class BrowserTab(val id: String, val title: String, val session: DefaultWebSocketServerSession)
+
+@Serializable
+data class SyncCommand(val name: String, val mode: String, val promptBody: String)
 
 @Service(Service.Level.APP)
 class ContextBridgeServer(private val scope: CoroutineScope) : Disposable {
@@ -26,6 +30,7 @@ class ContextBridgeServer(private val scope: CoroutineScope) : Disposable {
 
     var onTabsChanged: ((List<BrowserTab>) -> Unit)? = null
     var onMessageReceived: ((String) -> Unit)? = null
+    var onHandshakeReceived: ((String) -> Unit)? = null
 
     fun getActiveTabs(): List<BrowserTab> = activeTabs.values.toList()
 
@@ -35,10 +40,9 @@ class ContextBridgeServer(private val scope: CoroutineScope) : Disposable {
         scope.launch {
             var assignedPort: Int? = null
 
-            // Safely probe for a free port using raw ServerSocket before initializing Ktor
             for (port in 37373..37382) {
                 try {
-                    ServerSocket(port).use { } // Throws BindException if taken
+                    ServerSocket(port).use { }
                     assignedPort = port
                     break
                 } catch (e: Exception) {
@@ -74,6 +78,8 @@ class ContextBridgeServer(private val scope: CoroutineScope) : Disposable {
                                                 currentTabId = parts[0]
                                                 activeTabs[parts[0]] = BrowserTab(parts[0], parts[1], this@webSocket)
                                                 notifyTabsChanged()
+
+                                                onHandshakeReceived?.invoke(parts[0])
                                             }
                                         } else {
                                             onMessageReceived?.invoke(text)
@@ -88,7 +94,7 @@ class ContextBridgeServer(private val scope: CoroutineScope) : Disposable {
                     }
                 }
 
-                server?.start(wait = false) // Non-blocking start
+                server?.start(wait = false)
                 thisLogger().info("ContextBridgeServer successfully bound to port $assignedPort")
 
             } catch (e: Exception) {
@@ -116,7 +122,6 @@ class ContextBridgeServer(private val scope: CoroutineScope) : Disposable {
     }
 
     override fun dispose() {
-        // The platform automatically cancels the injected scope, so we only need to stop Ktor
         server?.stop(1000, 2000)
         server = null
         activeTabs.clear()
