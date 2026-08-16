@@ -20,7 +20,7 @@ class CommandRegistryService(private val project: Project, private val scope: Co
     private val commands = ConcurrentHashMap<String, SlashCommand>()
 
     private val builtInManifest = listOf(
-        "plan.md", "review.md", "test.md", "lore.md", "research.md", "explore.md"
+        "plan.md", "review.md", "test.md", "lore.md", "research.md", "explore.md", "agents.md"
     )
 
     init {
