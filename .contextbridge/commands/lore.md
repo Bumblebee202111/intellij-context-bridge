@@ -10,7 +10,7 @@ include-files:
   - "CHANGELOG.md"
   - "ROADMAP.md"
 ---
-Update project documentation. Avoid recency bias; do not over-emphasize this conversation.
+Update project documentation. Integrate session learnings proportionally (no recency bias).
 - CHANGELOG.md: Ultra-brief, minimalist tracking.
 - ROADMAP.md: Lazy, flexible idea backlog. Keep general.
 - ARCHITECTURE.md: Keep general and flexible. Core constraints only.
