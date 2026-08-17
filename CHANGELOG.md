@@ -15,4 +15,6 @@
 - **Session History & Deduplication**: Persistent timeline of user turns with true undo capabilities and automatic context deduplication to save tokens.
 - **Mesh Networking Bridge**: Dynamic WebSocket server supporting multiple concurrent IDE instances, paired with a Tampermonkey userscript for automated AI Studio injection, extraction, and Web UI mode toggling.
 - **Diff Application**: Markdown parsing and native IntelliJ `DiffManager` integration for safe, visual code application.
-- **Native UI**: Upgraded composer panel with IntelliJ native components (`EditorTextField`, `ActionToolbar`) for a seamless IDE feel.
+- **Native UI**: Upgraded composer panel with IntelliJ native components (`EditorTextField`, `ActionToolbar`, `TreeSpeedSearch`) for a seamless IDE feel.
+- **Slash Commands**: Markdown-based macro system (`/plan`, `/lore`) with project-level shadowing (`.contextbridge/commands/`) and Web UI text-expansion sync.
+- **Web UI Robustness**: Trusted Types compliance and Capture-Phase interception for native AI Studio shortcuts (`Ctrl+Enter`).

@@ -10,6 +10,7 @@
 - Native UI Overhaul & Proactive Context Suggestions
 - Intent Architecture (Unified Prompt & XML Micro-anchoring)
 - Prompt Adherence (Strict Ask vs. Edit boundaries & refined Skeleton Patch Protocol)
+- Slash Commands & Shadow Registry
 
 ## Upcoming Focus
 **Engineering Context (Git & Diagnostics)**

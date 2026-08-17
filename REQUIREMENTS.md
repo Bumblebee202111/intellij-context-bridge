@@ -28,9 +28,10 @@ The system MUST provide an intelligent, reactive suggestion engine to act as a s
 * *Relevance Filtering:* Unbounded usage searches MUST be mathematically penalized (e.g., Inverse Document Frequency) to prevent ubiquitous utility classes from flooding the suggestions.
 * *Performance Constraints:* The engine MUST run asynchronously within IDE-managed Coroutines, MUST be debounced to prevent index thrashing, and MUST cleanly yield via suspending `readAction`s if the user interrupts it or types in the editor.
 
-## 5. Project Configuration (`.aicontext`)
-The plugin MUST support reading a local configuration file (e.g., `.aicontext`) at the project root.
-* *Function:* Defines default context routing by auto-selecting directories and files (e.g., load the project root `.` as Skeleton, while including specific instruction files like `AGENTS.md` in their entirety) upon session initialization.
+## 5. Project Configuration (`.contextbridge`)
+The plugin MUST support reading local configuration directories (e.g., `.contextbridge/`) at the project root.
+* *Context Routing:* Defines default context routing (`.aicontext`) by auto-selecting directories and files upon a fresh session initialization.
+* *Command Shadowing:* Defines project-specific Slash Commands (`commands/*.md`) via Markdown with YAML frontmatter, allowing local macros to seamlessly shadow/override built-in plugin defaults.
 
 ## 6. Diff-Based Application
 The plugin MUST NOT silently overwrite local files. All incoming code from the AI MUST be routed through a visual side-by-side diff interface before being applied to the disk.
