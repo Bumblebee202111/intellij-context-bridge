@@ -154,12 +154,13 @@ class ContextComposerPanel(private val project: Project) {
         }
     }
 
-    private val promptArea = TextFieldWithAutoCompletion<SlashCommand>(
+    private val promptArea = TextFieldWithAutoCompletion(
         project,
         commandCompletionProvider,
         false,
         ""
     ).apply {
+        setOneLineMode(false)
         setPlaceholder("Type your prompt here or start with '/' for commands...")
         addSettingsProvider { editor ->
             editor.settings.isUseSoftWraps = true
