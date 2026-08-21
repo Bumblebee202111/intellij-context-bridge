@@ -6,8 +6,10 @@ import com.github.bumblebee202111.intellijcontextbridge.state.ContextState
 import com.github.bumblebee202111.intellijcontextbridge.ui.ContextComposerPanel
 import com.github.bumblebee202111.intellijcontextbridge.ui.DiffReceiverPanel
 import com.github.bumblebee202111.intellijcontextbridge.ui.SessionHistoryPanel
+import com.intellij.openapi.Disposable
 import com.intellij.openapi.application.ApplicationManager
 import com.intellij.openapi.project.Project
+import com.intellij.openapi.util.Disposer
 import com.intellij.ui.JBColor
 import com.intellij.ui.components.JBScrollPane
 import com.intellij.ui.components.JBTabbedPane
@@ -17,7 +19,7 @@ import javax.swing.JPanel
 import javax.swing.JTextArea
 import javax.swing.SwingUtilities
 
-class ContextBridgeToolWindow(private val project: Project) {
+class ContextBridgeToolWindow(private val project: Project) : Disposable {
 
     fun getContent(): JComponent {
         try {
@@ -28,6 +30,8 @@ class ContextBridgeToolWindow(private val project: Project) {
             val tabbedPane = JBTabbedPane()
 
             val composerPanel = ContextComposerPanel(project)
+            Disposer.register(this, composerPanel)
+
             val receiverPanel = DiffReceiverPanel(project)
             val historyPanel = SessionHistoryPanel(project) {
                 composerPanel.refreshUi()
@@ -42,7 +46,7 @@ class ContextBridgeToolWindow(private val project: Project) {
                 if (tabbedPane.selectedIndex == 2) historyPanel.refresh()
             }
 
-            server.addMessageListener(project) { tabId, markdownText ->
+            server.addMessageListener(this) { tabId, markdownText ->
                 if (tabId != contextState.activeTabId) return@addMessageListener
 
                 SwingUtilities.invokeLater {
@@ -68,5 +72,9 @@ class ContextBridgeToolWindow(private val project: Project) {
             errorPanel.add(JBScrollPane(errorArea), BorderLayout.CENTER)
             return errorPanel
         }
+    }
+
+    override fun dispose() {
+        // Cleaned up automatically by Disposer hierarchy
     }
 }

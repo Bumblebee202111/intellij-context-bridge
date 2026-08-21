@@ -16,6 +16,7 @@ import com.github.bumblebee202111.intellijcontextbridge.state.ContextState
 import com.intellij.codeInsight.AutoPopupController
 import com.intellij.codeInsight.lookup.LookupElementBuilder
 import com.intellij.icons.AllIcons
+import com.intellij.openapi.Disposable
 import com.intellij.openapi.actionSystem.ActionManager
 import com.intellij.openapi.actionSystem.ActionUpdateThread
 import com.intellij.openapi.actionSystem.AnAction
@@ -78,7 +79,7 @@ data class BrowserTabItem(val id: String, val pathname: String, val title: Strin
     override fun toString() = title
 }
 
-class ContextComposerPanel(private val project: Project) {
+class ContextComposerPanel(private val project: Project) : Disposable {
     private val contextState = project.service<ContextState>()
     private val server = ApplicationManager.getApplication().getService(ContextBridgeServer::class.java)
     private val treeManager = ContextTreeManager(project, contextState)
@@ -194,7 +195,7 @@ class ContextComposerPanel(private val project: Project) {
     private val NONE_TAB = BrowserTabItem("", "", "<None / Disconnected>")
 
     init {
-        ContextChangeTracker(project, contextState) { refreshUi() }
+        ContextChangeTracker(this, project, contextState) { refreshUi() }
 
         tree.cellRenderer =
             ContextTreeCellRenderer(treeManager::getComputedLevel) { file -> lastDedupedFiles.contains(file) }
@@ -280,7 +281,7 @@ class ContextComposerPanel(private val project: Project) {
             }
         }
 
-        server.addTabsListener(project) { tabs ->
+        server.addTabsListener(this) { tabs ->
             val state = contextState.getState()
             // Rule 3: Browser Refresh Recovery
             if (contextState.activeTabId != null && tabs.none { it.id == contextState.activeTabId }) {
@@ -294,7 +295,7 @@ class ContextComposerPanel(private val project: Project) {
 
         updateTabsUI(server.getActiveTabs())
 
-        server.addHandshakeListener(project) { tab ->
+        server.addHandshakeListener(this) { tab ->
             val state = contextState.getState()
 
             if (tab.title == state.boundTabTitle) {
@@ -886,5 +887,8 @@ class ContextComposerPanel(private val project: Project) {
 
             }, ModalityState.nonModal())
         }
+    }
+    override fun dispose() {
+        treeUpdateJob?.cancel()
     }
 }

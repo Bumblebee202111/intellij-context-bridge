@@ -1,6 +1,7 @@
 package com.github.bumblebee202111.intellijcontextbridge.ui
 
 import com.github.bumblebee202111.intellijcontextbridge.state.ContextState
+import com.intellij.openapi.Disposable
 import com.intellij.openapi.application.ApplicationManager
 import com.intellij.openapi.editor.EditorFactory
 import com.intellij.openapi.editor.event.DocumentEvent
@@ -22,15 +23,16 @@ import com.intellij.openapi.vfs.newvfs.events.VFileEvent
  * Listens for file system, editor, and document changes to trigger UI refreshes.
  */
 class ContextChangeTracker(
+    private val parentDisposable: Disposable,
     private val project: Project,
     private val contextState: ContextState,
     private val onRefreshNeeded: () -> Unit
 ) {
     init {
-        val connection = project.messageBus.connect()
+        val connection = project.messageBus.connect(parentDisposable)
 
         // 1. VFS Changes
-        ApplicationManager.getApplication().messageBus.connect(project).subscribe(VirtualFileManager.VFS_CHANGES, object : BulkFileListener {
+        ApplicationManager.getApplication().messageBus.connect(parentDisposable).subscribe(VirtualFileManager.VFS_CHANGES, object : BulkFileListener {
             override fun after(events: MutableList<out VFileEvent>) {
                 var needsRefresh = false
                 val projectDir = project.guessProjectDir() ?: return
@@ -65,6 +67,6 @@ class ContextChangeTracker(
                     onRefreshNeeded()
                 }
             }
-        }, project)
+        }, parentDisposable)
     }
 }
