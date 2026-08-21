@@ -2,6 +2,7 @@ package com.github.bumblebee202111.intellijcontextbridge.toolWindow
 
 import com.github.bumblebee202111.intellijcontextbridge.parser.ToolCallParser
 import com.github.bumblebee202111.intellijcontextbridge.server.ContextBridgeServer
+import com.github.bumblebee202111.intellijcontextbridge.state.ContextState
 import com.github.bumblebee202111.intellijcontextbridge.ui.ContextComposerPanel
 import com.github.bumblebee202111.intellijcontextbridge.ui.DiffReceiverPanel
 import com.github.bumblebee202111.intellijcontextbridge.ui.SessionHistoryPanel
@@ -21,6 +22,7 @@ class ContextBridgeToolWindow(private val project: Project) {
     fun getContent(): JComponent {
         try {
             val server = ApplicationManager.getApplication().getService(ContextBridgeServer::class.java)
+            val contextState = project.getService(ContextState::class.java)
             server.start()
 
             val tabbedPane = JBTabbedPane()
@@ -40,7 +42,9 @@ class ContextBridgeToolWindow(private val project: Project) {
                 if (tabbedPane.selectedIndex == 2) historyPanel.refresh()
             }
 
-            server.onMessageReceived = { markdownText ->
+            server.addMessageListener(project) { tabId, markdownText ->
+                if (tabId != contextState.activeTabId) return@addMessageListener
+
                 SwingUtilities.invokeLater {
                     val toolCall = ToolCallParser.parse(markdownText)
                     if (toolCall != null && toolCall.name == "read_file") {

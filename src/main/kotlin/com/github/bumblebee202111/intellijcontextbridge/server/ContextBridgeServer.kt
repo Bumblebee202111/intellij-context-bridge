@@ -3,6 +3,7 @@ package com.github.bumblebee202111.intellijcontextbridge.server
 import com.intellij.openapi.Disposable
 import com.intellij.openapi.components.Service
 import com.intellij.openapi.diagnostic.thisLogger
+import com.intellij.openapi.util.Disposer
 import io.ktor.server.application.*
 import io.ktor.server.cio.*
 import io.ktor.server.engine.*
@@ -13,10 +14,11 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.launch
 import kotlinx.serialization.Serializable
 import java.net.ServerSocket
-import java.util.*
+import java.util.concurrent.ConcurrentHashMap
+import java.util.concurrent.CopyOnWriteArrayList
 import kotlin.time.Duration.Companion.seconds
 
-data class BrowserTab(val id: String, val title: String, val session: DefaultWebSocketServerSession)
+data class BrowserTab(val id: String, val pathname: String, val title: String, val session: DefaultWebSocketServerSession)
 
 @Serializable
 data class SyncCommand(val name: String, val mode: String, val promptBody: String)
@@ -26,11 +28,26 @@ class ContextBridgeServer(private val scope: CoroutineScope) : Disposable {
 
     private var server: EmbeddedServer<CIOApplicationEngine, CIOApplicationEngine.Configuration>? = null
 
-    private val activeTabs = Collections.synchronizedMap(LinkedHashMap<String, BrowserTab>())
+    private val activeTabs = ConcurrentHashMap<String, BrowserTab>()
 
-    var onTabsChanged: ((List<BrowserTab>) -> Unit)? = null
-    var onMessageReceived: ((String) -> Unit)? = null
-    var onHandshakeReceived: ((String) -> Unit)? = null
+    private val tabsListeners = CopyOnWriteArrayList<(List<BrowserTab>) -> Unit>()
+    private val messageListeners = CopyOnWriteArrayList<(String, String) -> Unit>()
+    private val handshakeListeners = CopyOnWriteArrayList<(BrowserTab) -> Unit>()
+
+    fun addTabsListener(parentDisposable: Disposable, listener: (List<BrowserTab>) -> Unit) {
+        tabsListeners.add(listener)
+        Disposer.register(parentDisposable) { tabsListeners.remove(listener) }
+    }
+
+    fun addMessageListener(parentDisposable: Disposable, listener: (String, String) -> Unit) {
+        messageListeners.add(listener)
+        Disposer.register(parentDisposable) { messageListeners.remove(listener) }
+    }
+
+    fun addHandshakeListener(parentDisposable: Disposable, listener: (BrowserTab) -> Unit) {
+        handshakeListeners.add(listener)
+        Disposer.register(parentDisposable) { handshakeListeners.remove(listener) }
+    }
 
     fun getActiveTabs(): List<BrowserTab> = activeTabs.values.toList()
 
@@ -73,16 +90,19 @@ class ContextBridgeServer(private val scope: CoroutineScope) : Disposable {
                                         val text = frame.readText()
 
                                         if (text.startsWith("[HANDSHAKE]")) {
-                                            val parts = text.removePrefix("[HANDSHAKE]").split("|", limit = 2)
-                                            if (parts.size == 2) {
+                                            val parts = text.removePrefix("[HANDSHAKE]").split("|", limit = 3)
+                                            if (parts.size == 3) {
                                                 currentTabId = parts[0]
-                                                activeTabs[parts[0]] = BrowserTab(parts[0], parts[1], this@webSocket)
+                                                val tab = BrowserTab(parts[0], parts[1], parts[2], this@webSocket)
+                                                activeTabs[parts[0]] = tab
                                                 notifyTabsChanged()
 
-                                                onHandshakeReceived?.invoke(parts[0])
+                                                handshakeListeners.forEach { it.invoke(tab) }
                                             }
                                         } else {
-                                            onMessageReceived?.invoke(text)
+                                            currentTabId?.let { tabId ->
+                                                messageListeners.forEach { it.invoke(tabId, text) }
+                                            }
                                         }
                                     }
                                 }
@@ -105,7 +125,8 @@ class ContextBridgeServer(private val scope: CoroutineScope) : Disposable {
     }
 
     private fun notifyTabsChanged() {
-        onTabsChanged?.invoke(getActiveTabs())
+        val tabs = getActiveTabs()
+        tabsListeners.forEach { it.invoke(tabs) }
     }
 
     fun sendToTab(tabId: String, message: String) {

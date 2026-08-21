@@ -18,6 +18,7 @@ import kotlinx.serialization.json.Json
 import java.security.MessageDigest
 import java.util.UUID
 import java.util.concurrent.ConcurrentHashMap
+import java.util.concurrent.CopyOnWriteArrayList
 
 enum class ContextLevel {
     NONE, SKELETON, COMPLETE, MIXED
@@ -46,15 +47,37 @@ data class HashCacheEntry(
 class ContextState(private val project: Project) : PersistentStateComponent<ContextState.State> {
 
     class State {
-        var turns: MutableList<UserTurn> = mutableListOf()
+        var turns: MutableList<UserTurn> = CopyOnWriteArrayList()
+        var boundTabTitle: String = ""
     }
 
     private var myState = State()
+
+    var activeTabId: String? = null
+        private set
+    var activeTabPathname: String? = null
+        private set
 
     override fun getState(): State = myState
 
     override fun loadState(state: State) {
         myState = state
+        // Ensure thread-safety after deserialization
+        if (myState.turns !is CopyOnWriteArrayList) {
+            myState.turns = CopyOnWriteArrayList(myState.turns)
+        }
+    }
+
+    fun bindToTab(id: String, pathname: String, title: String) {
+        activeTabId = id
+        activeTabPathname = pathname
+        myState.boundTabTitle = title
+    }
+
+    fun unbind() {
+        activeTabId = null
+        activeTabPathname = null
+        myState.boundTabTitle = ""
     }
 
     // Thread-safe map for background configuration loading and UI rendering

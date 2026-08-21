@@ -34,7 +34,6 @@ import com.intellij.openapi.editor.event.DocumentListener
 import com.intellij.openapi.fileEditor.FileDocumentManager
 import com.intellij.openapi.fileEditor.FileEditorManager
 import com.intellij.openapi.fileEditor.OpenFileDescriptor
-import com.intellij.openapi.fileTypes.FileTypes
 import com.intellij.openapi.ide.CopyPasteManager
 import com.intellij.openapi.project.Project
 import com.intellij.openapi.project.guessProjectDir
@@ -63,6 +62,7 @@ import java.awt.BorderLayout
 import java.awt.Dimension
 import java.awt.FlowLayout
 import java.awt.datatransfer.StringSelection
+import java.awt.event.ItemEvent
 import java.awt.event.InputEvent
 import java.awt.event.KeyAdapter
 import java.awt.event.KeyEvent
@@ -74,7 +74,7 @@ import javax.swing.*
 import javax.swing.tree.DefaultMutableTreeNode
 import javax.swing.tree.DefaultTreeModel
 
-data class BrowserTabItem(val id: String, val title: String) {
+data class BrowserTabItem(val id: String, val pathname: String, val title: String) {
     override fun toString() = title
 }
 
@@ -86,6 +86,7 @@ class ContextComposerPanel(private val project: Project) {
 
     private var historyIndex = -1
     private var draftPrompt = ""
+
     @Volatile
     private var lastDedupedFiles = emptySet<VirtualFile>()
     private var isConfigLoaded = false
@@ -106,7 +107,11 @@ class ContextComposerPanel(private val project: Project) {
     private val treeModel = DefaultTreeModel(DefaultMutableTreeNode("Loading..."))
     private val tree = Tree(treeModel).apply {
         emptyText.text = "Loading project..."
-        emptyText.appendSecondaryText("Space/Click: Toggle | Enter: Open | Right-Click: Clear", SimpleTextAttributes.GRAYED_ATTRIBUTES, null)
+        emptyText.appendSecondaryText(
+            "Space/Click: Toggle | Enter: Open | Right-Click: Clear",
+            SimpleTextAttributes.GRAYED_ATTRIBUTES,
+            null
+        )
     }
 
     private val suggestionTreeModel = DefaultTreeModel(DefaultMutableTreeNode("Loading..."))
@@ -133,26 +138,27 @@ class ContextComposerPanel(private val project: Project) {
         isVisible = false
     }
 
-    private val commandCompletionProvider = object : TextFieldWithAutoCompletionListProvider<SlashCommand>(emptyList()) {
-        override fun getLookupString(item: SlashCommand): String = "/${item.name}"
-        override fun getTailText(item: SlashCommand): String = " - ${item.description}"
-        override fun getTypeText(item: SlashCommand): String = item.mode.name
-        override fun compare(item1: SlashCommand, item2: SlashCommand): Int = item1.name.compareTo(item2.name)
+    private val commandCompletionProvider =
+        object : TextFieldWithAutoCompletionListProvider<SlashCommand>(emptyList()) {
+            override fun getLookupString(item: SlashCommand): String = "/${item.name}"
+            override fun getTailText(item: SlashCommand): String = " - ${item.description}"
+            override fun getTypeText(item: SlashCommand): String = item.mode.name
+            override fun compare(item1: SlashCommand, item2: SlashCommand): Int = item1.name.compareTo(item2.name)
 
-        override fun createLookupBuilder(item: SlashCommand): LookupElementBuilder {
-            return super.createLookupBuilder(item)
-                .withIcon(AllIcons.Nodes.Function)
-                .withInsertHandler { context, _ ->
-                    val start = context.startOffset
-                    val end = context.tailOffset
-                    context.document.deleteString(start, end)
+            override fun createLookupBuilder(item: SlashCommand): LookupElementBuilder {
+                return super.createLookupBuilder(item)
+                    .withIcon(AllIcons.Nodes.Function)
+                    .withInsertHandler { context, _ ->
+                        val start = context.startOffset
+                        val end = context.tailOffset
+                        context.document.deleteString(start, end)
 
-                    ApplicationManager.getApplication().invokeLater {
-                        applyCommand(item, start)
+                        ApplicationManager.getApplication().invokeLater {
+                            applyCommand(item, start)
+                        }
                     }
-                }
+            }
         }
-    }
 
     private val promptArea = TextFieldWithAutoCompletion(
         project,
@@ -173,9 +179,9 @@ class ContextComposerPanel(private val project: Project) {
     private val copyButton = JButton("Copy", AllIcons.Actions.Copy)
     private val tabComboBox = ComboBox<BrowserTabItem>().apply {
         toolTipText = "Select the target AI Studio tab"
-        preferredSize = Dimension(180, preferredSize.height)
+        preferredSize = Dimension(220, preferredSize.height)
     }
-    private val sendWsButton = JButton("Waiting...").apply {
+    private val sendWsButton = JButton("Select Tab to Send").apply {
         isEnabled = false
         toolTipText = "Send context directly to the selected AI Studio tab"
         putClientProperty("JButton.buttonType", "defaultButton")
@@ -184,10 +190,14 @@ class ContextComposerPanel(private val project: Project) {
 
     val content: JPanel = JPanel(BorderLayout())
 
+    private var isUpdatingTabs = false
+    private val NONE_TAB = BrowserTabItem("", "", "<None / Disconnected>")
+
     init {
         ContextChangeTracker(project, contextState) { refreshUi() }
 
-        tree.cellRenderer = ContextTreeCellRenderer(treeManager::getComputedLevel) { file -> lastDedupedFiles.contains(file) }
+        tree.cellRenderer =
+            ContextTreeCellRenderer(treeManager::getComputedLevel) { file -> lastDedupedFiles.contains(file) }
         suggestionTree.cellRenderer = ContextTreeCellRenderer(treeManager::getComputedLevel) { false }
         requestedTree.cellRenderer = ContextTreeCellRenderer(treeManager::getComputedLevel) { false }
 
@@ -228,39 +238,122 @@ class ContextComposerPanel(private val project: Project) {
 
         content.add(splitPane, BorderLayout.CENTER)
 
+        tabComboBox.addItemListener { event ->
+            if (isUpdatingTabs) return@addItemListener
+            if (event.stateChange == ItemEvent.SELECTED) {
+                val selected = event.item as? BrowserTabItem ?: return@addItemListener
+                changeBinding(selected.id, selected.pathname, selected.title)
+            }
+        }
+
         val updateTabsUI = { tabs: List<BrowserTab> ->
             SwingUtilities.invokeLater {
-                val currentSelection = tabComboBox.selectedItem as? BrowserTabItem
-                tabComboBox.removeAllItems()
-                tabs.forEach { tabComboBox.addItem(BrowserTabItem(it.id, it.title)) }
+                isUpdatingTabs = true
+                try {
+                    val previousSelectionId = contextState.activeTabId
+                    tabComboBox.removeAllItems()
+                    tabComboBox.addItem(NONE_TAB)
 
-                if (currentSelection != null && tabs.any { it.id == currentSelection.id }) {
-                    tabComboBox.selectedItem = tabs.first { it.id == currentSelection.id }.let { BrowserTabItem(it.id, it.title) }
-                } else if (tabComboBox.itemCount > 0) {
-                    tabComboBox.selectedIndex = 0
-                }
+                    var matchedItem: BrowserTabItem? = null
+                    tabs.forEach {
+                        val item = BrowserTabItem(it.id, it.pathname, it.title)
+                        tabComboBox.addItem(item)
+                        if (it.id == previousSelectionId) {
+                            matchedItem = item
+                        }
+                    }
 
-                if (tabComboBox.itemCount > 0) {
-                    sendWsButton.text = "Send to AI Studio"
-                    if (!loadingIcon.isVisible) sendWsButton.isEnabled = true
-                } else {
-                    sendWsButton.text = "Waiting..."
-                    sendWsButton.isEnabled = false
+                    if (matchedItem != null) {
+                        tabComboBox.selectedItem = matchedItem
+                    } else if (contextState.activeTabId != null) {
+                        val state = contextState.getState()
+                        val disconnectedItem = BrowserTabItem(contextState.activeTabId!!, contextState.activeTabPathname ?: "", "${state.boundTabTitle} (Disconnected)")
+                        tabComboBox.addItem(disconnectedItem)
+                        tabComboBox.selectedItem = disconnectedItem
+                    } else {
+                        tabComboBox.selectedItem = NONE_TAB
+                    }
+                    updateSendButtonState()
+                } finally {
+                    isUpdatingTabs = false
                 }
             }
         }
 
-        server.onTabsChanged = updateTabsUI
+        server.addTabsListener(project) { tabs ->
+            val state = contextState.getState()
+            // Rule 3: Browser Refresh Recovery
+            if (contextState.activeTabId != null && tabs.none { it.id == contextState.activeTabId }) {
+                val match = tabs.find { it.title == state.boundTabTitle }
+                if (match != null) {
+                    changeBinding(match.id, match.pathname, match.title)
+                }
+            }
+            updateTabsUI(tabs)
+        }
+
         updateTabsUI(server.getActiveTabs())
 
-        server.onHandshakeReceived = { tabId ->
+        server.addHandshakeListener(project) { tab ->
+            val state = contextState.getState()
+
+            if (tab.title == state.boundTabTitle) {
+                // Rule 1: Trust the title. Silently update transient ID/Pathname if they changed.
+                if (tab.id != contextState.activeTabId || tab.pathname != contextState.activeTabPathname) {
+                    changeBinding(tab.id, tab.pathname, tab.title)
+                    SwingUtilities.invokeLater { updateTabsUI(server.getActiveTabs()) }
+                }
+            } else if (tab.id == contextState.activeTabId) {
+                if (tab.pathname == contextState.activeTabPathname) {
+                    // Rule 2: Rename / First Gen (Pathname match, title changed)
+                    changeBinding(tab.id, tab.pathname, tab.title)
+                    SwingUtilities.invokeLater { updateTabsUI(server.getActiveTabs()) }
+                } else {
+                    // Rule 3: Navigation away (Pathname changed, title changed)
+                    changeBinding(null, "", "")
+                    SwingUtilities.invokeLater { updateTabsUI(server.getActiveTabs()) }
+                }
+            }
+
             val commands = project.service<CommandRegistryService>().getCommands()
             val dtos = commands.map { SyncCommand(it.name, it.mode.name, it.promptBody) }
             val json = Json.encodeToString(dtos)
-            server.sendToTab(tabId, "[COMMANDS]$json")
+            server.sendToTab(tab.id, "[COMMANDS]$json")
         }
 
         refreshUi()
+    }
+
+    private fun changeBinding(newId: String?, newPathname: String, newTitle: String) {
+        val oldId = contextState.activeTabId
+        if (oldId != null && oldId != newId) {
+            server.sendToTab(oldId, "[UNBOUND]")
+        }
+        if (newId.isNullOrEmpty()) {
+            contextState.unbind()
+        } else {
+            contextState.bindToTab(newId, newPathname, newTitle)
+            if (oldId != newId) {
+                server.sendToTab(newId, "[BOUND]|${project.name}")
+            }
+        }
+        updateSendButtonState()
+    }
+
+    private fun updateSendButtonState() {
+        if (contextState.activeTabId == null) {
+            sendWsButton.text = "Select Tab to Send"
+            sendWsButton.isEnabled = false
+        } else {
+            val isDisconnected = tabComboBox.selectedItem?.toString()?.endsWith("(Disconnected)") == true
+            if (isDisconnected) {
+                sendWsButton.text = "Disconnected"
+                sendWsButton.isEnabled = false
+            } else {
+                sendWsButton.text = "Send to AI Studio"
+                sendWsButton.isEnabled = !loadingIcon.isVisible
+            }
+        }
     }
 
     fun handleReadFileToolCall(paths: List<String>, reason: String) {
@@ -321,17 +414,18 @@ class ContextComposerPanel(private val project: Project) {
                 }
             }
         }
-        .finishOnUiThread(ModalityState.nonModal()) {
-            refreshUi()
-        }
-        .submit(AppExecutorUtil.getAppExecutorService())
+            .finishOnUiThread(ModalityState.nonModal()) {
+                refreshUi()
+            }
+            .submit(AppExecutorUtil.getAppExecutorService())
     }
 
     private fun setupTopToolbar(): JPanel {
         val topToolbar = JPanel(BorderLayout(5, 0)).apply { border = JBUI.Borders.empty(5) }
 
         val actionGroup = DefaultActionGroup().apply {
-            add(object : AnAction("Add Active File", "Add currently opened editor file to context", AllIcons.General.Add) {
+            add(object :
+                AnAction("Add Active File", "Add currently opened editor file to context", AllIcons.General.Add) {
                 override fun actionPerformed(e: AnActionEvent) {
                     val editor = FileEditorManager.getInstance(project).selectedTextEditor
                     val file = editor?.document?.let { FileDocumentManager.getInstance().getFile(it) }
@@ -347,7 +441,11 @@ class ContextComposerPanel(private val project: Project) {
                 }
             })
             addSeparator()
-            add(object : ToggleAction("Show Selected Context Only", "Filter to show only selected files", AllIcons.General.Filter) {
+            add(object : ToggleAction(
+                "Show Selected Context Only",
+                "Filter to show only selected files",
+                AllIcons.General.Filter
+            ) {
                 override fun isSelected(e: AnActionEvent): Boolean = showSelectedOnly
                 override fun setSelected(e: AnActionEvent, state: Boolean) {
                     showSelectedOnly = state
@@ -356,9 +454,10 @@ class ContextComposerPanel(private val project: Project) {
             })
         }
 
-        val nativeToolbar = ActionManager.getInstance().createActionToolbar("ContextComposerTopToolbar", actionGroup, true).apply {
-            targetComponent = tree
-        }
+        val nativeToolbar =
+            ActionManager.getInstance().createActionToolbar("ContextComposerTopToolbar", actionGroup, true).apply {
+                targetComponent = tree
+            }
 
         topToolbar.add(nativeToolbar.component, BorderLayout.WEST)
         return topToolbar
@@ -432,6 +531,7 @@ class ContextComposerPanel(private val project: Project) {
                         refreshUi()
                     }
                 }
+
                 override fun update(e: AnActionEvent) {
                     val lastTurn = contextState.getLastTurn()
                     e.presentation.isEnabled = lastTurn != null
@@ -444,19 +544,23 @@ class ContextComposerPanel(private val project: Project) {
                         e.presentation.description = "No previous sends to undo"
                     }
                 }
+
                 override fun getActionUpdateThread() = ActionUpdateThread.BGT
             })
         }
-        val bottomToolbar = ActionManager.getInstance().createActionToolbar("ContextComposerBottomToolbar", bottomActionGroup, true).apply {
-            targetComponent = promptArea
-        }
+        val bottomToolbar =
+            ActionManager.getInstance().createActionToolbar("ContextComposerBottomToolbar", bottomActionGroup, true)
+                .apply {
+                    targetComponent = promptArea
+                }
 
         copyButton.addActionListener { executePayloadAction(isWsSend = false) }
         sendWsButton.addActionListener {
             val selectedTab = tabComboBox.selectedItem as? BrowserTabItem ?: return@addActionListener
-            executePayloadAction(isWsSend = true, selectedTab = selectedTab)
+            if (selectedTab.id.isNotEmpty()) {
+                executePayloadAction(isWsSend = true, selectedTab = selectedTab)
+            }
         }
-
         val actionButtonPanel = JPanel(BorderLayout(5, 0)).apply {
             border = JBUI.Borders.emptyTop(5)
             add(bottomToolbar.component, BorderLayout.WEST)
@@ -488,7 +592,14 @@ class ContextComposerPanel(private val project: Project) {
                     promptArea.text = history[historyIndex]
                 }
             }
-        }.registerCustomShortcutSet(CustomShortcutSet(KeyStroke.getKeyStroke(KeyEvent.VK_UP, InputEvent.CTRL_DOWN_MASK)), promptArea)
+        }.registerCustomShortcutSet(
+            CustomShortcutSet(
+                KeyStroke.getKeyStroke(
+                    KeyEvent.VK_UP,
+                    InputEvent.CTRL_DOWN_MASK
+                )
+            ), promptArea
+        )
 
         object : AnAction() {
             override fun actionPerformed(e: AnActionEvent) {
@@ -503,7 +614,14 @@ class ContextComposerPanel(private val project: Project) {
                     }
                 }
             }
-        }.registerCustomShortcutSet(CustomShortcutSet(KeyStroke.getKeyStroke(KeyEvent.VK_DOWN, InputEvent.CTRL_DOWN_MASK)), promptArea)
+        }.registerCustomShortcutSet(
+            CustomShortcutSet(
+                KeyStroke.getKeyStroke(
+                    KeyEvent.VK_DOWN,
+                    InputEvent.CTRL_DOWN_MASK
+                )
+            ), promptArea
+        )
     }
 
     private fun executePayloadAction(isWsSend: Boolean, selectedTab: BrowserTabItem? = null) {
@@ -520,40 +638,40 @@ class ContextComposerPanel(private val project: Project) {
         ReadAction.nonBlocking<AiPayload> {
             PayloadGenerator.generatePayload(project, contextState, promptText, intent)
         }
-        .finishOnUiThread(ModalityState.nonModal()) { payloadObj ->
-            payloadObj.turn?.let { contextState.addTurn(it) }
-            refreshUi()
+            .finishOnUiThread(ModalityState.nonModal()) { payloadObj ->
+                payloadObj.turn?.let { contextState.addTurn(it) }
+                refreshUi()
 
-            if (isWsSend && selectedTab != null) {
-                val jsonString = Json.encodeToString(payloadObj)
-                server.sendToTab(selectedTab.id, jsonString)
+                if (isWsSend && selectedTab != null) {
+                    val jsonString = Json.encodeToString(payloadObj)
+                    server.sendToTab(selectedTab.id, jsonString)
 
-                val originalText = sendWsButton.text
-                sendWsButton.text = "Sent!"
-                Timer(1500) { sendWsButton.text = originalText }.apply { isRepeats = false }.start()
-            } else {
-                CopyPasteManager.getInstance().setContents(StringSelection(payloadObj.text))
-                if (payloadObj.attachments.isNotEmpty()) {
-                    Messages.showWarningDialog(
-                        "You copied ${payloadObj.attachments.size} media file(s). They cannot be copied to the clipboard.",
-                        "Media Files Skipped"
-                    )
+                    val originalText = sendWsButton.text
+                    sendWsButton.text = "Sent!"
+                    Timer(1500) { sendWsButton.text = originalText }.apply { isRepeats = false }.start()
+                } else {
+                    CopyPasteManager.getInstance().setContents(StringSelection(payloadObj.text))
+                    if (payloadObj.attachments.isNotEmpty()) {
+                        Messages.showWarningDialog(
+                            "You copied ${payloadObj.attachments.size} media file(s). They cannot be copied to the clipboard.",
+                            "Media Files Skipped"
+                        )
+                    }
+                    val originalText = copyButton.text
+                    copyButton.text = "Copied!"
+                    Timer(1500) { copyButton.text = originalText }.apply { isRepeats = false }.start()
                 }
-                val originalText = copyButton.text
-                copyButton.text = "Copied!"
-                Timer(1500) { copyButton.text = originalText }.apply { isRepeats = false }.start()
-            }
 
-            promptArea.text = ""
-            setGeneratingState(false)
-        }
-        .submit(AppExecutorUtil.getAppExecutorService())
+                promptArea.text = ""
+                setGeneratingState(false)
+            }
+            .submit(AppExecutorUtil.getAppExecutorService())
     }
 
     private fun setGeneratingState(isGenerating: Boolean) {
         loadingIcon.isVisible = isGenerating
         copyButton.isEnabled = !isGenerating
-        sendWsButton.isEnabled = !isGenerating && tabComboBox.itemCount > 0
+        updateSendButtonState()
     }
 
     private fun createTreeMouseListener(targetTree: Tree): MouseAdapter {
@@ -612,22 +730,26 @@ class ContextComposerPanel(private val project: Project) {
                         KeyEvent.VK_ENTER -> {
                             if (file != null && !file.isDirectory) OpenFileDescriptor(project, file).navigate(true)
                         }
+
                         KeyEvent.VK_SPACE -> {
                             val nextLevel = treeManager.getNextToggleLevel(node, file)
                             treeManager.applyStateToNode(node, nextLevel)
                             treeManager.collapseDescendants(targetTree, node, path)
                             stateChanged = true
                         }
+
                         KeyEvent.VK_S -> {
                             treeManager.applyStateToNode(node, ContextLevel.SKELETON)
                             treeManager.collapseDescendants(targetTree, node, path)
                             stateChanged = true
                         }
+
                         KeyEvent.VK_F -> {
                             treeManager.applyStateToNode(node, ContextLevel.COMPLETE)
                             treeManager.collapseDescendants(targetTree, node, path)
                             stateChanged = true
                         }
+
                         KeyEvent.VK_BACK_SPACE, KeyEvent.VK_DELETE -> {
                             treeManager.applyStateToNode(node, ContextLevel.NONE)
                             treeManager.collapseDescendants(targetTree, node, path)
@@ -697,7 +819,9 @@ class ContextComposerPanel(private val project: Project) {
 
             val mainRootNode = readAction {
                 if (projectDir != null) {
-                    treeManager.buildFileTree(projectDir, showSelectedOnly, isRoot = true) ?: DefaultMutableTreeNode(NodeData(projectDir, "No Project Root"))
+                    treeManager.buildFileTree(projectDir, showSelectedOnly, isRoot = true) ?: DefaultMutableTreeNode(
+                        NodeData(projectDir, "No Project Root")
+                    )
                 } else {
                     DefaultMutableTreeNode("No Project Root")
                 }
@@ -705,7 +829,8 @@ class ContextComposerPanel(private val project: Project) {
 
             val suggestionRootNode = readAction {
                 if (projectDir != null && suggestions.isNotEmpty()) {
-                    treeManager.buildFileTree(projectDir, false, allowedLeaves = suggestions, isRoot = true) ?: DefaultMutableTreeNode("No Suggestions")
+                    treeManager.buildFileTree(projectDir, false, allowedLeaves = suggestions, isRoot = true)
+                        ?: DefaultMutableTreeNode("No Suggestions")
                 } else {
                     DefaultMutableTreeNode("No Suggestions")
                 }
@@ -713,7 +838,8 @@ class ContextComposerPanel(private val project: Project) {
 
             val requestedRootNode = readAction {
                 if (projectDir != null && pendingAiRequests.isNotEmpty()) {
-                    val node = treeManager.buildFileTree(projectDir, false, allowedLeaves = pendingAiRequests, isRoot = true)
+                    val node =
+                        treeManager.buildFileTree(projectDir, false, allowedLeaves = pendingAiRequests, isRoot = true)
                     if (node != null) {
                         node.userObject = NodeData(null, "[AI Requested Files]")
                         node

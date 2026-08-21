@@ -19,6 +19,8 @@
     win.__cbIntercepted = false;
     win.__cbCurrentMode = 'ASK';
     win.__cbCommands = [];
+    win.__cbIsBound = false;
+    win.__cbProjectName = 'IntelliJ';
 
     const PORTS = Array.from({length: 10}, (_, i) => 37373 + i);
     const activeSockets = new Map();
@@ -53,16 +55,40 @@
     }
 
     function updateStatusPill() {
-        let connectedCount = 0;
-        activeSockets.forEach(ws => {
-            if (ws.readyState === WebSocket.OPEN) connectedCount++;
-        });
+        let connected = Array.from(activeSockets.values()).some(ws => ws.readyState === WebSocket.OPEN);
 
-        if (connectedCount > 0) {
-            showToast(`🔗 Connected to ${connectedCount} IDE(s)`, '#4CAF50', 3000);
+        if (connected && win.__cbIsBound) {
+            showToast(`🎯 Bound to ${win.__cbProjectName}`, '#4CAF50', 0);
+        } else if (connected && !win.__cbIsBound) {
+            showToast('🔗 Connected (Standby)', '#757575', 0);
         } else {
             showToast('🔌 IDE Disconnected', '#F44336', 0);
         }
+    }
+
+    function updateUiElements() {
+        const toggleContainer = document.getElementById('cb-mode-toggle');
+        if (toggleContainer) {
+            toggleContainer.style.opacity = win.__cbIsBound ? '1' : '0.5';
+            toggleContainer.style.pointerEvents = win.__cbIsBound ? 'auto' : 'none';
+        }
+
+        const turns = document.querySelectorAll('.cb-send-to-ide-btn');
+        turns.forEach(btn => {
+            if (win.__cbIsBound) {
+                btn.textContent = `✨ Send to ${win.__cbProjectName}`;
+                btn.style.color = '#4CAF50';
+                btn.style.borderColor = '#4CAF50';
+                btn.style.opacity = '1';
+                btn.style.pointerEvents = 'auto';
+            } else {
+                btn.textContent = '🚫 IDE Not Bound';
+                btn.style.color = '#757575';
+                btn.style.borderColor = '#757575';
+                btn.style.opacity = '0.7';
+                btn.style.pointerEvents = 'none';
+            }
+        });
     }
 
     function getChatTitle() {
@@ -72,6 +98,8 @@
     }
 
     function sendToIde(text) {
+        if (!win.__cbIsBound) return;
+
         if (lastActivePort && activeSockets.has(lastActivePort) && activeSockets.get(lastActivePort).readyState === WebSocket.OPEN) {
             activeSockets.get(lastActivePort).send(text);
             win.__cbIntercepted = true;
@@ -105,6 +133,7 @@
 
         function maintainConnections() {
             const currentTitle = getChatTitle();
+            const currentPathname = window.location.pathname;
             PORTS.forEach(port => {
                 if (!activeSockets.has(port)) {
                     try {
@@ -113,11 +142,28 @@
                         activeSockets.set(port, ws);
 
                         ws.onopen = () => {
-                            ws.send(`[HANDSHAKE]${tabId}|${currentTitle}`);
+                            ws.send(`[HANDSHAKE]${tabId}|${currentPathname}|${currentTitle}`);
                             updateStatusPill();
                         };
 
                         ws.onmessage = (event) => {
+                            if (event.data.startsWith('[BOUND]')) {
+                                win.__cbIsBound = true;
+                                const parts = event.data.split('|', 2);
+                                if (parts.length > 1 && parts[1].trim() !== '') {
+                                    win.__cbProjectName = parts[1].trim();
+                                }
+                                updateStatusPill();
+                                updateUiElements();
+                                return;
+                            }
+                            if (event.data === '[UNBOUND]') {
+                                win.__cbIsBound = false;
+                                win.__cbProjectName = 'IntelliJ';
+                                updateStatusPill();
+                                updateUiElements();
+                                return;
+                            }
                             if (event.data.startsWith('[COMMANDS]')) {
                                 try {
                                     win.__cbCommands = JSON.parse(event.data.substring(10));
@@ -146,13 +192,16 @@
         maintainConnections();
 
         let lastTitle = "";
+        let lastPathname = "";
         setInterval(() => {
             const currentTitle = getChatTitle();
-            if (currentTitle !== lastTitle) {
+            const currentPathname = window.location.pathname;
+            if (currentTitle !== lastTitle || currentPathname !== lastPathname) {
                 lastTitle = currentTitle;
+                lastPathname = currentPathname;
                 activeSockets.forEach(ws => {
                     if (ws.readyState === WebSocket.OPEN) {
-                        ws.send(`[HANDSHAKE]${tabId}|${currentTitle}`);
+                        ws.send(`[HANDSHAKE]${tabId}|${currentPathname}|${currentTitle}`);
                     }
                 });
             }
@@ -174,15 +223,19 @@
 
                 const sendBtn = document.createElement('button');
                 sendBtn.className = 'cb-send-to-ide-btn';
-                sendBtn.textContent = '✨ Send to IDE';
+                sendBtn.textContent = win.__cbIsBound ? `✨ Send to ${win.__cbProjectName}` : '🚫 IDE Not Bound';
                 sendBtn.style.cssText = `
-                    background: transparent; color: #4CAF50; border: 1px solid #4CAF50; border-radius: 16px;
+                    background: transparent; border-radius: 16px;
                     padding: 0 12px; margin-left: 8px; font-size: 13px; font-weight: 500; font-family: inherit;
                     cursor: pointer; display: inline-flex; align-items: center; justify-content: center;
                     height: 32px; transition: all 0.2s ease; white-space: nowrap; box-sizing: border-box;
+                    color: ${win.__cbIsBound ? '#4CAF50' : '#757575'};
+                    border: 1px solid ${win.__cbIsBound ? '#4CAF50' : '#757575'};
+                    opacity: ${win.__cbIsBound ? '1' : '0.7'};
+                    pointer-events: ${win.__cbIsBound ? 'auto' : 'none'};
                 `;
 
-                sendBtn.onmouseover = () => { sendBtn.style.background = 'rgba(76, 175, 80, 0.1)'; };
+                sendBtn.onmouseover = () => { if (win.__cbIsBound) sendBtn.style.background = 'rgba(76, 175, 80, 0.1)'; };
                 sendBtn.onmouseout = () => { sendBtn.style.background = 'transparent'; };
 
                 sendBtn.addEventListener('click', (e) => {
@@ -235,6 +288,8 @@
             toggleContainer.style.cssText = `
                 display: flex; gap: 8px; margin-bottom: 8px; padding-left: 8px;
                 font-family: Inter, sans-serif; font-size: 13px; position: relative;
+                opacity: ${win.__cbIsBound ? '1' : '0.5'};
+                pointer-events: ${win.__cbIsBound ? 'auto' : 'none'};
             `;
 
             const askBtn = document.createElement('button');
