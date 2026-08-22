@@ -11,6 +11,9 @@
 - Intent Architecture (Unified Prompt & XML Micro-anchoring)
 - Prompt Adherence (Strict Ask vs. Edit boundaries & refined Skeleton Patch Protocol)
 - Slash Commands & Shadow Registry
+- Multi-Project Binding & Memory Safety (Observer Pattern & UI-bound Disposables)
+- Zero-Click Sync & Automated Native UI Extraction
+- Ephemeral Workflows (Native AI Commit Generation & State Machines)
 
 ## Upcoming Focus
 **Engineering Context (Git & Diagnostics)**

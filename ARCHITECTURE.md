@@ -24,7 +24,7 @@ The plugin consists of four decoupled layers. Implementation details for each la
 ## 3. State & Memory Manager
 * **Session Tracker:** Maintains the lifecycle of the conversation using a persistent timeline of user turns, enabling true undo capabilities and deep auditing.
 * **Project Configurator:** Parses local configuration files (e.g., `.aicontext`) on load to automatically route specific files and directories to their preferred context states. Defaults to restoring the exact context from the last session turn if one exists.
-* **State Engine:** Tracks context states dynamically via a fast, thread-safe in-memory cache, aggregating directory states bottom-up based on their children.
+* **State Engine:** Tracks context states dynamically via a fast, thread-safe in-memory cache, aggregating directory states bottom-up based on their children. Strictly ties event listeners to UI-bound disposables to prevent memory leaks.
 * **Universal Deduplication Engine:**
   * Hashes the extracted text or metadata of a file, utilizing native modification stamps for instantaneous cache retrieval.
   * If a file is requested again at the exact same context state and its hash is unchanged, it is typically omitted from the payload to prevent context bloat.
@@ -33,9 +33,9 @@ The plugin consists of four decoupled layers. Implementation details for each la
 ## 4. Transport & Application Layer
 * **Payload Generator:** Compiles extracted context, unified system instructions, and user prompts into a structured JSON object. Files are included in their entirety by default, while files reduced to their AST signatures are explicitly marked with a `(Skeleton)` tag in the markdown headers. The user's intent (Ask vs. Edit) is explicitly anchored at the end of the context using a `<user_prompt mode="...">` wrapper to maximize LLM adherence.
 * **Bridge Mechanism:**
-  * *Server:* A local WebSocket server embedded in the IDE, utilizing dynamic port binding to support multiple concurrent IDE instances (Mesh Networking). Broadcasts available Slash Commands to connected clients.
-  * *Client:* A browser userscript that maintains connections to active IDEs. It automates the modern AI Studio web UI (handling system instruction cards, model selectors, and drag-and-drop attachments), syncs Slash Commands via text-expansion, safely intercepts Capture-Phase shortcuts, and routes payloads.
-* **Tool Call & Diff Manager:** Parses incoming Markdown responses from the AI. It extracts XML-based tool calls (e.g., `read_file`) to route back to the UI for manual approval, while matching code blocks to local file paths to open IntelliJ's native side-by-side `DiffRequest` window for user review.
+  * *Server:* A local WebSocket server embedded in the IDE, utilizing dynamic port binding to support multiple concurrent IDE instances (Mesh Networking). Utilizes a hybrid bi-directional binding system (trusting chat titles persistently, pathnames transiently) to route payloads accurately across multiple projects.
+  * *Client:* A browser userscript that maintains connections to active IDEs. It automates the modern AI Studio web UI (handling system instruction cards, model selectors, and drag-and-drop attachments), syncs Slash Commands via text-expansion, and safely intercepts Capture-Phase shortcuts. It utilizes transient state machines for ephemeral tasks (auto-configuring models, generating, and scrubbing history).
+* **Tool Call & Diff Manager:** Relies on automated native UI actions (e.g., "Copy as Markdown") to reliably extract sanitized AI responses. Parses incoming Markdown to extract XML-based tool calls (e.g., `read_file`) to route back to the UI for manual approval, while matching code blocks to local file paths to open IntelliJ's native side-by-side `DiffRequest` window.
 
 ## 5. Command Engine
 * **Slash Commands:** A macro system for workflow state transitions (e.g., `/plan`, `/review`).

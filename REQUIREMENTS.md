@@ -13,12 +13,14 @@ The system MUST support two primary context states for files:
 The system MUST track the state of the conversation to prevent context bloat and maintain synchronization with the LLM.
 * *Turn Tracking:* State is maintained as a persistent timeline of user turns, allowing users to undo or delete specific payloads if they revert a turn in the web UI.
 * *Deduplication:* The system MUST hash the extracted contents of requested files. If a file is requested at the same context state in a subsequent turn and its extracted hash is unchanged, the system MUST omit it entirely from the new payload.
+* *Ephemeral Tasks:* Specialized workflows (e.g., background commit generation) MUST execute invisibly and explicitly bypass session history to prevent context bloat and temporal confusion.
 * *Constraint:* The system MUST NOT generate chatty placeholders (e.g., `[File unchanged]`) in the payload for deduplicated files.
 
 ## 3. System Instructions & Intent Modes
 The system MUST separate static behavioral directives from the dynamic project context.
 * *Intent Modes:* The system MUST support distinct interaction modes (e.g., "Ask" for read-only analysis and "Edit" for code generation). This MUST be enforced via unified system instructions and XML micro-anchoring (e.g., `<user_prompt mode="...">`) to ensure strong LLM adherence.
 * *Edit Constraints:* In generation modes, the AI MUST be instructed to output code using a "Skeleton Patch" format (where unchanged structural blocks like signatures or tags are retained as diff anchors) and MUST format code blocks with exact file path headers to facilitate IDE parsing.
+* *Extraction Constraints:* The system MUST rely on automated native UI actions (e.g., simulated clipboard copy) for extraction rather than brittle DOM parsing to ensure LLM internal thoughts or raw HTML nodes are safely stripped.
 * *Context Awareness & Tool Calling:* The AI MUST be provided with an XML-based tool schema (e.g., `read_file`) to request the complete implementation of Skeleton files. The system MUST intercept these tool calls and present them in the UI for manual user approval.
 
 ## 4. Proactive Context Suggestions
@@ -34,7 +36,7 @@ The plugin MUST support reading local configuration directories (e.g., `.context
 * *Command Shadowing:* Defines project-specific Slash Commands (`commands/*.md`) via Markdown with YAML frontmatter, allowing local macros to seamlessly shadow/override built-in plugin defaults.
 
 ## 6. Diff-Based Application
-The plugin MUST NOT silently overwrite local files. All incoming code from the AI MUST be routed through a visual side-by-side diff interface before being applied to the disk.
+The plugin MUST NOT silently overwrite local files. All incoming code from the AI MUST be routed through a visual side-by-side diff interface before being applied to the disk, unless explicitly requested via a native IDE integration (e.g., Commit Message auto-fill).
 
 ## 7. Non-Goals (Out of Scope)
 * Direct integration with OpenAI/Anthropic/Google REST APIs.

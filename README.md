@@ -5,7 +5,7 @@
 > * **No Pre-built Binaries:** You must build the plugin from source yourself.
 > * **No Support:** You may open issues for discussion or to report UI breaks, but I do not guarantee updates or bug fixes.
 > * **No Pull Requests:** I am not accepting PRs at this time.
-> * **Web UI Automation:** The companion userscript interacts with Google AI Studio by automating the web UI (DOM manipulation) rather than using an official API. This means it will naturally break whenever Google updates their frontend layout. Use and adapt it at your discretion.
+> * **Web UI Automation:** The companion userscript interacts with Google AI Studio by automating the web UI. To ensure resilience, it relies on triggering native UI actions (like the "Copy" button) rather than brittle DOM scraping, but it will still naturally require updates whenever Google significantly alters their frontend layout. Use and adapt it at your discretion.
 
 ## Overview
 A native IntelliJ/Android Studio plugin designed to connect the IDE with web-based LLM playgrounds (such as Google AI Studio). Inspired by the workflow of [CodeWebChat](https://github.com/robertpiosik/CodeWebChat), it acts as an optimized, stateful context manager. It compiles project context into LLM-friendly payloads and synchronizes them via the clipboard or a local WebSocket server, providing an alternative to direct API integrations.
@@ -18,10 +18,11 @@ A native IntelliJ/Android Studio plugin designed to connect the IDE with web-bas
 3. **Proactive Context Suggestions:** A lightweight, background engine intelligently suggests relevant files based on Git changes, active editor tabs, prompt mentions, and deep AST graph traversal, actively suppressing files already cached in the AI's memory.
 4. **Intent-Based Interaction:** Differentiates between read-only analysis ("Ask") and code generation ("Edit") using a unified system prompt combined with XML micro-anchoring (`<user_prompt mode="...">`) to ensure strict LLM adherence.
 5. **Slash Commands:** Provides modern macro workflows (e.g., `/plan`, `/review`) via Markdown frontmatter files, enabling fast state transitions and prompt injection without autonomous execution. Supports project-level shadowing.
-6. **Local Network Bridge:** Operates via a companion browser userscript that communicates with the IDE over a local WebSocket, securely transferring prompts, syncing commands, and retrieving responses.
+6. **Local Network Bridge:** Operates via a companion browser userscript that communicates with the IDE over a local WebSocket, securely transferring prompts, syncing commands, and retrieving responses. Features a robust bi-directional binding system to support multiple concurrent IDE projects.
 7. **State & Deduplication:** Tracks conversation turns and file states, automatically omitting unchanged files from subsequent payloads to prevent context window bloat.
 8. **Native IDE Feel:** Built using standard IntelliJ UI components to ensure keyboard shortcuts, editor behaviors, and layout scaling feel identical to native IDE features, backed by yielding Coroutines to prevent typing freezes.
 9. **Diagnostic Awareness:** (Planned) Supports injecting active IDE compiler errors and warnings directly into the payload, providing deterministic constraints for the AI to resolve.
+10. **Ephemeral Workflows:** Seamlessly handles background tasks (like AI Commit Generation) by transiently overriding LLM settings, extracting the result, and automatically scrubbing the chat history to keep the context window pristine.
 
 ## Development Setup Requirements
 * IntelliJ Platform Plugin Template (Kotlin)
