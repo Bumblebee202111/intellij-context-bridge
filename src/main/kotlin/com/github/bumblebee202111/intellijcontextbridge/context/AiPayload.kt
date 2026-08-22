@@ -16,7 +16,8 @@ data class AiAttachment(
 data class AiPayload(
     val systemInstructions: String,
     val text: String,
-    val attachments: List<AiAttachment>
+    val attachments: List<AiAttachment>,
+    val isCommit: Boolean = false
 ) {
     @Transient
     var dedupedFiles: Set<VirtualFile> = emptySet()

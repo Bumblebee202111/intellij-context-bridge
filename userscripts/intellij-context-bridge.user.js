@@ -16,7 +16,7 @@
     const win = unsafeWindow || window;
 
     win.__cbActive = false;
-    win.__cbIntercepted = false;
+    win.__cbInterceptedText = null;
     win.__cbCurrentMode = 'ASK';
     win.__cbCommands = [];
     win.__cbIsBound = false;
@@ -29,6 +29,32 @@
 
     let statusPill;
     let toastTimeout;
+
+    // --- CLIPBOARD INTERCEPTORS ---
+
+    const origExec = win.document.execCommand;
+    win.document.execCommand = function(command, showUI, value) {
+        if (win.__cbActive && command.toLowerCase() === 'copy') {
+            const activeEl = win.document.activeElement;
+            let text = activeEl && (activeEl.tagName === 'TEXTAREA' || activeEl.tagName === 'INPUT')
+                ? activeEl.value.substring(activeEl.selectionStart, activeEl.selectionEnd)
+                : win.getSelection().toString();
+            if (text) win.__cbInterceptedText = text;
+        }
+        return origExec.apply(this, arguments);
+    };
+
+    if (win.navigator && win.navigator.clipboard) {
+        const origWriteText = win.navigator.clipboard.writeText.bind(win.navigator.clipboard);
+        win.navigator.clipboard.writeText = async function(text) {
+            if (win.__cbActive) {
+                win.__cbInterceptedText = text;
+            }
+            return origWriteText(text);
+        };
+    }
+
+    // --- UI HELPERS ---
 
     function initStatusPill() {
         statusPill = document.createElement('div');
@@ -102,30 +128,16 @@
 
         if (lastActivePort && activeSockets.has(lastActivePort) && activeSockets.get(lastActivePort).readyState === WebSocket.OPEN) {
             activeSockets.get(lastActivePort).send(text);
-            win.__cbIntercepted = true;
         } else {
-            let sent = false;
             activeSockets.forEach(ws => {
                 if (ws.readyState === WebSocket.OPEN) {
                     ws.send(text);
-                    sent = true;
                 }
             });
-            win.__cbIntercepted = sent;
         }
     }
 
-    const origExec = win.document.execCommand;
-    win.document.execCommand = function(command, showUI, value) {
-        if (win.__cbActive && command.toLowerCase() === 'copy') {
-            const activeEl = win.document.activeElement;
-            let text = activeEl && (activeEl.tagName === 'TEXTAREA' || activeEl.tagName === 'INPUT')
-                ? activeEl.value.substring(activeEl.selectionStart, activeEl.selectionEnd)
-                : win.getSelection().toString();
-            if (text) sendToIde(text);
-        }
-        return origExec.apply(this, arguments);
-    };
+    // --- MAIN INITIALIZATION ---
 
     document.addEventListener('DOMContentLoaded', () => {
         let isProcessing = false;
@@ -207,6 +219,39 @@
             }
         }, 2000);
 
+        // --- NATIVE EXTRACTION ENGINE ---
+
+        async function extractViaNativeCopy(turnElement) {
+            const menuBtn = turnElement.querySelector('button[aria-label="Open options"]') || turnElement.querySelector('ms-chat-turn-options button');
+            if (!menuBtn) return null;
+            menuBtn.click();
+
+            const copyIcon = await waitForElement('.cdk-overlay-container .copy-markdown-button', 3000);
+            if (!copyIcon) {
+                document.body.click();
+                return null;
+            }
+
+            const copyBtn = copyIcon.closest('button');
+
+            win.__cbActive = true;
+            win.__cbInterceptedText = null;
+
+            copyBtn.click();
+
+            // Wait for clipboard API / execCommand to fire
+            await new Promise(r => setTimeout(r, 300));
+            win.__cbActive = false;
+
+            const backdrop = document.querySelector('.cdk-overlay-backdrop');
+            if (backdrop) backdrop.click();
+            else document.body.click();
+
+            return win.__cbInterceptedText;
+        }
+
+        // --- MANUAL UI INJECTION ---
+
         function injectTurnButtons() {
             const turns = document.querySelectorAll('.chat-turn-container.model');
             turns.forEach(turn => {
@@ -238,11 +283,33 @@
                 sendBtn.onmouseover = () => { if (win.__cbIsBound) sendBtn.style.background = 'rgba(76, 175, 80, 0.1)'; };
                 sendBtn.onmouseout = () => { sendBtn.style.background = 'transparent'; };
 
-                sendBtn.addEventListener('click', (e) => {
+                sendBtn.addEventListener('click', async (e) => {
                     e.preventDefault();
                     e.stopPropagation();
                     if (sendBtn.textContent.includes('...')) return;
-                    extractViaNativeCopy(turn, sendBtn);
+
+                    const originalText = sendBtn.textContent;
+                    sendBtn.textContent = '⏳ Copying...';
+                    sendBtn.style.color = '#FF9800';
+                    sendBtn.style.borderColor = '#FF9800';
+
+                    const text = await extractViaNativeCopy(turn);
+                    if (text) {
+                        sendToIde(text);
+                        sendBtn.textContent = '✅ Sent to IDE';
+                        sendBtn.style.color = '#4CAF50';
+                        sendBtn.style.borderColor = '#4CAF50';
+                    } else {
+                        sendBtn.textContent = '❌ Extract Failed';
+                        sendBtn.style.color = '#F44336';
+                        sendBtn.style.borderColor = '#F44336';
+                    }
+
+                    setTimeout(() => {
+                        sendBtn.textContent = originalText;
+                        sendBtn.style.color = '#4CAF50';
+                        sendBtn.style.borderColor = '#4CAF50';
+                    }, 3000);
                 });
 
                 actionBar.appendChild(sendBtn);
@@ -262,6 +329,8 @@
             display: none; flex-direction: column; min-width: 300px;
             font-family: Inter, sans-serif; font-size: 13px; overflow: hidden;
         `;
+
+        const nativeTextAreaValueSetter = Object.getOwnPropertyDescriptor(window.HTMLTextAreaElement.prototype, "value").set;
 
         function updateToggleStyles() {
             const askBtn = document.getElementById('cb-mode-ask');
@@ -317,7 +386,6 @@
         let activePrefix = null;
         let filteredCmds = [];
         let selectedIndex = 0;
-        const nativeTextAreaValueSetter = Object.getOwnPropertyDescriptor(window.HTMLTextAreaElement.prototype, "value").set;
 
         function updateSuggestions() {
             if (!activePrefix || filteredCmds.length === 0) {
@@ -325,7 +393,6 @@
                 return;
             }
 
-            // Trusted Types compliance: Clear children safely
             while (suggestionBox.firstChild) {
                 suggestionBox.removeChild(suggestionBox.firstChild);
             }
@@ -467,7 +534,7 @@
             }
         }, true);
 
-        // --- UTILS ---
+        // --- UTILITIES ---
 
         async function waitForElement(selector, timeout = 15000) {
             return new Promise((resolve) => {
@@ -507,6 +574,191 @@
             });
         }
 
+        async function setModel(modelId) {
+            const selectorBtn = document.querySelector('.model-selector-card');
+            if (selectorBtn) {
+                selectorBtn.click();
+                const option = await waitForElement(`button[id="model-carousel-row-${modelId}"]`, 3000);
+                if (option) {
+                    option.click();
+                }
+                await new Promise(r => setTimeout(r, 500));
+            }
+        }
+
+        async function setThinkingLevel(level) {
+            const select = document.querySelector('mat-select[aria-label="Thinking Level"]');
+            if (select) {
+                select.click();
+                const panel = await waitForElement('.mat-mdc-select-panel', 3000);
+                if (panel) {
+                    const options = Array.from(panel.querySelectorAll('mat-option, .mat-mdc-option'));
+                    const target = options.find(opt => opt.textContent.includes(level));
+                    if (target) target.click();
+                }
+                await new Promise(r => setTimeout(r, 500));
+            }
+        }
+
+        async function setTemperature(value) {
+            const slider = document.querySelector('input[type="range"][aria-label="Temperature"]');
+            if (slider) {
+                const nativeInputValueSetter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, "value").set;
+                nativeInputValueSetter.call(slider, value);
+                slider.dispatchEvent(new Event('input', { bubbles: true }));
+                slider.dispatchEvent(new Event('change', { bubbles: true }));
+                await new Promise(r => setTimeout(r, 500));
+            }
+        }
+
+        async function setUrlContext(enabled) {
+            const toggleBtn = document.querySelector('button[role="switch"][aria-label="Browse the url context"]');
+            if (toggleBtn) {
+                const isChecked = toggleBtn.getAttribute('aria-checked') === 'true';
+                if (isChecked !== enabled) {
+                    toggleBtn.click();
+                    await new Promise(r => setTimeout(r, 500));
+                }
+            }
+        }
+
+        async function deleteLastTwoTurns() {
+            for (let i = 0; i < 2; i++) {
+                const turns = document.querySelectorAll('.chat-turn-container');
+                if (turns.length === 0) break;
+                const lastTurn = turns[turns.length - 1];
+                const menuBtn = lastTurn.querySelector('button[aria-label="Open options"]') || lastTurn.querySelector('ms-chat-turn-options button');
+                if (menuBtn) {
+                    menuBtn.click();
+                    const menuPanel = await waitForElement('.mat-mdc-menu-panel', 2000);
+                    if (menuPanel) {
+                        const options = Array.from(menuPanel.querySelectorAll('button, .mat-mdc-menu-item'));
+                        const deleteBtn = options.find(opt => opt.textContent.includes('Delete'));
+                        if (deleteBtn) {
+                            deleteBtn.click();
+                            await new Promise(r => setTimeout(r, 500));
+                            const dialog = document.querySelector('mat-dialog-container');
+                            if (dialog) {
+                                const confirmBtns = Array.from(dialog.querySelectorAll('button'));
+                                const confirmBtn = confirmBtns.find(b => b.textContent.includes('Delete') || b.textContent.includes('Confirm'));
+                                if (confirmBtn) confirmBtn.click();
+                            }
+                        }
+                    }
+                }
+                await new Promise(r => setTimeout(r, 1000));
+            }
+        }
+
+        // --- AUTOMATED GENERATION PIPELINES ---
+
+        async function handleCommitGeneration(payloadObj) {
+            showToast('⚙️ Configuring for Commit Generation...', '#FF9800', 0);
+
+            await setModel('models/gemini-3.7-flash');
+            await setThinkingLevel('High');
+            await setUrlContext(true);
+
+            const textarea = await waitForElement('textarea[formcontrolname="promptText"], textarea[aria-label="Enter a prompt"]');
+            if (!textarea) { isProcessing = false; return; }
+
+            textarea.focus();
+            nativeTextAreaValueSetter.call(textarea, payloadObj.text);
+            textarea.dispatchEvent(new Event('input', { bubbles: true }));
+
+            setTimeout(async () => {
+                const runBtn = await waitForElement('button[type="submit"]');
+                if (runBtn) {
+                    runBtn.click();
+                    monitorCommitGeneration();
+                } else {
+                    isProcessing = false;
+                }
+            }, 300);
+        }
+
+        function monitorCommitGeneration() {
+            showToast('⏳ Generating Commit Message...', '#FF9800', 0);
+            setTimeout(() => {
+                const checkInterval = setInterval(async () => {
+                    const scrollBtn = document.querySelector('.scroll-to-bottom');
+                    if (scrollBtn) scrollBtn.click();
+
+                    const allTurns = document.querySelectorAll('.chat-turn-container.model');
+                    if (allTurns.length === 0) return;
+
+                    const lastTurn = allTurns[allTurns.length - 1];
+                    lastTurn.scrollIntoView({ behavior: 'auto', block: 'end' });
+
+                    const hasThumbUp = lastTurn.querySelector('button[aria-label="Good response"]') !== null;
+                    const isLoading = lastTurn.querySelector('ms-chat-loading-indicator') !== null;
+
+                    if (hasThumbUp && !isLoading) {
+                        clearInterval(checkInterval);
+
+                        showToast('⏳ Extracting Commit Message...', '#FF9800', 0);
+                        const text = await extractViaNativeCopy(lastTurn);
+
+                        if (text) {
+                            const match = /<commit_message>([\s\S]*?)<\/commit_message>/.exec(text);
+                            if (match && match[1]) {
+                                sendToIde(`[COMMIT]${match[1].trim()}`);
+                                showToast('✅ Sent Commit Message to IDE', '#4CAF50', 3000);
+                            } else {
+                                showToast('❌ Failed to extract <commit_message> tag', '#F44336', 3000);
+                            }
+                        } else {
+                            showToast('❌ Failed to copy model response', '#F44336', 3000);
+                        }
+
+                        showToast('🧹 Cleaning up session...', '#FF9800', 0);
+                        await deleteLastTwoTurns();
+
+                        showToast('⚙️ Restoring Settings...', '#FF9800', 0);
+                        await setModel('models/gemini-3.1-pro-preview');
+                        await setTemperature(0.7);
+                        await setUrlContext(true);
+
+                        isProcessing = false;
+                        showToast('✅ Ready', '#4CAF50', 3000);
+                    }
+                }, 1000);
+            }, 2000);
+        }
+
+        function monitorStandardGeneration() {
+            showToast('⏳ AI is Generating...', '#FF9800', 0);
+            setTimeout(() => {
+                const checkInterval = setInterval(async () => {
+                    const scrollBtn = document.querySelector('.scroll-to-bottom');
+                    if (scrollBtn) scrollBtn.click();
+
+                    const allTurns = document.querySelectorAll('.chat-turn-container.model');
+                    if (allTurns.length === 0) return;
+
+                    const lastTurn = allTurns[allTurns.length - 1];
+                    lastTurn.scrollIntoView({ behavior: 'auto', block: 'end' });
+
+                    const hasThumbUp = lastTurn.querySelector('button[aria-label="Good response"]') !== null;
+                    const isLoading = lastTurn.querySelector('ms-chat-loading-indicator') !== null;
+
+                    if (hasThumbUp && !isLoading) {
+                        clearInterval(checkInterval);
+                        showToast('⏳ Syncing to IDE...', '#FF9800', 0);
+
+                        const text = await extractViaNativeCopy(lastTurn);
+                        if (text) {
+                            sendToIde(text);
+                            showToast('✅ Generation Complete & Synced', '#4CAF50', 3000);
+                        } else {
+                            showToast('⚠️ Generation Complete (Auto-sync failed)', '#FF9800', 3000);
+                        }
+                        isProcessing = false;
+                    }
+                }, 1000);
+            }, 2000);
+        }
+
         // --- IDE PAYLOAD HANDLER ---
 
         async function handleIncomingPayload(payloadString) {
@@ -520,6 +772,11 @@
                 payloadObj = { text: payloadString, attachments: [], systemInstructions: "" };
             }
 
+            if (payloadObj.isCommit) {
+                handleCommitGeneration(payloadObj);
+                return;
+            }
+
             if (payloadObj.text) {
                 const modeMatch = payloadObj.text.match(/<user_prompt mode="(ASK|EDIT)">/);
                 if (modeMatch) {
@@ -527,8 +784,6 @@
                     updateToggleStyles();
                 }
             }
-
-            const nativeInputValueSetter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, "value").set;
 
             if (payloadObj.systemInstructions) {
                 const expectedTitle = "IntelliJ Context Bridge";
@@ -612,90 +867,11 @@
                 const runBtn = await waitForElement('button[type="submit"]');
                 if (runBtn) {
                     runBtn.click();
-                    monitorGeneration();
+                    monitorStandardGeneration();
                 } else {
                     isProcessing = false;
                 }
             }, 300);
-        }
-
-        function monitorGeneration() {
-            showToast('⏳ AI is Generating...', '#FF9800', 0);
-            setTimeout(() => {
-                const checkInterval = setInterval(() => {
-                    const scrollBtn = document.querySelector('.scroll-to-bottom');
-                    if (scrollBtn) scrollBtn.click();
-
-                    const allTurns = document.querySelectorAll('.chat-turn-container.model');
-                    if (allTurns.length === 0) return;
-
-                    const lastTurn = allTurns[allTurns.length - 1];
-                    lastTurn.scrollIntoView({ behavior: 'auto', block: 'end' });
-
-                    const hasThumbUp = lastTurn.querySelector('button[aria-label="Good response"]') !== null;
-                    const isLoading = lastTurn.querySelector('ms-chat-loading-indicator') !== null;
-
-                    if (hasThumbUp && !isLoading) {
-                        clearInterval(checkInterval);
-                        isProcessing = false;
-                        showToast('✅ Generation Complete', '#4CAF50', 3000);
-                    }
-                }, 1000);
-            }, 2000);
-        }
-
-        async function extractViaNativeCopy(turnElement, btnElement) {
-            const originalText = btnElement.textContent;
-            btnElement.textContent = '⏳ Copying...';
-            btnElement.style.color = '#FF9800';
-            btnElement.style.borderColor = '#FF9800';
-
-            const menuBtn = turnElement.querySelector('button[aria-label="Open options"]') || turnElement.querySelector('ms-chat-turn-options button');
-            if (!menuBtn) {
-                btnElement.textContent = '❌ Menu Error';
-                return;
-            }
-
-            menuBtn.click();
-
-            const copyIcon = await waitForElement('.cdk-overlay-container .copy-markdown-button', 3000);
-            if (!copyIcon) {
-                document.body.click();
-                btnElement.textContent = '❌ Copy Btn Error';
-                return;
-            }
-
-            const copyBtn = copyIcon.closest('button');
-
-            win.__cbActive = true;
-            win.__cbIntercepted = false;
-
-            copyBtn.click();
-
-            setTimeout(async () => {
-                win.__cbActive = false;
-
-                const backdrop = document.querySelector('.cdk-overlay-backdrop');
-                if (backdrop) backdrop.click();
-                else document.body.click();
-
-                if (win.__cbIntercepted) {
-                    btnElement.textContent = '✅ Sent to IDE';
-                    btnElement.style.color = '#4CAF50';
-                    btnElement.style.borderColor = '#4CAF50';
-                } else {
-                    btnElement.textContent = '❌ Intercept Failed';
-                    btnElement.style.color = '#F44336';
-                    btnElement.style.borderColor = '#F44336';
-                }
-
-                setTimeout(() => {
-                    btnElement.textContent = originalText;
-                    btnElement.style.color = '#4CAF50';
-                    btnElement.style.borderColor = '#4CAF50';
-                }, 3000);
-
-            }, 500);
         }
     });
 

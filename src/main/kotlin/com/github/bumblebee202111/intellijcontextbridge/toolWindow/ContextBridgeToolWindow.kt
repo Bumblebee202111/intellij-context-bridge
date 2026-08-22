@@ -2,6 +2,7 @@ package com.github.bumblebee202111.intellijcontextbridge.toolWindow
 
 import com.github.bumblebee202111.intellijcontextbridge.parser.ToolCallParser
 import com.github.bumblebee202111.intellijcontextbridge.server.ContextBridgeServer
+import com.github.bumblebee202111.intellijcontextbridge.services.CommitBridgeService
 import com.github.bumblebee202111.intellijcontextbridge.state.ContextState
 import com.github.bumblebee202111.intellijcontextbridge.ui.ContextComposerPanel
 import com.github.bumblebee202111.intellijcontextbridge.ui.DiffReceiverPanel
@@ -48,6 +49,12 @@ class ContextBridgeToolWindow(private val project: Project) : Disposable {
 
             server.addMessageListener(this) { tabId, markdownText ->
                 if (tabId != contextState.activeTabId) return@addMessageListener
+
+                if (markdownText.startsWith("[COMMIT]")) {
+                    val commitMessage = markdownText.removePrefix("[COMMIT]").trim()
+                    project.getService(CommitBridgeService::class.java).injectCommitMessage(commitMessage)
+                    return@addMessageListener
+                }
 
                 SwingUtilities.invokeLater {
                     val toolCall = ToolCallParser.parse(markdownText)

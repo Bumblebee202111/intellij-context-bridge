@@ -20,4 +20,14 @@
                     id="Context Bridge"
                     anchor="right"/>
     </extensions>
+
+    <actions>
+        <action id="ContextBridge.GenerateCommitMessage"
+                class="com.github.bumblebee202111.intellijcontextbridge.actions.GenerateCommitMessageAction"
+                text="Generate AI Commit Message"
+                description="Generate commit message using Gemini"
+                icon="AllIcons.Actions.Commit">
+            <add-to-group group-id="Vcs.MessageActionGroup" anchor="first"/>
+        </action>
+    </actions>
 </idea-plugin>
