@@ -17,7 +17,7 @@ Our userscript automates the Google AI Studio web interface. Keep its modern Ang
 - **DOM Security:** The environment enforces Trusted Types, blocking raw `innerHTML` assignments. Safe native DOM APIs (e.g., `createElement`, `textContent`) are required.
 - **Event Handling:** Native submission shortcuts (e.g., `Ctrl+Enter`) must be intercepted during the Capture Phase to safely wrap payloads before Angular's internal state triggers.
 - **System Instructions:** Managed via a clickable card that opens an overlay dialog.
-- **Model Selection:** Features model selectors to switch between highly capable models (e.g., Gemini 3.1 Pro Preview, Gemini 3.6 Flash).
+- **Model Selection:** Features model selectors to switch between highly capable models (e.g., Gemini 3.1 Pro Preview, Gemini 3.7 Flash).
 - **Extraction:** Automate native UI actions (e.g., clicking "Copy" to extract sanitized Markdown) rather than parsing volatile DOM elements.
 - **Session Binding:** Trust the chat title as the persistent anchor. Use the URL pathname strictly as a transient delta-checker for renames vs. navigations.
 - **Transient States:** Use state machines to temporarily override UI settings (Model, Thinking Level) for ephemeral tasks, restoring defaults afterward.

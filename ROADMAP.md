@@ -16,6 +16,13 @@
 - Ephemeral Workflows (Native AI Commit Generation & State Machines)
 
 ## Upcoming Focus
+**Command Engine Refinement**
+* [ ] Implement Stacked Command Invocations (e.g., `/analyze /plan fix the bug`).
+* [ ] Refactor UI autocomplete to insert command names cleanly without expanding the prompt body.
+* [ ] Update `PayloadGenerator` to extract leading commands, concatenate them using `<applied_commands>` XML semantic boundaries, and append the user's manual request.
+* [ ] Implement mode elevation (auto-switch to EDIT if any stacked command requires it).
+* https://code.claude.com/docs/en/changelog#2-1-199
+
 **Engineering Context (Git & Diagnostics)**
 * [ ] Add UI toggle to include active editor compiler errors/warnings in the payload.
 * [ ] Add action to auto-select uncommitted/modified files based on `git status`.

@@ -34,6 +34,7 @@ The system MUST provide an intelligent, reactive suggestion engine to act as a s
 The plugin MUST support reading local configuration directories (e.g., `.contextbridge/`) at the project root.
 * *Context Routing:* Defines default context routing (`.aicontext`) by auto-selecting directories and files upon a fresh session initialization.
 * *Command Shadowing:* Defines project-specific Slash Commands (`commands/*.md`) via Markdown with YAML frontmatter, allowing local macros to seamlessly shadow/override built-in plugin defaults.
+* *Command Composition:* The system MUST support stacking multiple commands (e.g., `/analyze /plan`). It MUST NOT expand command bodies into the UI text area. Instead, it MUST dynamically combine them in the payload using explicit XML semantic boundaries to prevent directive collisions.
 
 ## 6. Diff-Based Application
 The plugin MUST NOT silently overwrite local files. All incoming code from the AI MUST be routed through a visual side-by-side diff interface before being applied to the disk, unless explicitly requested via a native IDE integration (e.g., Commit Message auto-fill).
@@ -41,3 +42,4 @@ The plugin MUST NOT silently overwrite local files. All incoming code from the A
 ## 7. Non-Goals (Out of Scope)
 * Direct integration with OpenAI/Anthropic/Google REST APIs.
 * Autonomous agentic loops (the AI cannot execute terminal commands or trigger file reads without explicit, manual user intervention and approval).
+* Autonomous model-invoked Skills (all workflow directives MUST be explicitly user-invoked via Commands to keep simple, preserve AI Studio RPD quotas and user direction).
