@@ -7,25 +7,32 @@ data class ParsedToolCall(
 )
 
 object ToolCallParser {
-    fun parse(markdown: String): ParsedToolCall? {
-        if (!markdown.contains("<tool_call>")) return null
+    fun parse(markdown: String): List<ParsedToolCall> {
+        val results = mutableListOf<ParsedToolCall>()
+        val toolCallRegex = Regex("<tool_call>(.*?)</tool_call>", RegexOption.DOT_MATCHES_ALL)
 
-        val nameMatch = Regex("<name>(.*?)</name>", RegexOption.DOT_MATCHES_ALL).find(markdown)
-        val reasonMatch = Regex("<reason>(.*?)</reason>", RegexOption.DOT_MATCHES_ALL).find(markdown)
+        for (match in toolCallRegex.findAll(markdown)) {
+            val content = match.groupValues[1]
 
-        val name = nameMatch?.groupValues?.get(1)?.trim() ?: return null
-        val reason = reasonMatch?.groupValues?.get(1)?.trim() ?: ""
+            val nameMatch = Regex("<name>(.*?)</name>", RegexOption.DOT_MATCHES_ALL).find(content)
+            val name = nameMatch?.groupValues?.get(1)?.trim() ?: continue
 
-        val paths = mutableListOf<String>()
-        val pathsBlockMatch = Regex("<paths>(.*?)</paths>", RegexOption.DOT_MATCHES_ALL).find(markdown)
-        
-        if (pathsBlockMatch != null) {
-            val pathMatches = Regex("<path>(.*?)</path>", RegexOption.DOT_MATCHES_ALL).findAll(pathsBlockMatch.groupValues[1])
-            for (match in pathMatches) {
-                paths.add(match.groupValues[1].trim())
+            val reasonMatch = Regex("<reason>(.*?)</reason>", RegexOption.DOT_MATCHES_ALL).find(content)
+            val reason = reasonMatch?.groupValues?.get(1)?.trim() ?: ""
+
+            val paths = mutableListOf<String>()
+            val pathsBlockMatch = Regex("<paths>(.*?)</paths>", RegexOption.DOT_MATCHES_ALL).find(content)
+
+            if (pathsBlockMatch != null) {
+                val pathMatches = Regex("<path>(.*?)</path>", RegexOption.DOT_MATCHES_ALL).findAll(pathsBlockMatch.groupValues[1])
+                for (pathMatch in pathMatches) {
+                    paths.add(pathMatch.groupValues[1].trim())
+                }
             }
+
+            results.add(ParsedToolCall(name, paths, reason))
         }
 
-        return ParsedToolCall(name, paths, reason)
+        return results
     }
 }

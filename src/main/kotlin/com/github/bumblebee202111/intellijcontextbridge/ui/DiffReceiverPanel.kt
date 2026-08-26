@@ -44,6 +44,9 @@ class DiffReceiverPanel(private val project: Project) {
                 ) {
                     append(value.filePath, SimpleTextAttributes.REGULAR_BOLD_ATTRIBUTES)
                     append(" (${value.language}, ${value.code.lines().size} lines)", SimpleTextAttributes.GRAYED_ATTRIBUTES)
+                    if (!value.explanation.isNullOrBlank()) {
+                        append(" - ${value.explanation}", SimpleTextAttributes.GRAYED_ITALIC_ATTRIBUTES)
+                    }
                 }
             }
         }
@@ -93,20 +96,23 @@ class DiffReceiverPanel(private val project: Project) {
         content.add(splitPane, BorderLayout.CENTER)
     }
 
-    fun handleIncomingMarkdown(markdownText: String) {
+    fun handleIncomingMarkdown(markdownText: String): Boolean {
         responseArea.text = markdownText
-        parseMarkdownAndPopulateList(markdownText)
+        return parseMarkdownAndPopulateList(markdownText)
     }
 
-    private fun parseMarkdownAndPopulateList(markdownText: String) {
+    private fun parseMarkdownAndPopulateList(markdownText: String): Boolean {
         listModel.clear()
         if (markdownText.isNotBlank()) {
             val snippets = MarkdownResponseParser.parse(markdownText)
             snippets.forEach { listModel.addElement(it) }
             if (snippets.isEmpty()) {
                 Messages.showInfoMessage("No code blocks found in the response.", "Parse Result")
+                return false
             }
+            return true
         }
+        return false
     }
 
     private fun showDiff(snippet: ParsedSnippet) {
@@ -127,8 +133,14 @@ class DiffReceiverPanel(private val project: Project) {
 
         val rightContent = diffContentFactory.create(project, snippet.code, fileType)
 
+        val title = if (!snippet.explanation.isNullOrBlank()) {
+            "Apply AI Snippet: ${snippet.filePath} - ${snippet.explanation}"
+        } else {
+            "Apply AI Snippet: ${snippet.filePath}"
+        }
+
         val request = SimpleDiffRequest(
-            "Apply AI Snippet: ${snippet.filePath}",
+            title,
             leftContent,
             rightContent,
             "Local Code",

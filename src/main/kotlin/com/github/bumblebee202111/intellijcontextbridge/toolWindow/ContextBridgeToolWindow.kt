@@ -57,13 +57,26 @@ class ContextBridgeToolWindow(private val project: Project) : Disposable {
                 }
 
                 SwingUtilities.invokeLater {
-                    val toolCall = ToolCallParser.parse(markdownText)
-                    if (toolCall != null && toolCall.name == "read_file") {
-                        tabbedPane.selectedIndex = 0
-                        composerPanel.handleReadFileToolCall(toolCall.paths, toolCall.reason)
-                    } else {
+                    // 1. Extract and handle read_file tool calls
+                    val toolCalls = ToolCallParser.parse(markdownText)
+                    val readFileCalls = toolCalls.filter { it.name == "read_file" }
+
+                    var handledReadFile = false
+                    if (readFileCalls.isNotEmpty()) {
+                        val allPaths = readFileCalls.flatMap { it.paths }.distinct()
+                        val combinedReason = readFileCalls.joinToString("\n") { it.reason }.trim()
+                        composerPanel.handleReadFileToolCall(allPaths, combinedReason)
+                        handledReadFile = true
+                    }
+
+                    // 2. Always pass the text to the Diff Panel (it will extract propose_edit tools)
+                    val hasSnippets = receiverPanel.handleIncomingMarkdown(markdownText)
+
+                    // 3. Smart Tab Switching
+                    if (hasSnippets) {
                         tabbedPane.selectedIndex = 1
-                        receiverPanel.handleIncomingMarkdown(markdownText)
+                    } else if (handledReadFile) {
+                        tabbedPane.selectedIndex = 0
                     }
                 }
             }
