@@ -1,53 +1,71 @@
 package com.github.bumblebee202111.intellijcontextbridge.parser
 
-data class ParsedSnippet(
+sealed interface AgentAction {
+    val explanation: String?
+}
+
+data class EditAction(
     val filePath: String,
     val language: String,
     val code: String,
-    val explanation: String? = null
-)
+    override val explanation: String? = null
+) : AgentAction
+
+data class DeleteAction(
+    val filePath: String,
+    override val explanation: String? = null
+) : AgentAction
+
+data class RenameAction(
+    val sourcePath: String,
+    val targetPath: String,
+    override val explanation: String? = null
+) : AgentAction
 
 object MarkdownResponseParser {
 
     /**
-     * Parses an AI's response to extract code blocks and their associated file paths.
-     * Supports both the new <tool_call><name>propose_edit</name> format and the legacy markdown headers.
+     * Parses an AI's response to extract tool actions and legacy code blocks.
      */
-    fun parse(markdown: String): List<ParsedSnippet> {
-        val snippets = mutableListOf<ParsedSnippet>()
+    fun parse(markdown: String): List<AgentAction> {
+        val actions = mutableListOf<AgentAction>()
         
-        // 1. Extract XML tool calls (propose_edit)
+        // 1. Extract XML tool calls (propose_edit, delete_file, rename_file)
         val toolCallRegex = Regex("<tool_call>(.*?)</tool_call>", RegexOption.DOT_MATCHES_ALL)
         for (match in toolCallRegex.findAll(markdown)) {
             val content = match.groupValues[1]
             val nameMatch = Regex("<name>(.*?)</name>", RegexOption.DOT_MATCHES_ALL).find(content)
+            val name = nameMatch?.groupValues?.get(1)?.trim() ?: continue
+            val explanation = Regex("<explanation>(.*?)</explanation>", RegexOption.DOT_MATCHES_ALL).find(content)?.groupValues?.get(1)?.trim()
 
-            if (nameMatch?.groupValues?.get(1)?.trim() == "propose_edit") {
-                val pathMatch = Regex("<path>(.*?)</path>", RegexOption.DOT_MATCHES_ALL).find(content)
-                val explanationMatch = Regex("<explanation>(.*?)</explanation>", RegexOption.DOT_MATCHES_ALL).find(content)
-                val codeMatch = Regex("<code>(.*?)</code>", RegexOption.DOT_MATCHES_ALL).find(content)
+            when (name) {
+                "propose_edit" -> {
+                    val path = Regex("<path>(.*?)</path>", RegexOption.DOT_MATCHES_ALL).find(content)?.groupValues?.get(1)?.trim()
+                    val rawCode = Regex("<code>(.*?)</code>", RegexOption.DOT_MATCHES_ALL).find(content)?.groupValues?.get(1)?.trim()
 
-                if (pathMatch != null && codeMatch != null) {
-                    val path = pathMatch.groupValues[1].trim()
-                    val explanation = explanationMatch?.groupValues?.get(1)?.trim()
-                    val rawCode = codeMatch.groupValues[1].trim()
-
-                    // Clean up if the AI accidentally wrapped the code inside markdown ticks within the XML tag
-                    val cleanCode = if (rawCode.startsWith("```")) {
-                        rawCode.substringAfter("\n").substringBeforeLast("```").trim()
-                    } else {
-                        rawCode
+                    if (path != null && rawCode != null) {
+                        val cleanCode = if (rawCode.startsWith("```")) {
+                            rawCode.substringAfter("\n").substringBeforeLast("```").trim()
+                        } else rawCode
+                        val lang = path.substringAfterLast('.', "")
+                        actions.add(EditAction(path, lang, cleanCode, explanation))
                     }
-
-                    val lang = path.substringAfterLast('.', "")
-                    snippets.add(ParsedSnippet(path, lang, cleanCode, explanation))
+                }
+                "delete_file" -> {
+                    val path = Regex("<path>(.*?)</path>", RegexOption.DOT_MATCHES_ALL).find(content)?.groupValues?.get(1)?.trim()
+                    if (path != null) actions.add(DeleteAction(path, explanation))
+                }
+                "rename_file" -> {
+                    val sourcePath = Regex("<source_path>(.*?)</source_path>", RegexOption.DOT_MATCHES_ALL).find(content)?.groupValues?.get(1)?.trim()
+                    val targetPath = Regex("<target_path>(.*?)</target_path>", RegexOption.DOT_MATCHES_ALL).find(content)?.groupValues?.get(1)?.trim()
+                    if (sourcePath != null && targetPath != null) actions.add(RenameAction(sourcePath, targetPath, explanation))
                 }
             }
         }
 
         // If we found valid XML tool calls, skip legacy markdown parsing to prevent duplicates
-        if (snippets.isNotEmpty()) {
-            return snippets
+        if (actions.isNotEmpty()) {
+            return actions
         }
 
         // 2. Fallback: Detect legacy file headers
@@ -59,39 +77,33 @@ object MarkdownResponseParser {
         val lines = markdown.lines()
         
         for (line in lines) {
-            // 1. Detect File Header
             // Matches: "### 📄 `app/src/main/MainActivity.kt`"
             if (line.startsWith("###") && line.contains("📄")) {
                 currentFilePath = line.substringAfter("📄").replace("`", "").trim()
                 continue
             }
 
-            // 2. Detect Code Block Boundaries
             if (line.trim().startsWith("```")) {
                 if (!inCodeBlock) {
-                    // Start of code block
                     inCodeBlock = true
                     currentLang = line.trim().removePrefix("```").trim()
                     currentCode.clear()
                 } else {
-                    // End of code block
                     inCodeBlock = false
                     val codeContent = currentCode.toString().trimEnd()
-                    
-                    // Only add if it's not empty
+
                     if (codeContent.isNotBlank()) {
-                        snippets.add(ParsedSnippet(currentFilePath, currentLang, codeContent))
+                        actions.add(EditAction(currentFilePath, currentLang, codeContent))
                     }
                 }
                 continue
             }
 
-            // 3. Capture Code
             if (inCodeBlock) {
                 currentCode.appendLine(line)
             }
         }
 
-        return snippets
+        return actions
     }
 }
