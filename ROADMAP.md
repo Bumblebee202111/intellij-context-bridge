@@ -14,6 +14,7 @@
 - Multi-Project Binding & Memory Safety (Observer Pattern & UI-bound Disposables)
 - Zero-Click Sync & Automated Native UI Extraction
 - Ephemeral Workflows (Native AI Commit Generation & State Machines)
+- Agentic File CRUD Tools (Create, Edit, Rename, Delete) & Native Refactoring Integration
 
 ## Upcoming Focus
 **Command Engine Refinement**

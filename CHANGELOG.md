@@ -15,8 +15,9 @@
 - **Session History & Deduplication**: Persistent timeline of user turns with true undo capabilities and automatic context deduplication to save tokens.
 - **Mesh Networking & Routing**: Dynamic WebSocket server supporting multiple concurrent IDE instances, utilizing a hybrid bi-directional binding system (trusting chat titles persistently, pathnames transiently) to route payloads accurately.
 - **Zero-Click Sync**: Companion userscript automates native UI actions (e.g., "Copy as Markdown") to reliably extract sanitized AI responses, completely bypassing brittle DOM parsing and internal LLM thoughts.
+- **Agentic CRUD Tools**: Parses XML-based tool calls (`propose_edit`, `delete_file`, `rename_file`) and routes them to visual diffs or native IDE refactoring APIs.
 - **Ephemeral Workflows**: Native AI Commit Generation via `VcsDataKeys` utilizing transient LLM state machines (auto-configuring models/settings, generating, and auto-scrubbing the chat history).
-- **Diff Application**: Markdown parsing and native IntelliJ `DiffManager` integration for safe, visual code application.
+- **Diff Application**: Native IntelliJ `DiffManager` integration for safe, visual code application with streamlined multi-diff execution (auto-advance).
 - **Native UI**: Upgraded composer panel with IntelliJ native components (`EditorTextField`, `ActionToolbar`, `TreeSpeedSearch`) for a seamless IDE feel.
 - **Slash Commands**: Markdown-based macro system (`/plan`, `/lore`) with project-level shadowing (`.contextbridge/commands/`) and Web UI text-expansion sync.
 - **Web UI Robustness**: Trusted Types compliance and Capture-Phase interception for native AI Studio shortcuts (`Ctrl+Enter`).

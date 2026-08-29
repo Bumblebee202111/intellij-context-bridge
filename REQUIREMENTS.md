@@ -19,9 +19,9 @@ The system MUST track the state of the conversation to prevent context bloat and
 ## 3. System Instructions & Intent Modes
 The system MUST separate static behavioral directives from the dynamic project context.
 * *Intent Modes:* The system MUST support distinct interaction modes (e.g., "Ask" for read-only analysis and "Edit" for code generation). This MUST be enforced via unified system instructions and XML micro-anchoring (e.g., `<user_prompt mode="...">`) to ensure strong LLM adherence.
-* *Edit Constraints:* In generation modes, the AI MUST be instructed to output code using a "Skeleton Patch" format (where unchanged structural blocks like signatures or tags are retained as diff anchors) and MUST format code blocks with exact file path headers to facilitate IDE parsing.
+* *Edit Constraints:* In generation modes, all file modifications MUST be routed through strict XML tool calls (e.g., `propose_edit`) rather than raw markdown blocks. The AI MUST be instructed to output code using a "Skeleton Patch" format (where unchanged structural blocks like signatures or tags are retained as diff anchors).
 * *Extraction Constraints:* The system MUST rely on automated native UI actions (e.g., simulated clipboard copy) for extraction rather than brittle DOM parsing to ensure LLM internal thoughts or raw HTML nodes are safely stripped.
-* *Context Awareness & Tool Calling:* The AI MUST be provided with an XML-based tool schema (e.g., `read_file`) to request the complete implementation of Skeleton files. The system MUST intercept these tool calls and present them in the UI for manual user approval.
+* *Context Awareness & Tool Calling:* The AI MUST be provided with XML-based tool schemas (e.g., `read_file`, `delete_file`). The system MUST intercept these tool calls and present them in the UI for manual user approval or visual review.
 
 ## 4. Proactive Context Suggestions
 The system MUST provide an intelligent, reactive suggestion engine to act as a staging area and reduce user cognitive load when selecting context.
@@ -37,7 +37,7 @@ The plugin MUST support reading local configuration directories (e.g., `.context
 * *Command Composition:* The system MUST support stacking multiple commands (e.g., `/analyze /plan`). It MUST NOT expand command bodies into the UI text area. Instead, it MUST dynamically combine them in the payload using explicit XML semantic boundaries to prevent directive collisions.
 
 ## 6. Diff-Based Application
-The plugin MUST NOT silently overwrite local files. All incoming code from the AI MUST be routed through a visual side-by-side diff interface before being applied to the disk, unless explicitly requested via a native IDE integration (e.g., Commit Message auto-fill).
+The plugin MUST NOT silently overwrite local files. All incoming code from the AI MUST be routed through a visual side-by-side diff interface before being applied to the disk, unless explicitly requested via a native IDE integration (e.g., Commit Message auto-fill). Destructive actions (like file deletion or renaming) MUST be routed through native IDE refactoring dialogs to ensure structural safety.
 
 ## 7. Non-Goals (Out of Scope)
 * Direct integration with OpenAI/Anthropic/Google REST APIs.
