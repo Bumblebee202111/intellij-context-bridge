@@ -9,13 +9,10 @@ data class ParsedToolCall(
 object ToolCallParser {
     fun parse(markdown: String): List<ParsedToolCall> {
         val results = mutableListOf<ParsedToolCall>()
-        val toolCallRegex = Regex("<tool_call>(.*?)</tool_call>", RegexOption.DOT_MATCHES_ALL)
+        val readFileRegex = Regex("<read_file>(.*?)</read_file>", RegexOption.DOT_MATCHES_ALL)
 
-        for (match in toolCallRegex.findAll(markdown)) {
+        for (match in readFileRegex.findAll(markdown)) {
             val content = match.groupValues[1]
-
-            val nameMatch = Regex("<name>(.*?)</name>", RegexOption.DOT_MATCHES_ALL).find(content)
-            val name = nameMatch?.groupValues?.get(1)?.trim() ?: continue
 
             val reasonMatch = Regex("<reason>(.*?)</reason>", RegexOption.DOT_MATCHES_ALL).find(content)
             val reason = reasonMatch?.groupValues?.get(1)?.trim() ?: ""
@@ -28,9 +25,14 @@ object ToolCallParser {
                 for (pathMatch in pathMatches) {
                     paths.add(pathMatch.groupValues[1].trim())
                 }
+
+                if (paths.isEmpty()) {
+                    val rawPaths = pathsBlockMatch.groupValues[1].split("\n", ",").map { it.trim() }.filter { it.isNotBlank() }
+                    paths.addAll(rawPaths)
+                }
             }
 
-            results.add(ParsedToolCall(name, paths, reason))
+            results.add(ParsedToolCall("read_file", paths, reason))
         }
 
         return results
