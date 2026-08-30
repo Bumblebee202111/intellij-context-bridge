@@ -21,3 +21,5 @@
 - **Native UI**: Upgraded composer panel with IntelliJ native components (`EditorTextField`, `ActionToolbar`, `TreeSpeedSearch`) for a seamless IDE feel.
 - **Slash Commands**: Markdown-based macro system (`/plan`, `/lore`) with project-level shadowing (`.contextbridge/commands/`) and Web UI text-expansion sync.
 - **Web UI Robustness**: Trusted Types compliance and Capture-Phase interception for native AI Studio shortcuts (`Ctrl+Enter`).
+- **Command Engine Refinement**: Stacked slash commands with UI token insertion, reactive mode elevation, and `<applied_commands>` XML semantic boundaries.
+- **Tool-Specific XML Tags**: Migrated from generic `<tool_call>` schemas to specific tags (e.g., `<propose_edit>`) to bypass LLM native function-call triggers. Dropped legacy markdown parsing for strict XML adherence.
