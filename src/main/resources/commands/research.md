@@ -4,4 +4,4 @@ description: "Search the web for current best practices."
 mode: "ASK"
 context-action: "ADDITIVE"
 ---
-Search the web for current best practices on:
+Search the web for current best practices regarding the request.

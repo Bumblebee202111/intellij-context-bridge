@@ -152,10 +152,12 @@ class ContextComposerPanel(private val project: Project) : Disposable {
                     .withInsertHandler { context, _ ->
                         val start = context.startOffset
                         val end = context.tailOffset
-                        context.document.deleteString(start, end)
+                        context.document.replaceString(start, end, "/${item.name} ")
+                        val newOffset = start + item.name.length + 2
+                        context.editor.caretModel.moveToOffset(newOffset)
 
                         ApplicationManager.getApplication().invokeLater {
-                            applyCommand(item, start)
+                            applyCommandContext(item)
                         }
                     }
             }
@@ -380,28 +382,7 @@ class ContextComposerPanel(private val project: Project) : Disposable {
         }
     }
 
-    fun applyCommand(command: SlashCommand, triggerOffset: Int = -1) {
-        if (command.mode == IntentMode.ASK) {
-            askRadio.isSelected = true
-        } else {
-            editRadio.isSelected = true
-        }
-
-        val editor = promptArea.editor
-        if (editor != null && triggerOffset >= 0) {
-            WriteCommandAction.runWriteCommandAction(project) {
-                val doc = editor.document
-                doc.replaceString(triggerOffset, triggerOffset, command.promptBody)
-                editor.caretModel.moveToOffset(triggerOffset + command.promptBody.length)
-            }
-        } else {
-            promptArea.text = command.promptBody
-            if (editor != null) {
-                editor.caretModel.moveToOffset(editor.document.textLength)
-            }
-        }
-        promptArea.requestFocusInWindow()
-
+    fun applyCommandContext(command: SlashCommand) {
         ReadAction.nonBlocking<Unit> {
             if (command.contextAction == CommandContextAction.REPLACE) {
                 contextState.clearFileStates()
@@ -474,11 +455,36 @@ class ContextComposerPanel(private val project: Project) : Disposable {
                 }
                 refreshUi()
 
+                val text = promptArea.text.trimStart()
+                val commandRegex = Regex("^/([a-zA-Z0-9_-]+)")
+                var tempText = text
+                var needsEdit = false
+                val commandRegistry = project.service<CommandRegistryService>()
+
+                while (true) {
+                    val match = commandRegex.find(tempText) ?: break
+                    val cmdName = match.groupValues[1]
+                    val cmd = commandRegistry.getCommand(cmdName)
+                    if (cmd != null) {
+                        if (cmd.mode == IntentMode.EDIT) {
+                            needsEdit = true
+                            break
+                        }
+                        tempText = tempText.substring(match.range.last + 1).trimStart()
+                    } else {
+                        break
+                    }
+                }
+
+                if (needsEdit) {
+                    editRadio.isSelected = true
+                }
+
                 val newText = event.newFragment.toString()
                 if (newText == "/") {
                     val offset = event.offset
                     val docText = event.document.text
-                    if (offset == 0 || docText.getOrNull(offset - 1) == '\n') {
+                    if (offset == 0 || docText.getOrNull(offset - 1) == '\n' || docText.getOrNull(offset - 1) == ' ') {
                         ApplicationManager.getApplication().invokeLater {
                             promptArea.editor?.let { editor ->
                                 AutoPopupController.getInstance(project).scheduleAutoPopup(editor)

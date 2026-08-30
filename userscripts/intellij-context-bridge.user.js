@@ -433,7 +433,7 @@
             let textBefore = val.substring(0, cursor);
             let textAfter = val.substring(cursor);
 
-            let newTextBefore = textBefore.substring(0, textBefore.length - activePrefix.length) + cmd.promptBody;
+            let newTextBefore = textBefore.substring(0, textBefore.length - activePrefix.length) + '/' + cmd.name + ' ';
 
             nativeTextAreaValueSetter.call(textarea, newTextBefore + textAfter);
             textarea.dispatchEvent(new Event('input', { bubbles: true }));
@@ -454,8 +454,38 @@
             if (!val.trim()) return;
             if (val.includes('<user_prompt mode=')) return;
 
+            let remainingPrompt = val.trimStart();
+            let appliedCommands = [];
+            const commandRegex = /^\/([a-zA-Z0-9_-]+)\s*/;
+
+            while (true) {
+                const match = remainingPrompt.match(commandRegex);
+                if (match) {
+                    const cmdName = match[1];
+                    const cmd = win.__cbCommands.find(c => c.name === cmdName);
+                    if (cmd) {
+                        appliedCommands.push(cmd);
+                        remainingPrompt = remainingPrompt.substring(match[0].length).trimStart();
+                    } else {
+                        break;
+                    }
+                } else {
+                    break;
+                }
+            }
+
             const mode = win.__cbCurrentMode || 'ASK';
-            const wrapped = `<user_prompt mode="${mode}">\n${val}\n</user_prompt>`;
+            const finalUserPrompt = remainingPrompt || "Execute the applied commands.";
+
+            let wrapped = "";
+            if (appliedCommands.length > 0) {
+                wrapped += "<applied_commands>\n";
+                appliedCommands.forEach(cmd => {
+                    wrapped += `  <command name="${cmd.name}">\n    ${cmd.promptBody.trim().replace(/\n/g, '\n    ')}\n  </command>\n`;
+                });
+                wrapped += "</applied_commands>\n\n";
+            }
+            wrapped += `<user_prompt mode="${mode}">\n${finalUserPrompt}\n</user_prompt>`;
 
             nativeTextAreaValueSetter.call(textarea, wrapped);
             textarea.dispatchEvent(new Event('input', { bubbles: true }));

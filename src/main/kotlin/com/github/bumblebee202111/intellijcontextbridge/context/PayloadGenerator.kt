@@ -1,10 +1,13 @@
 package com.github.bumblebee202111.intellijcontextbridge.context
 
+import com.github.bumblebee202111.intellijcontextbridge.commands.CommandRegistryService
+import com.github.bumblebee202111.intellijcontextbridge.commands.SlashCommand
 import com.github.bumblebee202111.intellijcontextbridge.state.ContextLevel
 import com.github.bumblebee202111.intellijcontextbridge.state.ContextState
 import com.github.bumblebee202111.intellijcontextbridge.state.FileStateRecord
 import com.github.bumblebee202111.intellijcontextbridge.state.UserTurn
 import com.github.bumblebee202111.intellijcontextbridge.utils.ContextCapabilityUtil
+import com.intellij.openapi.components.service
 import com.intellij.openapi.fileEditor.FileDocumentManager
 import com.intellij.openapi.project.Project
 import com.intellij.openapi.project.guessProjectDir
@@ -36,6 +39,25 @@ object PayloadGenerator {
 
         // 1. System Instructions
         val systemInstructionsText = loadPrompt("system_base.md")
+
+        val commandRegistry = project.service<CommandRegistryService>()
+        var remainingPrompt = userPrompt.trimStart()
+        val appliedCommands = mutableListOf<SlashCommand>()
+
+        val commandRegex = Regex("^/([a-zA-Z0-9_-]+)\\s*")
+        while (true) {
+            val match = commandRegex.find(remainingPrompt) ?: break
+            val cmdName = match.groupValues[1]
+            val cmd = commandRegistry.getCommand(cmdName)
+            if (cmd != null) {
+                appliedCommands.add(cmd)
+                remainingPrompt = remainingPrompt.substring(match.range.last + 1).trimStart()
+            } else {
+                break
+            }
+        }
+
+        val finalUserPrompt = remainingPrompt.ifBlank { "Execute the applied commands." }
 
         val markdownText =  buildString {
             // 2. Project Context
@@ -161,10 +183,21 @@ object PayloadGenerator {
             appendLine("</project_context>")
             appendLine()
 
+            if (appliedCommands.isNotEmpty()) {
+                appendLine("<applied_commands>")
+                for (cmd in appliedCommands) {
+                    appendLine("  <command name=\"${cmd.name}\">")
+                    appendLine("    ${cmd.promptBody.trim().replace("\n", "\n    ")}")
+                    appendLine("  </command>")
+                }
+                appendLine("</applied_commands>")
+                appendLine()
+            }
+
             // 3. User Prompt
             val modeString = if (intentMode == IntentMode.ASK) "ASK" else "EDIT"
             appendLine("<user_prompt mode=\"$modeString\">")
-            appendLine(userPrompt.trim())
+            appendLine(finalUserPrompt)
             appendLine("</user_prompt>")
         }
 
