@@ -693,7 +693,6 @@ class ContextComposerPanel(private val project: Project) : Disposable {
 
                 if (SwingUtilities.isRightMouseButton(e)) {
                     treeManager.applyStateToNode(node, ContextLevel.NONE)
-                    treeManager.collapseDescendants(targetTree, node, path)
 
                     // OPTIMISTIC UPDATE: Paint instantly, calculate heavily later
                     targetTree.repaint()
@@ -704,7 +703,6 @@ class ContextComposerPanel(private val project: Project) : Disposable {
                         if (e.x >= bounds.x && e.x < bounds.x + 28) {
                             val nextLevel = treeManager.getNextToggleLevel(node, file)
                             treeManager.applyStateToNode(node, nextLevel)
-                            treeManager.collapseDescendants(targetTree, node, path)
 
                             // OPTIMISTIC UPDATE: Paint instantly, calculate heavily later
                             targetTree.repaint()
@@ -741,25 +739,21 @@ class ContextComposerPanel(private val project: Project) : Disposable {
                         KeyEvent.VK_SPACE -> {
                             val nextLevel = treeManager.getNextToggleLevel(node, file)
                             treeManager.applyStateToNode(node, nextLevel)
-                            treeManager.collapseDescendants(targetTree, node, path)
                             stateChanged = true
                         }
 
                         KeyEvent.VK_S -> {
                             treeManager.applyStateToNode(node, ContextLevel.SKELETON)
-                            treeManager.collapseDescendants(targetTree, node, path)
                             stateChanged = true
                         }
 
                         KeyEvent.VK_F -> {
                             treeManager.applyStateToNode(node, ContextLevel.COMPLETE)
-                            treeManager.collapseDescendants(targetTree, node, path)
                             stateChanged = true
                         }
 
                         KeyEvent.VK_BACK_SPACE, KeyEvent.VK_DELETE -> {
                             treeManager.applyStateToNode(node, ContextLevel.NONE)
-                            treeManager.collapseDescendants(targetTree, node, path)
                             stateChanged = true
                         }
                     }

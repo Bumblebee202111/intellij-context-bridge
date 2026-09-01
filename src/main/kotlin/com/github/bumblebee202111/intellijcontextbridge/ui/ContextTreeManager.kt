@@ -166,19 +166,6 @@ class ContextTreeManager(private val project: Project, private val contextState:
         return node
     }
 
-    fun collapseDescendants(tree: Tree, node: DefaultMutableTreeNode, path: TreePath) {
-        for (i in 0 until node.childCount) {
-            val child = node.getChildAt(i) as? DefaultMutableTreeNode ?: continue
-            val childPath = path.pathByAddingChild(child)
-
-            // Recursively collapse grandchildren first to reset deep state
-            collapseDescendants(tree, child, childPath)
-
-            // Collapse the direct child, leaving the actioned node's immediate children visible
-            tree.collapsePath(childPath)
-        }
-    }
-
     /**
      * Captures the absolute paths of all currently expanded folders in the tree.
      */
