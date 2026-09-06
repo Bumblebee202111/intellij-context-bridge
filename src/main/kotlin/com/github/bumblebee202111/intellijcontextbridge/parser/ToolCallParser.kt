@@ -9,7 +9,8 @@ data class ParsedToolCall(
 object ToolCallParser {
     fun parse(markdown: String): List<ParsedToolCall> {
         val results = mutableListOf<ParsedToolCall>()
-        val readFileRegex = Regex("<read_file>(.*?)</read_file>", RegexOption.DOT_MATCHES_ALL)
+
+        val readFileRegex = Regex("```(?:xml)?\\s*<ide:read_file>(.*?)</ide:read_file>\\s*```", RegexOption.DOT_MATCHES_ALL)
 
         for (match in readFileRegex.findAll(markdown)) {
             val content = match.groupValues[1]

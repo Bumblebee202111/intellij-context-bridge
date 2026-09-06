@@ -30,8 +30,8 @@ object MarkdownResponseParser {
     fun parse(markdown: String): List<AgentAction> {
         val actions = mutableListOf<AgentAction>()
         
-        // 1. Parse propose_edit
-        val editRegex = Regex("<propose_edit>(.*?)</propose_edit>", RegexOption.DOT_MATCHES_ALL)
+        // 1. Parse ide:propose_edit\
+        val editRegex = Regex("```(?:xml)?\\s*<ide:propose_edit>(.*?)</ide:propose_edit>\\s*```", RegexOption.DOT_MATCHES_ALL)
         for (match in editRegex.findAll(markdown)) {
             val content = match.groupValues[1]
             val path = Regex("<path>(.*?)</path>", RegexOption.DOT_MATCHES_ALL).find(content)?.groupValues?.get(1)?.trim()
