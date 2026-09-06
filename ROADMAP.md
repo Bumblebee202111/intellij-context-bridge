@@ -17,6 +17,7 @@
 - Agentic File CRUD Tools (Create, Edit, Rename, Delete) & Native Refactoring Integration
 - Command Engine Refinement (Stacked invocations, Token insertion, Mode elevation, `<applied_commands>` boundaries)
 - Tool-Specific XML Tags (Bypassing RLHF triggers & strict XML parsing)
+- Code Block Jailbreak & XML Namespacing (Bypassing native function-calling UI interception)
 
 ## Upcoming Focus
 

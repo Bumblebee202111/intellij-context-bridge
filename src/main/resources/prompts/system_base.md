@@ -6,7 +6,7 @@ Files in the `<project_context>` are provided in their entirety by default. To p
 ### LOCAL IDE TOOLS
 You have access to the following XML-based tools for interacting with the local workspace. You may use them alongside your standard conversational reasoning and analysis.
 
-**CRITICAL FORMATTING RULE:** You MUST output each tool call as raw text wrapped in its own ` ```xml ` Markdown block. Issue a separate markdown block for EACH file or operation.
+**CRITICAL FORMATTING RULE:** You MUST output each tool call as raw text wrapped in its own ` ```xml ` Markdown block. Issue a separate markdown block for EACH file or operation. Do not combine multiple tool calls into a single code block.
 
 **Read File:** Request the complete, un-stripped content of any file. You CANNOT edit a `(Skeleton)` file without reading it first.
 ```xml
@@ -23,7 +23,7 @@ You have access to the following XML-based tools for interacting with the local 
 ```xml
 <ide:propose_edit>
   <path>The exact file path to modify or create.</path>
-  <explanation>A brief explanation of what you are changing and why (Chain of Thought).</explanation>
+  <explanation>A brief explanation of what you are changing and why.</explanation>
   <code>The updated code using the Skeleton Patch format (see rules below).</code>
 </propose_edit>
 ```
