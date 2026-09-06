@@ -22,4 +22,6 @@
 - **Slash Commands**: Markdown-based macro system (`/plan`, `/lore`) with project-level shadowing (`.contextbridge/commands/`) and Web UI text-expansion sync.
 - **Web UI Robustness**: Trusted Types compliance and Capture-Phase interception for native AI Studio shortcuts (`Ctrl+Enter`).
 - **Command Engine Refinement**: Stacked slash commands with UI token insertion, reactive mode elevation, and `<applied_commands>` XML semantic boundaries.
-- **Tool-Specific XML Tags**: Migrated from generic `<tool_call>` schemas to specific tags (e.g., `<propose_edit>`) to bypass LLM native function-call triggers. Dropped legacy markdown parsing for strict XML adherence.
+- **Tool-Specific XML Tags & Prompt Resilience**: Migrated to specific tags (e.g., `<propose_edit>`) and "de-weaponized" their schema definitions in the system prompt to successfully bypass aggressive RLHF native function-calling triggers in AI Studio.
+- **Skeleton Patch Protocol Refinement**: Cured LLM "Diff Anchor Paranoia" by strictly enforcing that unchanged blocks retain ONLY their signatures/headers with zero internal lines, backed by concrete few-shot examples.
+- **UX Improvement**: Removed auto-collapse behavior in the Context Tree to preserve user expansion state and visual feedback during rapid context toggling.

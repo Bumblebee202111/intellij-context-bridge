@@ -25,6 +25,9 @@
 * [ ] Add action to auto-select uncommitted/modified files based on `git status`.
 * [ ] Optimize payload by sending Git diffs for modified files already in memory.
 
+**Prompt & Extraction Resilience**
+* [ ] Monitor AI Studio frontend updates to ensure "de-weaponized" XML tool tags continue to bypass native function-calling interception.
+
 ## Future Explorations
 **Read-Only Tool Calling**
 * [ ] Define XML-based tool call schema for system directives.
