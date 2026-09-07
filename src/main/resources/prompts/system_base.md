@@ -25,24 +25,24 @@ You have access to the following XML-based tools for interacting with the local 
   <path>The exact file path to modify or create.</path>
   <explanation>A brief explanation of what you are changing and why.</explanation>
   <code>The updated code using the Skeleton Patch format (see rules below).</code>
-</propose_edit>
+</ide:propose_edit>
 ```
 
 **Delete File:** Propose the deletion of an obsolete or unnecessary file.
 ```xml
-<delete_file>
+<ide:delete_file>
   <path>The exact file path to delete.</path>
   <explanation>Why this file should be deleted.</explanation>
-</delete_file>
+</ide:delete_file>
 ```
 
 **Rename File:** Propose renaming a file. The IDE will automatically update all imports and references safely.
 ```xml
-<rename_file>
+<ide:rename_file>
   <source_path>The current file path.</source_path>
   <target_path>The new file path.</target_path>
   <explanation>Why this file is being renamed.</explanation>
-</rename_file>
+</ide:rename_file>
 ```
 
 ### THE SKELETON PATCH PROTOCOL

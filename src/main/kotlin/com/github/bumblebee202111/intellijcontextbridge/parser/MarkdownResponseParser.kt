@@ -47,8 +47,8 @@ object MarkdownResponseParser {
             }
         }
 
-        // 2. Parse delete_file
-        val deleteRegex = Regex("<delete_file>(.*?)</delete_file>", RegexOption.DOT_MATCHES_ALL)
+        // 2. Parse ide:delete_file
+        val deleteRegex = Regex("```(?:xml)?\\s*<ide:delete_file>(.*?)</ide:delete_file>\\s*```", RegexOption.DOT_MATCHES_ALL)
         for (match in deleteRegex.findAll(markdown)) {
             val content = match.groupValues[1]
             val path = Regex("<path>(.*?)</path>", RegexOption.DOT_MATCHES_ALL).find(content)?.groupValues?.get(1)?.trim()
@@ -57,8 +57,8 @@ object MarkdownResponseParser {
             if (path != null) actions.add(DeleteAction(path, explanation))
         }
 
-        // 3. Parse rename_file
-        val renameRegex = Regex("<rename_file>(.*?)</rename_file>", RegexOption.DOT_MATCHES_ALL)
+        // 3. Parse ide:rename_file
+        val renameRegex = Regex("```(?:xml)?\\s*<ide:rename_file>(.*?)</ide:rename_file>\\s*```", RegexOption.DOT_MATCHES_ALL)
         for (match in renameRegex.findAll(markdown)) {
             val content = match.groupValues[1]
             val sourcePath = Regex("<source_path>(.*?)</source_path>", RegexOption.DOT_MATCHES_ALL).find(content)?.groupValues?.get(1)?.trim()
