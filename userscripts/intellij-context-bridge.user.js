@@ -557,7 +557,7 @@
         }, true);
 
         document.addEventListener('click', (e) => {
-            const btn = e.target.closest('button[type="submit"]') || e.target.closest('button[aria-label="Run"]') || e.target.closest('.send-button');
+            const btn = e.target.closest('ms-run-button button');
             if (btn) {
                 const textarea = document.querySelector('textarea[formcontrolname="promptText"]') || document.querySelector('textarea[aria-label="Enter a prompt"]');
                 if (textarea) interceptAndWrap(textarea);
@@ -697,7 +697,7 @@
             textarea.dispatchEvent(new Event('input', { bubbles: true }));
 
             setTimeout(async () => {
-                const runBtn = await waitForElement('button[type="submit"]');
+                const runBtn = await waitForElement('ms-run-button button');
                 if (runBtn) {
                     runBtn.click();
                     monitorCommitGeneration();
@@ -894,7 +894,7 @@
             textarea.dispatchEvent(new Event('input', { bubbles: true }));
 
             setTimeout(async () => {
-                const runBtn = await waitForElement('button[type="submit"]');
+                const runBtn = await waitForElement('ms-run-button button');
                 if (runBtn) {
                     runBtn.click();
                     monitorStandardGeneration();
