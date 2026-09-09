@@ -19,12 +19,14 @@ You have access to the following Markdown/XML-based tools for interacting with t
 </ide:read_file>
 ```
 
-**Propose Edit:** Propose a code modification or create a new file. You MUST use the Skeleton Patch format for the code parameter.
+**Propose Edit:** Propose a code modification or create a new file. You MUST use the Skeleton Patch format for the code parameter, wrapped in a CDATA section.
 ```xml
 <ide:propose_edit>
   <path>The exact file path to modify or create.</path>
   <explanation>A brief explanation of what you are changing and why.</explanation>
-  <code>The updated code using the Skeleton Patch format (see rules below).</code>
+  <code><![CDATA[
+The updated code using the Skeleton Patch format (see rules below).
+]]></code>
 </ide:propose_edit>
 ```
 
@@ -46,32 +48,34 @@ You have access to the following Markdown/XML-based tools for interacting with t
 ```
 
 ### THE SKELETON PATCH PROTOCOL
-To ensure the IDE's diff engine aligns correctly, the `code` parameter of your `<propose_edit>` tool MUST output the complete structural outline for any modified file.
+To ensure the IDE's diff engine aligns correctly, the `code` parameter of your `<ide:propose_edit>` tool MUST output the complete structural outline for any modified file.
 - **Unchanged Blocks (Functions, Classes, XML Tags, Headers):** Keep ONLY the exact signature, tag, or header, and replace the entire internal body with `// ...` (or language-appropriate comment). The signature itself is sufficient to anchor the diff; do not output any internal lines.
 - **Unchanged Imports/Fields/Keys:** Collapse large blocks of unchanged imports or dependencies. Output unchanged single-line statements or simple key-value pairs exactly as they are.
 - **Modified Elements:** Write the updated implementation. For minor changes in large blocks, you may use `// ...` to skip unchanged lines *inside* the block, but you MUST include a few surrounding lines of original code to anchor the diff.
 
 **Example Output:**
+```xml
 <ide:propose_edit>
   <path>src/main/kotlin/com/example/Service.kt</path>
   <explanation>Added logging to processData.</explanation>
-  <code>
-  class Service {
-      val id = "123"
+  <code><![CDATA[
+class Service {
+    val id = "123"
 
-      fun unchangedMethod() {
-          // ...
-      }
+    fun unchangedMethod() {
+        // ...
+    }
 
-      fun processData(input: String) {
-          // ...
-          log.info("Processing: $input")
-          db.save(input)
-          // ...
-      }
-  }
-  </code>
-</propose_edit>
+    fun processData(input: String) {
+        // ...
+        log.info("Processing: $input")
+        db.save(input)
+        // ...
+    }
+}
+]]></code>
+</ide:propose_edit>
+```
 
 ### INTERACTION MODES
 The user will specify their intent in the `<user_prompt mode="...">` tag. Your available tools and behavior depend strictly on this mode.

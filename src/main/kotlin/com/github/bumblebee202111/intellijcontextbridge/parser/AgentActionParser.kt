@@ -22,7 +22,7 @@ data class RenameAction(
     override val explanation: String? = null
 ) : AgentAction
 
-object MarkdownResponseParser {
+object AgentActionParser {
 
     /**
      * Parses an AI's response to extract tool actions.
@@ -36,14 +36,14 @@ object MarkdownResponseParser {
             val content = match.groupValues[1]
             val path = Regex("<path>(.*?)</path>", RegexOption.DOT_MATCHES_ALL).find(content)?.groupValues?.get(1)?.trim()
             val explanation = Regex("<explanation>(.*?)</explanation>", RegexOption.DOT_MATCHES_ALL).find(content)?.groupValues?.get(1)?.trim()
-            val rawCode = Regex("<code>(.*?)</code>", RegexOption.DOT_MATCHES_ALL).find(content)?.groupValues?.get(1)?.trim()
+            var rawCode = Regex("<code>(.*?)</code>", RegexOption.DOT_MATCHES_ALL).find(content)?.groupValues?.get(1)?.trim()
 
             if (path != null && rawCode != null) {
-                val cleanCode = if (rawCode.startsWith("```")) {
-                    rawCode.substringAfter("\n").substringBeforeLast("```").trim()
-                } else rawCode
+                if (rawCode.startsWith("<![CDATA[")) {
+                    rawCode = rawCode.substringAfter("<![CDATA[").substringBeforeLast("]]>").trim()
+                }
                 val lang = path.substringAfterLast('.', "")
-                actions.add(EditAction(path, lang, cleanCode, explanation))
+                actions.add(EditAction(path, lang, rawCode, explanation))
             }
         }
 

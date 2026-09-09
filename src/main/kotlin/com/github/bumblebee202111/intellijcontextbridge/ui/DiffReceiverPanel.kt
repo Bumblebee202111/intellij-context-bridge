@@ -3,7 +3,7 @@ package com.github.bumblebee202111.intellijcontextbridge.ui
 import com.github.bumblebee202111.intellijcontextbridge.parser.AgentAction
 import com.github.bumblebee202111.intellijcontextbridge.parser.DeleteAction
 import com.github.bumblebee202111.intellijcontextbridge.parser.EditAction
-import com.github.bumblebee202111.intellijcontextbridge.parser.MarkdownResponseParser
+import com.github.bumblebee202111.intellijcontextbridge.parser.AgentActionParser
 import com.github.bumblebee202111.intellijcontextbridge.parser.RenameAction
 import com.intellij.diff.DiffContentFactory
 import com.intellij.diff.DiffManager
@@ -146,7 +146,7 @@ class DiffReceiverPanel(private val project: Project) {
     private fun parseMarkdownAndPopulateList(markdownText: String): Boolean {
         listModel.clear()
         if (markdownText.isNotBlank()) {
-            val actions = MarkdownResponseParser.parse(markdownText)
+            val actions = AgentActionParser.parse(markdownText)
             actions.forEach { listModel.addElement(it) }
             if (actions.isEmpty()) {
                 Messages.showInfoMessage("No actions found in the response.", "Parse Result")
