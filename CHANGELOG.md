@@ -6,6 +6,10 @@
 
 ## [Unreleased]
 ### Core Capabilities Implemented
+- **Prompt & Formatting Resilience**: Migrated to CDATA blocks for code payloads to prevent XML entity escaping and LLM auto-indentation issues.
+- **Token & RPD Efficiency**: Refined system instructions to prevent redundant reads of already-complete files and encourage continuous output alongside tool usage.
+- **Web UI Automation**: Updated userscript DOM selectors to match Google AI Studio's latest layout changes (e.g., `ms-run-button`).
+- **Refactoring**: Renamed legacy `MarkdownResponseParser` to `AgentActionParser`.
 - **Context Management**: File Tree UI with computed visual states (Complete, Skeleton, None) and `.aicontext` auto-routing.
 - **Smart Extraction**: AST-based Skeleton extractor for Kotlin/Java (retains signatures/docs, strips bodies) and capability checks for media/binaries.
 - **Tool Calling & Gatekeeping**: Intercepts XML-based AI tool calls (e.g., `read_file`) and routes them to a "Pending AI Requests" UI group for 1-click manual approval.
