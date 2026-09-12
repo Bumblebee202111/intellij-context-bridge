@@ -331,6 +331,7 @@
         `;
 
         const nativeTextAreaValueSetter = Object.getOwnPropertyDescriptor(window.HTMLTextAreaElement.prototype, "value").set;
+        const nativeInputValueSetter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, "value").set;
 
         function updateToggleStyles() {
             const askBtn = document.getElementById('cb-mode-ask');
@@ -633,7 +634,6 @@
         async function setTemperature(value) {
             const slider = document.querySelector('input[type="range"][aria-label="Temperature"]');
             if (slider) {
-                const nativeInputValueSetter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, "value").set;
                 nativeInputValueSetter.call(slider, value);
                 slider.dispatchEvent(new Event('input', { bubbles: true }));
                 slider.dispatchEvent(new Event('change', { bubbles: true }));
