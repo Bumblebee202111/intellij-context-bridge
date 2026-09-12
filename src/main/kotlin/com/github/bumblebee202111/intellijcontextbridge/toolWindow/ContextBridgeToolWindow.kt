@@ -1,6 +1,8 @@
 package com.github.bumblebee202111.intellijcontextbridge.toolWindow
 
-import com.github.bumblebee202111.intellijcontextbridge.parser.ToolCallParser
+import com.github.bumblebee202111.intellijcontextbridge.parser.AgentTool
+import com.github.bumblebee202111.intellijcontextbridge.parser.ReadFileTool
+import com.github.bumblebee202111.intellijcontextbridge.parser.ToolParser
 import com.github.bumblebee202111.intellijcontextbridge.server.ContextBridgeServer
 import com.github.bumblebee202111.intellijcontextbridge.services.CommitBridgeService
 import com.github.bumblebee202111.intellijcontextbridge.state.ContextState
@@ -57,20 +59,21 @@ class ContextBridgeToolWindow(private val project: Project) : Disposable {
                 }
 
                 SwingUtilities.invokeLater {
-                    // 1. Extract and handle read_file tool calls
-                    val toolCalls = ToolCallParser.parse(markdownText)
-                    val readFileCalls = toolCalls.filter { it.name == "read_file" }
+                    // 1. Parse unified tools
+                    val tools = ToolParser.parse(markdownText)
+                    val readRequests = tools.filterIsInstance<ReadFileTool>()
+                    val mutations = tools.filterIsInstance<AgentTool.Mutation>()
 
                     var handledReadFile = false
-                    if (readFileCalls.isNotEmpty()) {
-                        val allPaths = readFileCalls.flatMap { it.paths }.distinct()
-                        val combinedReason = readFileCalls.joinToString("\n") { it.reason }.trim()
+                    if (readRequests.isNotEmpty()) {
+                        val allPaths = readRequests.flatMap { it.paths }.distinct()
+                        val combinedReason = readRequests.joinToString("\n") { it.explanation }.trim()
                         composerPanel.handleReadFileToolCall(allPaths, combinedReason)
                         handledReadFile = true
                     }
 
-                    // 2. Always pass the text to the Diff Panel (it will extract propose_edit tools)
-                    val hasSnippets = receiverPanel.handleIncomingMarkdown(markdownText)
+                    // 2. Pass markdown and mutations to the Diff Panel
+                    val hasSnippets = receiverPanel.handleIncomingMarkdown(markdownText, mutations)
 
                     // 3. Smart Tab Switching
                     if (hasSnippets) {

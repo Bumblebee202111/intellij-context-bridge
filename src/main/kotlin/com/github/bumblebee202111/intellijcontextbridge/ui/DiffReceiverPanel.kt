@@ -1,10 +1,10 @@
 package com.github.bumblebee202111.intellijcontextbridge.ui
 
-import com.github.bumblebee202111.intellijcontextbridge.parser.AgentAction
-import com.github.bumblebee202111.intellijcontextbridge.parser.DeleteAction
-import com.github.bumblebee202111.intellijcontextbridge.parser.EditAction
-import com.github.bumblebee202111.intellijcontextbridge.parser.AgentActionParser
-import com.github.bumblebee202111.intellijcontextbridge.parser.RenameAction
+import com.github.bumblebee202111.intellijcontextbridge.parser.AgentTool
+import com.github.bumblebee202111.intellijcontextbridge.parser.DeleteFileTool
+import com.github.bumblebee202111.intellijcontextbridge.parser.EditFileTool
+import com.github.bumblebee202111.intellijcontextbridge.parser.RenameFileTool
+import com.github.bumblebee202111.intellijcontextbridge.parser.ToolParser
 import com.intellij.diff.DiffContentFactory
 import com.intellij.diff.DiffManager
 import com.intellij.diff.requests.SimpleDiffRequest
@@ -44,29 +44,29 @@ class DiffReceiverPanel(private val project: Project) {
         emptyText.text = "Paste the AI's Markdown response here..."
         margin = JBUI.insets(5)
     }
-    private val listModel = DefaultListModel<AgentAction>()
+    private val listModel = DefaultListModel<AgentTool.Mutation>()
     
     private val actionList = JBList(listModel).apply {
         emptyText.text = "No actions parsed yet."
-        cellRenderer = object : ColoredListCellRenderer<AgentAction>() {
+        cellRenderer = object : ColoredListCellRenderer<AgentTool.Mutation>() {
             override fun customizeCellRenderer(
-                list: JList<out AgentAction>, value: AgentAction, index: Int, selected: Boolean, hasFocus: Boolean
+                list: JList<out AgentTool.Mutation>, value: AgentTool.Mutation, index: Int, selected: Boolean, hasFocus: Boolean
             ) {
                 when (value) {
-                    is EditAction -> {
+                    is EditFileTool -> {
                         append("[EDIT] ", SimpleTextAttributes.REGULAR_BOLD_ATTRIBUTES)
                         append(value.filePath, SimpleTextAttributes.REGULAR_ATTRIBUTES)
                     }
-                    is DeleteAction -> {
+                    is DeleteFileTool -> {
                         append("[DELETE] ", SimpleTextAttributes.ERROR_ATTRIBUTES)
                         append(value.filePath, SimpleTextAttributes.REGULAR_ATTRIBUTES)
                     }
-                    is RenameAction -> {
+                    is RenameFileTool -> {
                         append("[RENAME] ", SimpleTextAttributes.REGULAR_BOLD_ATTRIBUTES)
                         append("${value.sourcePath} -> ${value.targetPath}", SimpleTextAttributes.REGULAR_ATTRIBUTES)
                     }
                 }
-                if (!value.explanation.isNullOrBlank()) {
+                if (value.explanation.isNotBlank()) {
                     append(" - ${value.explanation}", SimpleTextAttributes.GRAYED_ITALIC_ATTRIBUTES)
                 }
             }
@@ -84,7 +84,7 @@ class DiffReceiverPanel(private val project: Project) {
             val action = actionList.selectedValue
             executeButton.isEnabled = action != null
 
-            if (action is EditAction) {
+            if (action is EditFileTool) {
                 val projectPath = project.guessProjectDir()?.path ?: return@addListSelectionListener
                 val targetFile = File(projectPath, action.filePath)
 
@@ -118,7 +118,11 @@ class DiffReceiverPanel(private val project: Project) {
         }
 
         val parseButton = JButton("Parse Markdown").apply {
-            addActionListener { parseMarkdownAndPopulateList(responseArea.text) }
+            addActionListener {
+                val tools = ToolParser.parse(responseArea.text)
+                val mutations = tools.filterIsInstance<AgentTool.Mutation>()
+                handleIncomingMarkdown(responseArea.text, mutations)
+            }
         }
 
         val splitPane = JBSplitter(true, 0.5f)
@@ -138,30 +142,22 @@ class DiffReceiverPanel(private val project: Project) {
         content.add(splitPane, BorderLayout.CENTER)
     }
 
-    fun handleIncomingMarkdown(markdownText: String): Boolean {
+    fun handleIncomingMarkdown(markdownText: String, mutations: List<AgentTool.Mutation>): Boolean {
         responseArea.text = markdownText
-        return parseMarkdownAndPopulateList(markdownText)
-    }
-
-    private fun parseMarkdownAndPopulateList(markdownText: String): Boolean {
         listModel.clear()
-        if (markdownText.isNotBlank()) {
-            val actions = AgentActionParser.parse(markdownText)
-            actions.forEach { listModel.addElement(it) }
-            if (actions.isEmpty()) {
-                Messages.showInfoMessage("No actions found in the response.", "Parse Result")
-                return false
-            }
-            return true
+        mutations.forEach { listModel.addElement(it) }
+        if (mutations.isEmpty() && markdownText.isNotBlank()) {
+            Messages.showInfoMessage("No actions found in the response.", "Parse Result")
+            return false
         }
-        return false
+        return mutations.isNotEmpty()
     }
 
-    private fun executeAction(action: AgentAction) {
+    private fun executeAction(action: AgentTool.Mutation) {
         val projectPath = project.guessProjectDir()?.path ?: return
 
         when (action) {
-            is EditAction -> {
+            is EditFileTool -> {
                 val targetFile = File(projectPath, action.filePath)
                 var virtualFile = LocalFileSystem.getInstance().findFileByIoFile(targetFile)
 
@@ -196,14 +192,14 @@ class DiffReceiverPanel(private val project: Project) {
                 }
 
                 val rightContent = diffContentFactory.create(project, action.code, fileType)
-                val title = if (!action.explanation.isNullOrBlank()) {
+                val title = if (action.explanation.isNotBlank()) {
                     "Apply AI Snippet: ${action.filePath} - ${action.explanation}"
                 } else "Apply AI Snippet: ${action.filePath}"
 
                 val request = SimpleDiffRequest(title, leftContent, rightContent, "Local Code", "AI Snippet")
                 DiffManager.getInstance().showDiff(project, request)
             }
-            is DeleteAction -> {
+            is DeleteFileTool -> {
                 val virtualFile = LocalFileSystem.getInstance().findFileByIoFile(File(projectPath, action.filePath))
                 if (virtualFile != null) {
                     val psiFile = PsiManager.getInstance(project).findFile(virtualFile)
@@ -214,7 +210,7 @@ class DiffReceiverPanel(private val project: Project) {
                     Messages.showErrorDialog("File not found: ${action.filePath}", "Delete Error")
                 }
             }
-            is RenameAction -> {
+            is RenameFileTool -> {
                 val virtualFile = LocalFileSystem.getInstance().findFileByIoFile(File(projectPath, action.sourcePath))
                 val targetFile = File(projectPath, action.targetPath)
                 if (virtualFile != null) {
