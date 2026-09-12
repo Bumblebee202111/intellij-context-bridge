@@ -1,13 +1,11 @@
 package com.github.bumblebee202111.intellijcontextbridge.toolWindow
 
-import com.github.bumblebee202111.intellijcontextbridge.parser.AgentTool
-import com.github.bumblebee202111.intellijcontextbridge.parser.ReadFileTool
 import com.github.bumblebee202111.intellijcontextbridge.parser.ToolParser
 import com.github.bumblebee202111.intellijcontextbridge.server.ContextBridgeServer
 import com.github.bumblebee202111.intellijcontextbridge.services.CommitBridgeService
 import com.github.bumblebee202111.intellijcontextbridge.state.ContextState
 import com.github.bumblebee202111.intellijcontextbridge.ui.ContextComposerPanel
-import com.github.bumblebee202111.intellijcontextbridge.ui.DiffReceiverPanel
+import com.github.bumblebee202111.intellijcontextbridge.ui.ResponseViewerPanel
 import com.github.bumblebee202111.intellijcontextbridge.ui.SessionHistoryPanel
 import com.intellij.openapi.Disposable
 import com.intellij.openapi.application.ApplicationManager
@@ -35,13 +33,17 @@ class ContextBridgeToolWindow(private val project: Project) : Disposable {
             val composerPanel = ContextComposerPanel(project)
             Disposer.register(this, composerPanel)
 
-            val receiverPanel = DiffReceiverPanel(project)
+            val receiverPanel = ResponseViewerPanel(project) { readFileTool ->
+                composerPanel.handleReadFileToolCall(readFileTool.paths, readFileTool.explanation)
+                tabbedPane.selectedIndex = 0
+            }
+
             val historyPanel = SessionHistoryPanel(project) {
                 composerPanel.refreshUi()
             }
 
             tabbedPane.addTab("1. Send Context", composerPanel.content)
-            tabbedPane.addTab("2. Apply Diffs", receiverPanel.content)
+            tabbedPane.addTab("2. AI Response", receiverPanel.content)
             tabbedPane.addTab("3. Session History", historyPanel.content)
 
             tabbedPane.addChangeListener {
@@ -61,26 +63,12 @@ class ContextBridgeToolWindow(private val project: Project) : Disposable {
                 SwingUtilities.invokeLater {
                     // 1. Parse unified tools
                     val tools = ToolParser.parse(markdownText)
-                    val readRequests = tools.filterIsInstance<ReadFileTool>()
-                    val mutations = tools.filterIsInstance<AgentTool.Mutation>()
 
-                    var handledReadFile = false
-                    if (readRequests.isNotEmpty()) {
-                        val allPaths = readRequests.flatMap { it.paths }.distinct()
-                        val combinedReason = readRequests.joinToString("\n") { it.explanation }.trim()
-                        composerPanel.handleReadFileToolCall(allPaths, combinedReason)
-                        handledReadFile = true
-                    }
+                    // 2. Pass markdown and ALL tools to the Response Panel
+                    receiverPanel.handleIncomingMarkdown(markdownText, tools)
 
-                    // 2. Pass markdown and mutations to the Diff Panel
-                    val hasSnippets = receiverPanel.handleIncomingMarkdown(markdownText, mutations)
-
-                    // 3. Smart Tab Switching
-                    if (hasSnippets) {
-                        tabbedPane.selectedIndex = 1
-                    } else if (handledReadFile) {
-                        tabbedPane.selectedIndex = 0
-                    }
+                    // 3. Always switch to the response viewer when a new message arrives
+                    tabbedPane.selectedIndex = 1
                 }
             }
 

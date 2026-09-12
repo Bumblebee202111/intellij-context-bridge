@@ -3,6 +3,7 @@ package com.github.bumblebee202111.intellijcontextbridge.ui
 import com.github.bumblebee202111.intellijcontextbridge.parser.AgentTool
 import com.github.bumblebee202111.intellijcontextbridge.parser.DeleteFileTool
 import com.github.bumblebee202111.intellijcontextbridge.parser.EditFileTool
+import com.github.bumblebee202111.intellijcontextbridge.parser.ReadFileTool
 import com.github.bumblebee202111.intellijcontextbridge.parser.RenameFileTool
 import com.github.bumblebee202111.intellijcontextbridge.parser.ToolParser
 import com.intellij.diff.DiffContentFactory
@@ -36,7 +37,10 @@ import java.awt.event.MouseEvent
 import java.io.File
 import javax.swing.*
 
-class DiffReceiverPanel(private val project: Project) {
+class ResponseViewerPanel(
+    private val project: Project,
+    private val onReadFileRequested: (ReadFileTool) -> Unit
+) {
 
     private val responseArea = JBTextArea().apply {
         lineWrap = true
@@ -44,15 +48,19 @@ class DiffReceiverPanel(private val project: Project) {
         emptyText.text = "Paste the AI's Markdown response here..."
         margin = JBUI.insets(5)
     }
-    private val listModel = DefaultListModel<AgentTool.Mutation>()
+    private val listModel = DefaultListModel<AgentTool>()
     
     private val actionList = JBList(listModel).apply {
         emptyText.text = "No actions parsed yet."
-        cellRenderer = object : ColoredListCellRenderer<AgentTool.Mutation>() {
+        cellRenderer = object : ColoredListCellRenderer<AgentTool>() {
             override fun customizeCellRenderer(
-                list: JList<out AgentTool.Mutation>, value: AgentTool.Mutation, index: Int, selected: Boolean, hasFocus: Boolean
+                list: JList<out AgentTool>, value: AgentTool, index: Int, selected: Boolean, hasFocus: Boolean
             ) {
                 when (value) {
+                    is ReadFileTool -> {
+                        append("[READ] ", SimpleTextAttributes.REGULAR_BOLD_ATTRIBUTES)
+                        append(value.paths.joinToString(", "), SimpleTextAttributes.REGULAR_ATTRIBUTES)
+                    }
                     is EditFileTool -> {
                         append("[EDIT] ", SimpleTextAttributes.REGULAR_BOLD_ATTRIBUTES)
                         append(value.filePath, SimpleTextAttributes.REGULAR_ATTRIBUTES)
@@ -120,8 +128,7 @@ class DiffReceiverPanel(private val project: Project) {
         val parseButton = JButton("Parse Markdown").apply {
             addActionListener {
                 val tools = ToolParser.parse(responseArea.text)
-                val mutations = tools.filterIsInstance<AgentTool.Mutation>()
-                handleIncomingMarkdown(responseArea.text, mutations)
+                handleIncomingMarkdown(responseArea.text, tools)
             }
         }
 
@@ -142,21 +149,24 @@ class DiffReceiverPanel(private val project: Project) {
         content.add(splitPane, BorderLayout.CENTER)
     }
 
-    fun handleIncomingMarkdown(markdownText: String, mutations: List<AgentTool.Mutation>): Boolean {
+    fun handleIncomingMarkdown(markdownText: String, tools: List<AgentTool>): Boolean {
         responseArea.text = markdownText
         listModel.clear()
-        mutations.forEach { listModel.addElement(it) }
-        if (mutations.isEmpty() && markdownText.isNotBlank()) {
+        tools.forEach { listModel.addElement(it) }
+        if (tools.isEmpty() && markdownText.isNotBlank()) {
             Messages.showInfoMessage("No actions found in the response.", "Parse Result")
             return false
         }
-        return mutations.isNotEmpty()
+        return tools.isNotEmpty()
     }
 
-    private fun executeAction(action: AgentTool.Mutation) {
+    private fun executeAction(action: AgentTool) {
         val projectPath = project.guessProjectDir()?.path ?: return
 
         when (action) {
+            is ReadFileTool -> {
+                onReadFileRequested(action)
+            }
             is EditFileTool -> {
                 val targetFile = File(projectPath, action.filePath)
                 var virtualFile = LocalFileSystem.getInstance().findFileByIoFile(targetFile)
