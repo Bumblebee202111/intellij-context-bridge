@@ -7,6 +7,7 @@ import com.github.bumblebee202111.intellijcontextbridge.state.ContextState
 import com.github.bumblebee202111.intellijcontextbridge.state.FileStateRecord
 import com.github.bumblebee202111.intellijcontextbridge.state.UserTurn
 import com.github.bumblebee202111.intellijcontextbridge.utils.ContextCapabilityUtil
+import com.github.bumblebee202111.intellijcontextbridge.utils.VcsUtil
 import com.intellij.openapi.components.service
 import com.intellij.openapi.fileEditor.FileDocumentManager
 import com.intellij.openapi.project.Project
@@ -28,7 +29,14 @@ object PayloadGenerator {
             ?: throw IllegalStateException("Missing required prompt resource: $filename")
     }
 
-    fun generatePayload(project: Project, contextState: ContextState, userPrompt: String, intentMode: IntentMode): AiPayload {
+    fun generatePayload(
+        project: Project,
+        contextState: ContextState,
+        userPrompt: String,
+        intentMode: IntentMode,
+        isCommit: Boolean = false,
+        dynamicVariables: Map<String, String> = emptyMap()
+    ): AiPayload {
         val projectDir = project.guessProjectDir()
         val attachments = mutableListOf<AiAttachment>()
 
@@ -50,7 +58,14 @@ object PayloadGenerator {
             val cmdName = match.groupValues[1]
             val cmd = commandRegistry.getCommand(cmdName)
             if (cmd != null) {
-                appliedCommands.add(cmd)
+                var body = cmd.promptBody
+
+                if (body.contains("{{vcs_diff}}")) {
+                    val diff = dynamicVariables["vcs_diff"] ?: VcsUtil.getProjectDiff(project)
+                    body = body.replace("{{vcs_diff}}", diff)
+                }
+
+                appliedCommands.add(cmd.copy(promptBody = body))
                 remainingPrompt = remainingPrompt.substring(match.range.last + 1).trimStart()
             } else {
                 break
@@ -204,7 +219,8 @@ object PayloadGenerator {
         val payload = AiPayload(
             systemInstructions = systemInstructionsText,
             text = markdownText,
-            attachments = attachments
+            attachments = attachments,
+            isCommit = isCommit
         )
         payload.dedupedFiles = dedupedFilesTracker
         payload.turn = newTurn

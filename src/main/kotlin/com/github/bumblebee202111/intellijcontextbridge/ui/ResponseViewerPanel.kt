@@ -3,9 +3,11 @@ package com.github.bumblebee202111.intellijcontextbridge.ui
 import com.github.bumblebee202111.intellijcontextbridge.parser.AgentTool
 import com.github.bumblebee202111.intellijcontextbridge.parser.DeleteFileTool
 import com.github.bumblebee202111.intellijcontextbridge.parser.EditFileTool
+import com.github.bumblebee202111.intellijcontextbridge.parser.FillCommitMessageTool
 import com.github.bumblebee202111.intellijcontextbridge.parser.ReadFileTool
 import com.github.bumblebee202111.intellijcontextbridge.parser.RenameFileTool
 import com.github.bumblebee202111.intellijcontextbridge.parser.ToolParser
+import com.github.bumblebee202111.intellijcontextbridge.services.CommitBridgeService
 import com.intellij.diff.DiffContentFactory
 import com.intellij.diff.DiffManager
 import com.intellij.diff.requests.SimpleDiffRequest
@@ -60,6 +62,11 @@ class ResponseViewerPanel(
                     is ReadFileTool -> {
                         append("[READ] ", SimpleTextAttributes.REGULAR_BOLD_ATTRIBUTES)
                         append(value.paths.joinToString(", "), SimpleTextAttributes.REGULAR_ATTRIBUTES)
+                    }
+                    is FillCommitMessageTool -> {
+                        append("[COMMIT] ", SimpleTextAttributes.REGULAR_BOLD_ATTRIBUTES)
+                        val preview = value.message.replace("\n", " ").take(50)
+                        append(preview, SimpleTextAttributes.REGULAR_ATTRIBUTES)
                     }
                     is EditFileTool -> {
                         append("[EDIT] ", SimpleTextAttributes.REGULAR_BOLD_ATTRIBUTES)
@@ -128,6 +135,13 @@ class ResponseViewerPanel(
         val parseButton = JButton("Parse Markdown").apply {
             addActionListener {
                 val tools = ToolParser.parse(responseArea.text)
+
+                // Automatically inject commit messages on manual parse
+                val commitTools = tools.filterIsInstance<FillCommitMessageTool>()
+                commitTools.forEach {
+                    project.getService(CommitBridgeService::class.java).injectCommitMessage(it.message)
+                }
+
                 handleIncomingMarkdown(responseArea.text, tools)
             }
         }
@@ -161,13 +175,15 @@ class ResponseViewerPanel(
     }
 
     private fun executeAction(action: AgentTool) {
-        val projectPath = project.guessProjectDir()?.path ?: return
-
         when (action) {
             is ReadFileTool -> {
                 onReadFileRequested(action)
             }
+            is FillCommitMessageTool -> {
+                project.getService(CommitBridgeService::class.java).injectCommitMessage(action.message)
+            }
             is EditFileTool -> {
+                val projectPath = project.guessProjectDir()?.path ?: return
                 val targetFile = File(projectPath, action.filePath)
                 var virtualFile = LocalFileSystem.getInstance().findFileByIoFile(targetFile)
 
@@ -210,6 +226,7 @@ class ResponseViewerPanel(
                 DiffManager.getInstance().showDiff(project, request)
             }
             is DeleteFileTool -> {
+                val projectPath = project.guessProjectDir()?.path ?: return
                 val virtualFile = LocalFileSystem.getInstance().findFileByIoFile(File(projectPath, action.filePath))
                 if (virtualFile != null) {
                     val psiFile = PsiManager.getInstance(project).findFile(virtualFile)
@@ -221,6 +238,7 @@ class ResponseViewerPanel(
                 }
             }
             is RenameFileTool -> {
+                val projectPath = project.guessProjectDir()?.path ?: return
                 val virtualFile = LocalFileSystem.getInstance().findFileByIoFile(File(projectPath, action.sourcePath))
                 val targetFile = File(projectPath, action.targetPath)
                 if (virtualFile != null) {

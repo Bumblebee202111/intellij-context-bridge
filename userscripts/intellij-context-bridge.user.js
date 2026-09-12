@@ -331,7 +331,6 @@
         `;
 
         const nativeTextAreaValueSetter = Object.getOwnPropertyDescriptor(window.HTMLTextAreaElement.prototype, "value").set;
-        const nativeInputValueSetter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, "value").set;
 
         function updateToggleStyles() {
             const askBtn = document.getElementById('cb-mode-ask');
@@ -634,6 +633,7 @@
         async function setTemperature(value) {
             const slider = document.querySelector('input[type="range"][aria-label="Temperature"]');
             if (slider) {
+                const nativeInputValueSetter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, "value").set;
                 nativeInputValueSetter.call(slider, value);
                 slider.dispatchEvent(new Event('input', { bubbles: true }));
                 slider.dispatchEvent(new Event('change', { bubbles: true }));
@@ -730,13 +730,8 @@
                         const text = await extractViaNativeCopy(lastTurn);
 
                         if (text) {
-                            const match = /<commit_message>([\s\S]*?)<\/commit_message>/.exec(text);
-                            if (match && match[1]) {
-                                sendToIde(`[COMMIT]${match[1].trim()}`);
-                                showToast('✅ Sent Commit Message to IDE', '#4CAF50', 3000);
-                            } else {
-                                showToast('❌ Failed to extract <commit_message> tag', '#F44336', 3000);
-                            }
+                            sendToIde(text);
+                            showToast('✅ Sent Commit Message to IDE', '#4CAF50', 3000);
                         } else {
                             showToast('❌ Failed to copy model response', '#F44336', 3000);
                         }
@@ -851,6 +846,7 @@
 
                                 const titleInput = dialog.querySelector('input[placeholder="Title"]');
                                 if (titleInput && titleInput.value !== expectedTitle) {
+                                    const nativeInputValueSetter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, "value").set;
                                     titleInput.focus();
                                     nativeInputValueSetter.call(titleInput, expectedTitle);
                                     titleInput.dispatchEvent(new Event('input', { bubbles: true }));

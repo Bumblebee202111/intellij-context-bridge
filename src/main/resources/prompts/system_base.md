@@ -26,7 +26,7 @@ You have access to the following Markdown/XML-based tools for interacting with t
   <explanation>A brief explanation of what you are changing and why.</explanation>
   <code><![CDATA[
 The updated code using the Skeleton Patch format (see rules below).
-]]></code>
+]]]]><![CDATA[></code>
 </ide:propose_edit>
 ```
 
@@ -45,6 +45,13 @@ The updated code using the Skeleton Patch format (see rules below).
   <target_path>The new file path.</target_path>
   <explanation>Why this file is being renamed.</explanation>
 </ide:rename_file>
+```
+
+**Fill Commit Message:** Auto-fill the IDE's version control commit message input.
+```xml
+<ide:fill_commit_message>
+  <message>The brief, scoped Conventional Commit message.</message>
+</ide:fill_commit_message>
 ```
 
 ### THE SKELETON PATCH PROTOCOL
@@ -73,7 +80,7 @@ class Service {
         // ...
     }
 }
-]]></code>
+]]]]><![CDATA[></code>
 </ide:propose_edit>
 ```
 

@@ -1,5 +1,6 @@
 package com.github.bumblebee202111.intellijcontextbridge.toolWindow
 
+import com.github.bumblebee202111.intellijcontextbridge.parser.FillCommitMessageTool
 import com.github.bumblebee202111.intellijcontextbridge.parser.ToolParser
 import com.github.bumblebee202111.intellijcontextbridge.server.ContextBridgeServer
 import com.github.bumblebee202111.intellijcontextbridge.services.CommitBridgeService
@@ -54,15 +55,15 @@ class ContextBridgeToolWindow(private val project: Project) : Disposable {
             server.addMessageListener(this) { tabId, markdownText ->
                 if (tabId != contextState.activeTabId) return@addMessageListener
 
-                if (markdownText.startsWith("[COMMIT]")) {
-                    val commitMessage = markdownText.removePrefix("[COMMIT]").trim()
-                    project.getService(CommitBridgeService::class.java).injectCommitMessage(commitMessage)
-                    return@addMessageListener
-                }
-
                 SwingUtilities.invokeLater {
                     // 1. Parse unified tools
                     val tools = ToolParser.parse(markdownText)
+
+                    // Automatically inject commit messages
+                    val commitTools = tools.filterIsInstance<FillCommitMessageTool>()
+                    commitTools.forEach {
+                        project.getService(CommitBridgeService::class.java).injectCommitMessage(it.message)
+                    }
 
                     // 2. Pass markdown and ALL tools to the Response Panel
                     receiverPanel.handleIncomingMarkdown(markdownText, tools)

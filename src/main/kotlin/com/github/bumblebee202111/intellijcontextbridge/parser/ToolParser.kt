@@ -30,6 +30,11 @@ data class RenameFileTool(
     override val explanation: String
 ) : AgentTool.Mutation
 
+data class FillCommitMessageTool(
+    val message: String,
+    override val explanation: String = ""
+) : AgentTool.Mutation
+
 object ToolParser {
 
     /**
@@ -98,6 +103,14 @@ object ToolParser {
             val explanation = Regex("<explanation>(.*?)</explanation>", RegexOption.DOT_MATCHES_ALL).find(content)?.groupValues?.get(1)?.trim() ?: ""
 
             if (sourcePath != null && targetPath != null) tools.add(RenameFileTool(sourcePath, targetPath, explanation))
+        }
+
+        // 5. Parse ide:fill_commit_message
+        val commitRegex = Regex("```(?:xml)?\\s*<ide:fill_commit_message>(.*?)</ide:fill_commit_message>\\s*```", RegexOption.DOT_MATCHES_ALL)
+        for (match in commitRegex.findAll(markdown)) {
+            val content = match.groupValues[1]
+            val message = Regex("<message>(.*?)</message>", RegexOption.DOT_MATCHES_ALL).find(content)?.groupValues?.get(1)?.trim() ?: ""
+            if (message.isNotBlank()) tools.add(FillCommitMessageTool(message))
         }
 
         return tools
