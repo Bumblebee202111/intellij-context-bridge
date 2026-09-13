@@ -18,6 +18,8 @@
 - Command Engine Refinement (Stacked invocations, Token insertion, Mode elevation, `<applied_commands>` boundaries)
 - Tool-Specific XML Tags (Bypassing RLHF triggers & strict XML parsing)
 - Code Block Jailbreak & XML Namespacing (Bypassing native function-calling UI interception)
+- Unified Tool Hierarchy & Response Viewer Panel
+- Dynamic Command Context Engine (`{{variable}}` interpolation)
 
 ## Upcoming Focus
 

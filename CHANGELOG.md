@@ -26,3 +26,7 @@
 - **Code Block Jailbreak & Tool Namespacing**: Introduced `ide:` XML namespace and strict Markdown code block wrappers for tool calls to reliably bypass AI Studio's native function-calling UI interception, especially when Grounding is enabled.
 - **Skeleton Patch Protocol Refinement**: Cured LLM "Diff Anchor Paranoia" by strictly enforcing that unchanged blocks retain ONLY their signatures/headers with zero internal lines, backed by concrete few-shot examples.
 - **UX Improvement**: Removed auto-collapse behavior in the Context Tree to preserve user expansion state and visual feedback during rapid context toggling.
+- **Unified Tool Hierarchy**: Consolidated fragmented parsers into a sealed `AgentTool` hierarchy (`ReadFile`, `EditFile`, `DeleteFile`, `RenameFile`, `FillCommitMessage`) and unified `ToolParser`.
+- **Response Viewer UI**: Replaced dedicated diff tab with a generalized "AI Response" viewer, coordinating interactive tool review and direct execution.
+- **Dynamic Context Engine**: Added variable interpolation (`{{vcs_diff}}`) allowing slash commands like `/commit` to autonomously gather IDE runtime context.
+- **Resilient Commit Injection**: Robust downward Swing hierarchy traversal to auto-fill commit inputs across active tool windows with graceful clipboard fallbacks.
