@@ -1,11 +1,12 @@
 package com.github.bumblebee202111.intellijcontextbridge.toolWindow
 
-import com.github.bumblebee202111.intellijcontextbridge.parser.ToolCallParser
+import com.github.bumblebee202111.intellijcontextbridge.parser.FillCommitMessageTool
+import com.github.bumblebee202111.intellijcontextbridge.parser.ToolParser
 import com.github.bumblebee202111.intellijcontextbridge.server.ContextBridgeServer
 import com.github.bumblebee202111.intellijcontextbridge.services.CommitBridgeService
 import com.github.bumblebee202111.intellijcontextbridge.state.ContextState
 import com.github.bumblebee202111.intellijcontextbridge.ui.ContextComposerPanel
-import com.github.bumblebee202111.intellijcontextbridge.ui.DiffReceiverPanel
+import com.github.bumblebee202111.intellijcontextbridge.ui.ResponseViewerPanel
 import com.github.bumblebee202111.intellijcontextbridge.ui.SessionHistoryPanel
 import com.intellij.openapi.Disposable
 import com.intellij.openapi.application.ApplicationManager
@@ -33,13 +34,17 @@ class ContextBridgeToolWindow(private val project: Project) : Disposable {
             val composerPanel = ContextComposerPanel(project)
             Disposer.register(this, composerPanel)
 
-            val receiverPanel = DiffReceiverPanel(project)
+            val receiverPanel = ResponseViewerPanel(project) { readFileTool ->
+                composerPanel.handleReadFileToolCall(readFileTool.paths, readFileTool.explanation)
+                tabbedPane.selectedIndex = 0
+            }
+
             val historyPanel = SessionHistoryPanel(project) {
                 composerPanel.refreshUi()
             }
 
             tabbedPane.addTab("1. Send Context", composerPanel.content)
-            tabbedPane.addTab("2. Apply Diffs", receiverPanel.content)
+            tabbedPane.addTab("2. AI Response", receiverPanel.content)
             tabbedPane.addTab("3. Session History", historyPanel.content)
 
             tabbedPane.addChangeListener {
@@ -50,34 +55,21 @@ class ContextBridgeToolWindow(private val project: Project) : Disposable {
             server.addMessageListener(this) { tabId, markdownText ->
                 if (tabId != contextState.activeTabId) return@addMessageListener
 
-                if (markdownText.startsWith("[COMMIT]")) {
-                    val commitMessage = markdownText.removePrefix("[COMMIT]").trim()
-                    project.getService(CommitBridgeService::class.java).injectCommitMessage(commitMessage)
-                    return@addMessageListener
-                }
-
                 SwingUtilities.invokeLater {
-                    // 1. Extract and handle read_file tool calls
-                    val toolCalls = ToolCallParser.parse(markdownText)
-                    val readFileCalls = toolCalls.filter { it.name == "read_file" }
+                    // 1. Parse unified tools
+                    val tools = ToolParser.parse(markdownText)
 
-                    var handledReadFile = false
-                    if (readFileCalls.isNotEmpty()) {
-                        val allPaths = readFileCalls.flatMap { it.paths }.distinct()
-                        val combinedReason = readFileCalls.joinToString("\n") { it.reason }.trim()
-                        composerPanel.handleReadFileToolCall(allPaths, combinedReason)
-                        handledReadFile = true
+                    // Automatically inject commit messages
+                    val commitTools = tools.filterIsInstance<FillCommitMessageTool>()
+                    commitTools.forEach {
+                        project.getService(CommitBridgeService::class.java).injectCommitMessage(it.message)
                     }
 
-                    // 2. Always pass the text to the Diff Panel (it will extract propose_edit tools)
-                    val hasSnippets = receiverPanel.handleIncomingMarkdown(markdownText)
+                    // 2. Pass markdown and ALL tools to the Response Panel
+                    receiverPanel.handleIncomingMarkdown(markdownText, tools)
 
-                    // 3. Smart Tab Switching
-                    if (hasSnippets) {
-                        tabbedPane.selectedIndex = 1
-                    } else if (handledReadFile) {
-                        tabbedPane.selectedIndex = 0
-                    }
+                    // 3. Always switch to the response viewer when a new message arrives
+                    tabbedPane.selectedIndex = 1
                 }
             }
 

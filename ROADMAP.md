@@ -21,6 +21,8 @@
 - CDATA Code Payloads (Preventing XML escaping and indentation drift)
 - Userscript DOM Resilience Updates
 - Prompt Tuning for RPD Efficiency (Continuous output & read scope limits)
+- Unified Tool Hierarchy & Response Viewer Panel
+- Dynamic Command Context Engine (`{{variable}}` interpolation)
 
 ## Upcoming Focus
 
