@@ -39,6 +39,7 @@ The plugin MUST support reading local configuration directories (e.g., `.context
 * *Command Shadowing:* Defines project-specific Slash Commands (`commands/*.md`) via Markdown with YAML frontmatter, allowing local macros to seamlessly shadow/override built-in plugin defaults.
 * *Command Composition:* The system MUST support stacking multiple commands (e.g., `/analyze /plan`). It MUST NOT expand command bodies into the UI text area. Instead, it MUST dynamically combine them in the payload using explicit XML semantic boundaries (`<applied_commands>`) to prevent directive collisions.
 * *Dynamic Context Variables:* Commands MUST support runtime variable interpolation (e.g., `{{vcs_diff}}`) to pull live IDE environment state dynamically without bloating static chat prompts.
+* *Command Design Constraints:* Command definitions MUST utilize dense, direct instructions rather than verbose conversational padding, optimizing for 2026 frontier model comprehension and token efficiency.
 
 ## 6. Diff-Based Application
 The plugin MUST NOT silently overwrite local files. All incoming code from the AI MUST be routed through a visual side-by-side diff interface before being applied to the disk, unless explicitly requested via a native IDE integration (e.g., Commit Message auto-fill). Destructive actions (like file deletion or renaming) MUST be routed through native IDE refactoring dialogs to ensure structural safety.

@@ -6,6 +6,7 @@
 
 ## [Unreleased]
 ### Core Capabilities Implemented
+- **Meta-Commands**: Introduced `/cmd` and `/dev-cmd` to allow the AI to dynamically design, review, and generate new slash commands.
 - **Prompt & Formatting Resilience**: Migrated to CDATA blocks for code payloads to prevent XML entity escaping and LLM auto-indentation issues.
 - **Token & RPD Efficiency**: Refined system instructions to prevent redundant reads of already-complete files and encourage continuous output alongside tool usage.
 - **Web UI Automation**: Updated userscript DOM selectors to match Google AI Studio's latest layout changes (e.g., `ms-run-button`).

@@ -23,6 +23,7 @@
 - Prompt Tuning for RPD Efficiency (Continuous output & read scope limits)
 - Unified Tool Hierarchy & Response Viewer Panel
 - Dynamic Command Context Engine (`{{variable}}` interpolation)
+- Meta-Commands (AI self-extending macros)
 
 ## Upcoming Focus
 
