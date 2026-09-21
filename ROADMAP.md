@@ -24,6 +24,7 @@
 - Unified Tool Hierarchy & Response Viewer Panel
 - Dynamic Command Context Engine (`{{variable}}` interpolation)
 - Meta-Commands (AI self-extending macros)
+- Targeted Review Command Suite (Bugs, Simplify, Arch)
 
 ## Upcoming Focus
 
