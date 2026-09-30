@@ -23,7 +23,7 @@ The system MUST separate static behavioral directives from the dynamic project c
 * *Code Payload Constraints:* The system MUST require code payloads to be wrapped in `<![CDATA[...]]>` sections to prevent the LLM from applying XML auto-indentation or escaping characters (like `<` to `&lt;`).
 * *Tool Schema & Model Architecture:* All model actions MUST conform to a unified `AgentTool` hierarchy separating read requests from state-mutating operations.
 * *Skeleton Patch Protocol:* The AI MUST be instructed to output code using a "Skeleton Patch" format. To prevent "Diff Anchor Paranoia", the system MUST strictly enforce that unchanged blocks retain ONLY their signatures/headers with zero internal lines.
-* *Extraction Constraints:* The system MUST rely on automated native UI actions (e.g., simulated clipboard copy) for extraction rather than brittle DOM parsing to ensure LLM internal thoughts or raw HTML nodes are safely stripped.
+* *Extraction Constraints:* The system MUST rely on automated native UI actions (e.g., simulated clipboard copy) for extraction rather than brittle DOM parsing to ensure LLM internal thoughts or raw HTML nodes are safely stripped. To ensure stability under background browser throttling, the system MUST include a dedicated diagnostic bridge to verify DOM mutation success via explicit assertions and strict timeouts.
 * *Context Awareness & Tool Calling:* The AI MUST be provided with XML-based tool schemas (e.g., `<ide:read_file>`, `<ide:delete_file>`). The system MUST intercept these tool calls and present them in the UI for manual user approval or visual review. The prompt MUST forbid the AI from redundantly reading files already provided in their entirety to conserve RPD quota.
 
 ## 4. Proactive Context Suggestions

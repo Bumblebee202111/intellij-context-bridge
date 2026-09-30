@@ -117,12 +117,6 @@
         });
     }
 
-    function getChatTitle() {
-        const h1 = document.querySelector('.page-title h1');
-        if (h1 && h1.textContent.trim()) return h1.textContent.trim();
-        return document.title.replace(' - Google AI Studio', '').trim() || 'New Chat';
-    }
-
     function sendToIde(text) {
         if (!win.__cbIsBound) return;
 
@@ -589,6 +583,92 @@
                     setInterval(() => this.injectTurnButtons(), 1000);
                     setInterval(() => this.injectModeToggle(), 1000);
                 }
+            },
+            Diagnostics: {
+                async runWithTimeout(name, actionFn, timeoutMs = 5000) {
+                    const start = performance.now();
+                    try {
+                        await Promise.race([
+                            actionFn(),
+                            new Promise((_, reject) => setTimeout(() => reject(new Error("TIMEOUT")), timeoutMs))
+                        ]);
+                        const duration = Math.round(performance.now() - start);
+                        return { name, status: 'PASS', durationMs: duration };
+                    } catch (e) {
+                        const duration = Math.round(performance.now() - start);
+                        if (e.message === "TIMEOUT") {
+                            return { name, status: 'TIMEOUT', durationMs: duration, error: `Exceeded ${timeoutMs}ms` };
+                        }
+                        return { name, status: 'FAIL', durationMs: duration, error: e.stack || e.toString() };
+                    }
+                },
+                async run(ws) {
+                    showToast('🧪 Running Diagnostics...', '#9C27B0', 0);
+                    const steps = [];
+                    const totalStart = performance.now();
+
+                    steps.push(await this.runWithTimeout('Set Model to 3.7 Flash', async () => {
+                        await AIStudioDOM.Controls.setModel('models/gemini-3.7-flash');
+
+                        const selectorBtn = document.querySelector('.model-selector-card');
+                        if (!selectorBtn) throw new Error("Model selector card not found in DOM");
+                        if (!selectorBtn.textContent.includes('3.7 Flash')) {
+                            throw new Error(`Model swap failed. Current text: ${selectorBtn.textContent}`);
+                        }
+                    }));
+
+                    steps.push(await this.runWithTimeout('Set Temperature to 0.2', async () => {
+                        await AIStudioDOM.Controls.setTemperature(0.2);
+
+                        const slider = document.querySelector('input[type="range"][aria-label="Temperature"]');
+                        if (!slider) throw new Error("Temperature slider not found in DOM");
+                        if (parseFloat(slider.value) !== 0.2) {
+                            throw new Error(`Temperature swap failed. Current value: ${slider.value}`);
+                        }
+                    }));
+
+                    steps.push(await this.runWithTimeout('Open/Close System Instructions', async () => {
+                        const sysCard = document.querySelector('[data-test-system-instructions-card]');
+                        if (!sysCard) throw new Error("System card not found");
+                        sysCard.click();
+                        const dialog = await AIStudioDOM.Utils.waitForElement('mat-dialog-container', 3000);
+                        if (!dialog) throw new Error("Dialog did not appear");
+                        await new Promise(r => setTimeout(r, 500));
+                        const closeBtn = dialog.querySelector('button[aria-label="Close panel"], button[data-test-close-button]');
+                        if (closeBtn) closeBtn.click();
+                        await new Promise(r => setTimeout(r, 500));
+
+                        const dialogStillOpen = document.querySelector('mat-dialog-container');
+                        if (dialogStillOpen) {
+                            throw new Error("System instructions dialog failed to close");
+                        }
+                    }));
+
+                    steps.push(await this.runWithTimeout('Restore Settings (Pro, Temp 0.7)', async () => {
+                        await AIStudioDOM.Controls.setModel('models/gemini-3.1-pro-preview');
+                        await AIStudioDOM.Controls.setTemperature(0.7);
+
+                        const selectorBtn = document.querySelector('.model-selector-card');
+                        if (!selectorBtn) throw new Error("Model selector card not found in DOM");
+                        if (!selectorBtn.textContent.includes('3.1 Pro')) {
+                            throw new Error(`Model restore failed. Current text: ${selectorBtn.textContent}`);
+                        }
+
+                        const slider = document.querySelector('input[type="range"][aria-label="Temperature"]');
+                        if (!slider) throw new Error("Temperature slider not found in DOM");
+                        if (parseFloat(slider.value) !== 0.7) {
+                            throw new Error(`Temperature restore failed. Current value: ${slider.value}`);
+                        }
+                    }));
+
+                    const totalDuration = Math.round(performance.now() - totalStart);
+                    const report = { totalDurationMs: totalDuration, steps };
+
+                    if (ws && ws.readyState === WebSocket.OPEN) {
+                        ws.send("[DIAGNOSTIC_RESULT]" + JSON.stringify(report));
+                    }
+                    showToast('✅ Diagnostics Complete', '#4CAF50', 3000);
+                }
             }
         };
 
@@ -632,6 +712,10 @@
                                 try {
                                     win.__cbCommands = JSON.parse(event.data.substring(10));
                                 } catch(e) {}
+                                return;
+                            }
+                            if (event.data === '[DIAGNOSTIC_RUN]') {
+                                AIStudioDOM.Diagnostics.run(ws);
                                 return;
                             }
                             lastActivePort = port;

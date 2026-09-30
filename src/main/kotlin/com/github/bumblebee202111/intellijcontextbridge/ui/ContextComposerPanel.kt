@@ -434,6 +434,17 @@ class ContextComposerPanel(private val project: Project) : Disposable {
                     refreshUi()
                 }
             })
+            addSeparator()
+            add(object : AnAction("Run Web UI Diagnostics", "Test stability of background DOM interactions", AllIcons.Actions.StartDebugger) {
+                override fun actionPerformed(e: AnActionEvent) {
+                    val tabId = contextState.activeTabId
+                    if (tabId != null) {
+                        DiagnosticDialog(project, tabId).show()
+                    } else {
+                        Messages.showWarningDialog("No active AI Studio tab bound. Please select a tab first.", "Diagnostics Failed")
+                    }
+                }
+            })
         }
 
         val nativeToolbar =

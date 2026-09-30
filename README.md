@@ -23,6 +23,7 @@ A native IntelliJ/Android Studio plugin designed to connect the IDE with web-bas
 8. **Native IDE Feel:** Built using standard IntelliJ UI components to ensure keyboard shortcuts, editor behaviors, and layout scaling feel identical to native IDE features, backed by yielding Coroutines to prevent typing freezes.
 9. **Diagnostic Awareness:** (Planned) Supports injecting active IDE compiler errors and warnings directly into the payload, providing deterministic constraints for the AI to resolve.
 10. **Ephemeral Workflows:** Seamlessly handles background tasks (like AI Commit Generation) by transiently overriding LLM settings, extracting the result, and automatically scrubbing the chat history to keep the context window pristine.
+11. **Diagnostic Bridge:** A built-in two-way telemetry system that tests the companion userscript's automation health, specifically verifying DOM stability and mutation success when the browser tab is backgrounded and throttled.
 
 ## Development Setup Requirements
 * IntelliJ Platform Plugin Template (Kotlin)

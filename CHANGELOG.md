@@ -6,6 +6,8 @@
 
 ## [Unreleased]
 ### Core Capabilities Implemented
+- **Diagnostic Bridge**: Implemented a two-way telemetry system (IDE to Userscript) to verify background DOM stability and automation health.
+- **Userscript Modularization**: Refactored web automation into a centralized `AIStudioDOM` namespace with strict state assertions and timeouts.
 - **Targeted Review Commands**: Introduced a unified `/review` family (`/review-bugs`, `/review-simplify`, `/review-arch`) to enforce specific analysis lenses and prevent generic AI slop.
 - **Meta-Commands**: Introduced `/cmd` and `/dev-cmd` to allow the AI to dynamically design, review, and generate new slash commands.
 - **Prompt & Formatting Resilience**: Migrated to CDATA blocks for code payloads to prevent XML entity escaping and LLM auto-indentation issues.

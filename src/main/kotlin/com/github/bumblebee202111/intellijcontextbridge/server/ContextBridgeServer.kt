@@ -33,6 +33,7 @@ class ContextBridgeServer(private val scope: CoroutineScope) : Disposable {
     private val tabsListeners = CopyOnWriteArrayList<(List<BrowserTab>) -> Unit>()
     private val messageListeners = CopyOnWriteArrayList<(String, String) -> Unit>()
     private val handshakeListeners = CopyOnWriteArrayList<(BrowserTab) -> Unit>()
+    private val diagnosticListeners = CopyOnWriteArrayList<(String, String) -> Unit>()
 
     fun addTabsListener(parentDisposable: Disposable, listener: (List<BrowserTab>) -> Unit) {
         tabsListeners.add(listener)
@@ -47,6 +48,15 @@ class ContextBridgeServer(private val scope: CoroutineScope) : Disposable {
     fun addHandshakeListener(parentDisposable: Disposable, listener: (BrowserTab) -> Unit) {
         handshakeListeners.add(listener)
         Disposer.register(parentDisposable) { handshakeListeners.remove(listener) }
+    }
+
+    fun addDiagnosticListener(parentDisposable: Disposable, listener: (String, String) -> Unit) {
+        diagnosticListeners.add(listener)
+        Disposer.register(parentDisposable) { diagnosticListeners.remove(listener) }
+    }
+
+    fun sendDiagnosticRun(tabId: String) {
+        sendToTab(tabId, "[DIAGNOSTIC_RUN]")
     }
 
     fun getActiveTabs(): List<BrowserTab> = activeTabs.values.toList()
@@ -98,6 +108,11 @@ class ContextBridgeServer(private val scope: CoroutineScope) : Disposable {
                                                 notifyTabsChanged()
 
                                                 handshakeListeners.forEach { it.invoke(tab) }
+                                            }
+                                        } else if (text.startsWith("[DIAGNOSTIC_RESULT]")) {
+                                            val json = text.removePrefix("[DIAGNOSTIC_RESULT]")
+                                            currentTabId?.let { tabId ->
+                                                diagnosticListeners.forEach { it.invoke(tabId, json) }
                                             }
                                         } else {
                                             currentTabId?.let { tabId ->
