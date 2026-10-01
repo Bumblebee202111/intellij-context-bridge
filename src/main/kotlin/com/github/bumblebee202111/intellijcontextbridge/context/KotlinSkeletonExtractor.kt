@@ -66,7 +66,9 @@ class KotlinSkeletonExtractor : LanguageSkeletonExtractor {
 
                 val children = declaration.body?.declarations?.mapNotNull { processKtDeclaration(it, "$indent    ") } ?: emptyList()
 
-                if (children.isEmpty()) {
+                if (body == null) {
+                    "$indent$headerText"
+                } else if (children.isEmpty()) {
                     "$indent$headerText {}"
                 } else {
                     "$indent$headerText {\n${children.joinToString("\n\n")}\n$indent}"
