@@ -6,16 +6,11 @@ import com.intellij.psi.PsiManager
 
 object PsiSkeletonExtractor {
 
-    private val extractors: List<LanguageSkeletonExtractor> = listOf(
-        KotlinSkeletonExtractor(),
-        JavaSkeletonExtractor()
-    )
-
     fun extract(project: Project, file: VirtualFile): String? {
         val psiManager = PsiManager.getInstance(project)
         val psiFile = psiManager.findFile(file) ?: return null
 
-        val extractor = extractors.firstOrNull { it.isSupported(psiFile) }
+        val extractor = LanguageSkeletonExtractor.EP_NAME.extensionList.firstOrNull { it.isSupported(psiFile) }
         return extractor?.extract(psiFile)
     }
 }

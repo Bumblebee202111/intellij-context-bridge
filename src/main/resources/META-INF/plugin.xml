@@ -10,9 +10,19 @@
     <depends>com.intellij.modules.platform</depends>
     <depends>com.intellij.modules.java</depends>
     <depends>org.jetbrains.kotlin</depends>
+    <depends optional="true" config-file="js-support.xml">JavaScript</depends>
 
     <extensions defaultExtensionNs="org.jetbrains.kotlin">
         <supportsKotlinPluginMode supportsK2="true" />
+    </extensions>
+
+    <extensionPoints>
+        <extensionPoint name="skeletonExtractor" interface="com.github.bumblebee202111.intellijcontextbridge.context.LanguageSkeletonExtractor" dynamic="true"/>
+    </extensionPoints>
+
+    <extensions defaultExtensionNs="com.github.bumblebee202111.intellijcontextbridge">
+        <skeletonExtractor implementation="com.github.bumblebee202111.intellijcontextbridge.context.KotlinSkeletonExtractor"/>
+        <skeletonExtractor implementation="com.github.bumblebee202111.intellijcontextbridge.context.JavaSkeletonExtractor"/>
     </extensions>
 
     <extensions defaultExtensionNs="com.intellij">
