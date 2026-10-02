@@ -3,6 +3,8 @@
 *Note: This project evolves organically through active dogfooding. This document serves as an idea backlog rather than a strict sequential plan.*
 
 ## Completed Milestones
+- JavaScript, TypeScript, and Vue Skeleton Extraction
+- Kotlin Skeleton Extraction Refinements (Data classes, implicit returns, constructor defaults)
 - Core Context Extraction & UI
 - Session History, True Undo, & Deduplication
 - Diff-Based Code Application

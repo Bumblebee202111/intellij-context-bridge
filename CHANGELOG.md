@@ -6,6 +6,8 @@
 
 ## [Unreleased]
 ### Core Capabilities Implemented
+- **Extended Language Support**: Added AST-based Skeleton extractors for JavaScript, TypeScript, and Vue (`<script setup>` and Options API), utilizing optional plugin dependencies for Community Edition compatibility.
+- **Kotlin Skeleton Refinements**: Improved Kotlin extraction to preserve bodyless data classes, handle implicit return expression functions, and safely strip inferred-type properties and primary constructor defaults.
 - **Diagnostic Bridge**: Implemented a two-way telemetry system (IDE to Userscript) to verify background DOM stability and automation health.
 - **Userscript Modularization**: Refactored web automation into a centralized `AIStudioDOM` namespace with strict state assertions and timeouts.
 - **Targeted Review Commands**: Introduced a unified `/review` family (`/review-bugs`, `/review-simplify`, `/review-arch`) to enforce specific analysis lenses and prevent generic AI slop.

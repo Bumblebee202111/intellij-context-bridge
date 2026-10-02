@@ -11,7 +11,7 @@ The plugin consists of four decoupled layers. Implementation details for each la
 ## 2. Context Extraction & Suggestion Engine
 * **PSI Parser (Program Structure Interface):**
   * *Input:* `PsiFile`
-  * *Logic:* Walks the syntax tree. For `Skeleton` mode, it extracts the structural overview of the file (public signatures, properties, class structures) while stripping out internal logic and unused imports.
+  * *Logic:* Walks the syntax tree. For `Skeleton` mode, it extracts the structural overview of the file (public signatures, properties, class structures) while stripping out internal logic and unused imports. Utilizes a dynamic Extension Point (`skeletonExtractor`) to safely support Kotlin, Java, JS, TS, and Vue without breaking classloader compatibility on IntelliJ Community Edition.
   * *Fallback:* For non-code files, `Skeleton` mode safely indicates the file's presence while omitting its raw contents.
 * **Context Suggestion Engine:**
   * *Heuristic Seeds:* Monitors active editors, background tabs, Git modifications, and regex-matched prompt mentions to identify the user's current working set.
