@@ -1,13 +1,26 @@
 # Google AI Studio Web UI
 
-This document contains factual knowledge about the Google AI Studio DOM and web environment for userscript automation.
+This document contains dense, factual observations regarding the native Google AI Studio web environment and its DOM architecture.
 
-- **DOM Security:** The environment enforces Trusted Types, blocking raw `innerHTML` assignments. Safe native DOM APIs are required.
-- **Markdown Rendering:** Its internal Markdown parser natively supports syntax highlighting for code blocks (using triple backticks) even when they are nested inside raw XML tags.
-- **Event Handling:** Relies heavily on Angular's internal event propagation for submission shortcuts (e.g., `Ctrl+Enter`). Use native property setters (e.g., `Object.getOwnPropertyDescriptor(window.HTMLTextAreaElement.prototype, "value").set`) followed by dispatching standard `input`/`change` events.
-- **System Instructions:** Managed via a clickable card that opens a `mat-dialog-container` overlay.
-- **Generation & Extraction Surface:** Upon submission, the UI displays a temporary, universal "Thinking" indicator. For reasoning models, this is dynamically replaced by an explicit, expandable "Thoughts" block. The final response is rendered in a distinct chat turn container housing a native "Copy" button, which yields clean, sanitized Markdown. (Note: Native UI interception blocks, like function calls, bypass this extraction).
-- **Native Function Calls:** Supports Function Calling. Intercepts native control tokens (often triggered by standard "tool" schemas) and renders an interactive `<ms-function-call-chunk>`, halting standard text generation.
-- **Session Identity:** New sessions default to generic titles like "Playground" or "Untitled prompt". After the first generation, the title auto-updates and becomes the most stable persistent identifier for the conversation. URL pathnames also update dynamically, but their structure varies depending on whether it is a shared link or based on the entry point (e.g., `/prompts` vs. `/app/prompts`).
-- **Parameter Controls:** Features specific UI components for Model selection (e.g., **Gemini 3.1 Pro Preview** as the primary capability driver, or Gemini 3.7 Flash for speed and independent quota), Thinking Level, and Temperature. Note that changing the selected model automatically resets other parameters to their default states.
-- **Attachments:** Media and file uploads are processed via global drag-and-drop event listeners rather than standard `<input type="file">` elements.
+- **Security & Rendering:**
+  - Enforces Trusted Types for all DOM mutations.
+  - The native Markdown parser supports syntax highlighting for triple-backtick code blocks even when nested inside raw XML nodes.
+- **Architecture & Event Lifecycle:**
+  - Built on Angular Material MDC. Dynamic elements like dropdowns (`<mat-select>`) mount asynchronously to a root `.cdk-overlay-container`.
+  - Toggles (`<mat-slide-toggle>`) utilize an inner `button[role="switch"]` relying on `aria-checked` attributes for state.
+  - Event propagation and submission shortcuts (`Ctrl+Enter`) are strictly bound to Angular's internal change detection lifecycle.
+- **Session Lifecycle & Inheritance:**
+  - *Cold Start:* Navigating to the root URL initializes a "Playground" session with factory-default parameters.
+  - *Inheritance:* Triggering a new prompt from within an existing chat creates an "Untitled prompt" that natively clones the predecessor's model, system instructions, tools, and temperature.
+  - *Persistence:* Chat titles auto-generate after the first generation, updating URL pathnames dynamically.
+- **Parameter & Tool Dynamics:**
+  - *Model Swaps:* Changing the active model immediately resets all companion parameters (Temperature, Thinking Level, Tools) to that specific model's factory defaults.
+  - *Conditional UI:* Controls such as the "Thinking Level" dropdown mount and unmount asynchronously based on the active model's reasoning capabilities.
+  - *System Instructions:* Managed via dialog overlays (`[data-test-system-instructions-card]`), which persist named instruction profiles directly in client storage.
+- **Generation & Artifacts:**
+  - *Thinking:* Submissions display an active progress state. If the model engages in non-trivial dynamic deliberation, an expandable "Thoughts" accordion is mounted; otherwise, the final text renders directly without a thought container.
+  - *Extraction:* Full-turn extraction is housed inside the turn's overflow menu (`ms-chat-turn-options`), which provides distinct "Copy as text" (`.copy-rendered-button`) and "Copy as markdown" (`.copy-markdown-button`) actions.
+  - *Function Calls:* Native tool invocations render interactive `<ms-function-call-chunk>` blocks within the generation stream.
+- **Attachments:**
+  - Media and file uploads bypass standard `<input type="file">` elements, relying entirely on global drag-and-drop event listeners.
+]]

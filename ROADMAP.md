@@ -28,6 +28,8 @@
 - Meta-Commands (AI self-extending macros)
 - Targeted Review Command Suite (Bugs, Simplify, Arch)
 - Diagnostic Bridge & Userscript Modularization
+- Userscript Per-Model Memory & Snapshot Restoration
+- Implicit Chat Detection (Polite AI Studio Guest Mode)
 
 ## Upcoming Focus
 

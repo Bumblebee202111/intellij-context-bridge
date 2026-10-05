@@ -6,6 +6,9 @@
 
 ## [Unreleased]
 ### Core Capabilities Implemented
+- **Implicit Chat Detection**: Decoupled network state from chat state. The userscript politely disables its custom UI and shortcut interception during normal AI Studio usage, activating only when the Context Bridge system instructions are detected.
+- **Per-Model Memory**: Replaced hardcoded settings with persistent, per-model preferences (temperature, thinking level, URL context) and intelligent session bootstrapping (`Playground` vs `Untitled prompt`).
+- **Precise State Restoration**: Ephemeral workflows (like AI commit generation) now utilize exact state snapshots to perfectly restore the user's prior model and parameter configurations after execution.
 - **Extended Language Support**: Added AST-based Skeleton extractors for JavaScript, TypeScript, and Vue (`<script setup>` and Options API), utilizing optional plugin dependencies for Community Edition compatibility.
 - **Kotlin Skeleton Refinements**: Improved Kotlin extraction to preserve bodyless data classes, handle implicit return expression functions, and safely strip inferred-type properties and primary constructor defaults.
 - **Diagnostic Bridge**: Implemented a two-way telemetry system (IDE to Userscript) to verify background DOM stability and automation health.

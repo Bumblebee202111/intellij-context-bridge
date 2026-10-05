@@ -13,12 +13,13 @@ The system MUST support two primary context states for files:
 The system MUST track the state of the conversation to prevent context bloat and maintain synchronization with the LLM.
 * *Turn Tracking:* State is maintained as a persistent timeline of user turns, allowing users to undo or delete specific payloads if they revert a turn in the web UI.
 * *Deduplication:* The system MUST hash the extracted contents of requested files. If a file is requested at the same context state in a subsequent turn and its extracted hash is unchanged, the system MUST omit it entirely from the new payload.
-* *Ephemeral Tasks:* Specialized workflows (e.g., background commit generation) MUST execute invisibly and explicitly bypass session history to prevent context bloat and temporal confusion.
+* *Ephemeral Tasks:* Specialized workflows (e.g., background commit generation) MUST execute invisibly, utilizing precise pre-execution snapshots to perfectly restore the user's prior model and parameter state, and explicitly bypass session history to prevent context bloat and temporal confusion.
 * *Constraint:* The system MUST NOT generate chatty placeholders (e.g., `[File unchanged]`) in the payload for deduplicated files.
 
 ## 3. System Instructions & Intent Modes
 The system MUST separate static behavioral directives from the dynamic project context.
 * *Intent Modes:* The system MUST support distinct interaction modes (e.g., "Ask" for read-only analysis and "Edit" for code generation). This MUST be enforced via unified system instructions and XML micro-anchoring (e.g., `<user_prompt mode="...">`) to ensure strong LLM adherence.
+* *Implicit UI Detection:* The companion userscript MUST politely coexist with normal web UI usage by implicitly detecting the presence of the Context Bridge system instructions, disabling its interception and custom UI when the user is in a standard chat.
 * *Edit Constraints & Prompt De-weaponization:* In generation modes, all file modifications MUST be routed through strict tool-specific XML tags (e.g., `<ide:propose_edit>`). To prevent aggressive RLHF models from triggering native function-call UI interceptions (especially with Grounding enabled) that suppress conversational reasoning and break extraction, the system MUST mandate that all tool calls are wrapped in standard Markdown code blocks and utilize a custom namespace (e.g., `ide:`).
 * *Code Payload Constraints:* The system MUST require code payloads to be wrapped in `<![CDATA[...]]>` sections to prevent the LLM from applying XML auto-indentation or escaping characters (like `<` to `&lt;`).
 * *Tool Schema & Model Architecture:* All model actions MUST conform to a unified `AgentTool` hierarchy separating read requests from state-mutating operations.
