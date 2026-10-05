@@ -20,6 +20,7 @@
     win.__cbCurrentMode = 'ASK';
     win.__cbCommands = [];
     win.__cbIsBound = false;
+    win.__cbIsBridgeChat = false;
     win.__cbProjectName = 'IntelliJ';
 
     const PORTS = Array.from({length: 10}, (_, i) => 37373 + i);
@@ -84,23 +85,18 @@
 
     function updateStatusPill() {
         let connected = Array.from(activeSockets.values()).some(ws => ws.readyState === WebSocket.OPEN);
+        let modeText = win.__cbIsBridgeChat ? '⚡ Bridge' : '💬 Normal';
 
         if (connected && win.__cbIsBound) {
-            showToast(`🎯 Bound to ${win.__cbProjectName}`, '#4CAF50', 0);
+            showToast(`🎯 ${win.__cbProjectName} (${modeText})`, '#4CAF50', 0);
         } else if (connected && !win.__cbIsBound) {
-            showToast('🔗 Connected (Standby)', '#757575', 0);
+            showToast(`🔗 Standby (${modeText})`, '#757575', 0);
         } else {
-            showToast('🔌 IDE Disconnected', '#F44336', 0);
+            showToast(`🔌 Disconnected (${modeText})`, '#F44336', 0);
         }
     }
 
     function updateUiElements() {
-        const toggleContainer = document.getElementById('cb-mode-toggle');
-        if (toggleContainer) {
-            toggleContainer.style.opacity = win.__cbIsBound ? '1' : '0.5';
-            toggleContainer.style.pointerEvents = win.__cbIsBound ? 'auto' : 'none';
-        }
-
         const turns = document.querySelectorAll('.cb-send-to-ide-btn');
         turns.forEach(btn => {
             if (win.__cbIsBound) {
@@ -579,6 +575,11 @@
                     `;
                 },
                 updateToggleStyles() {
+                    const toggleContainer = document.getElementById('cb-mode-toggle');
+                    if (toggleContainer) {
+                        toggleContainer.style.display = win.__cbIsBridgeChat ? 'flex' : 'none';
+                    }
+
                     const askBtn = document.getElementById('cb-mode-ask');
                     const editBtn = document.getElementById('cb-mode-edit');
                     if (!askBtn || !editBtn) return;
@@ -600,10 +601,8 @@
                     const toggleContainer = document.createElement('div');
                     toggleContainer.id = 'cb-mode-toggle';
                     toggleContainer.style.cssText = `
-                        display: flex; gap: 8px; margin-bottom: 8px; padding-left: 8px;
+                        display: ${win.__cbIsBridgeChat ? 'flex' : 'none'}; gap: 8px; margin-bottom: 8px; padding-left: 8px;
                         font-family: Inter, sans-serif; font-size: 13px; position: relative;
-                        opacity: ${win.__cbIsBound ? '1' : '0.5'};
-                        pointer-events: ${win.__cbIsBound ? 'auto' : 'none'};
                     `;
 
                     const askBtn = document.createElement('button');
@@ -668,6 +667,13 @@
                     this.suggestionBox.style.display = 'flex';
                 },
                 injectTurnButtons() {
+                    if (!win.__cbIsBridgeChat) {
+                        document.querySelectorAll('.cb-send-to-ide-btn').forEach(btn => btn.style.display = 'none');
+                        return;
+                    } else {
+                        document.querySelectorAll('.cb-send-to-ide-btn').forEach(btn => btn.style.display = 'inline-flex');
+                    }
+
                     const turns = document.querySelectorAll('.chat-turn-container.model');
                     turns.forEach(turn => {
                         if (turn.querySelector('.cb-send-to-ide-btn')) return;
@@ -738,8 +744,26 @@
                     setInterval(() => this.injectTurnButtons(), 1000);
                     setInterval(() => this.injectModeToggle(), 1000);
 
+                    setInterval(() => {
+                        const sysCard = document.querySelector('[data-test-system-instructions-card]');
+                        let isBridge = false;
+                        if (sysCard) {
+                            const subtitle = sysCard.querySelector('.subtitle');
+                            if (subtitle && subtitle.textContent.includes('expert AI coding assistant')) {
+                                isBridge = true;
+                            }
+                        }
+                        if (win.__cbIsBridgeChat !== isBridge) {
+                            win.__cbIsBridgeChat = isBridge;
+                            this.updateToggleStyles();
+                            this.injectTurnButtons();
+                            updateStatusPill();
+                        }
+                    }, 1000);
+
                     let lastModelName = null;
                     let initialLoad = true;
+
                     setInterval(() => {
                         const currentModel = AIStudioDOM.Controls.getActiveModelName();
                         if (currentModel && currentModel !== lastModelName) {
@@ -959,6 +983,8 @@
         // --- WEB UI: EVENT LISTENERS ---
 
         document.addEventListener('input', (e) => {
+            if (!win.__cbIsBridgeChat) return;
+
             const textarea = e.target;
             if (textarea.tagName === 'TEXTAREA' && (textarea.getAttribute('formcontrolname') === 'promptText' || textarea.getAttribute('aria-label') === 'Enter a prompt')) {
                 let val = textarea.value;
@@ -989,6 +1015,8 @@
         }, true);
 
         document.addEventListener('keydown', (e) => {
+            if (!win.__cbIsBridgeChat) return;
+
             const textarea = e.target;
             if (textarea.tagName === 'TEXTAREA' && (textarea.getAttribute('formcontrolname') === 'promptText' || textarea.getAttribute('aria-label') === 'Enter a prompt')) {
 
@@ -1026,6 +1054,8 @@
         }, true);
 
         document.addEventListener('click', (e) => {
+            if (!win.__cbIsBridgeChat) return;
+
             const btn = e.target.closest('ms-run-button button');
             if (btn) {
                 const textarea = AIStudioDOM.Input.getPromptArea();
