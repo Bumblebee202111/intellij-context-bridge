@@ -8,7 +8,7 @@
 // @grant        unsafeWindow
 // ==/UserScript==
 
-(function() {
+(function () {
     'use strict';
 
     if (window.top !== window.self) return;
@@ -33,7 +33,7 @@
     // --- CLIPBOARD INTERCEPTORS ---
 
     const origExec = win.document.execCommand;
-    win.document.execCommand = function(command, showUI, value) {
+    win.document.execCommand = function (command, showUI, value) {
         if (win.__cbActive && command.toLowerCase() === 'copy') {
             const activeEl = win.document.activeElement;
             let text = activeEl && (activeEl.tagName === 'TEXTAREA' || activeEl.tagName === 'INPUT')
@@ -46,7 +46,7 @@
 
     if (win.navigator && win.navigator.clipboard) {
         const origWriteText = win.navigator.clipboard.writeText.bind(win.navigator.clipboard);
-        win.navigator.clipboard.writeText = async function(text) {
+        win.navigator.clipboard.writeText = async function (text) {
             if (win.__cbActive) {
                 win.__cbInterceptedText = text;
             }
@@ -76,7 +76,9 @@
         statusPill.style.opacity = '1';
         clearTimeout(toastTimeout);
         if (duration > 0) {
-            toastTimeout = setTimeout(() => { statusPill.style.opacity = '0'; }, duration);
+            toastTimeout = setTimeout(() => {
+                statusPill.style.opacity = '0';
+            }, duration);
         }
     }
 
@@ -145,10 +147,16 @@
                         if (document.querySelector(selector)) return resolve(document.querySelector(selector));
                         const observer = new MutationObserver(() => {
                             const el = document.querySelector(selector);
-                            if (el) { observer.disconnect(); resolve(el); }
+                            if (el) {
+                                observer.disconnect();
+                                resolve(el);
+                            }
                         });
-                        observer.observe(document.body, { childList: true, subtree: true });
-                        setTimeout(() => { observer.disconnect(); resolve(null); }, timeout);
+                        observer.observe(document.body, {childList: true, subtree: true});
+                        setTimeout(() => {
+                            observer.disconnect();
+                            resolve(null);
+                        }, timeout);
                     });
                 },
                 base64ToFile(base64Data, mimeType, filename) {
@@ -158,8 +166,8 @@
                     for (let i = 0; i < byteString.length; i++) {
                         ia[i] = byteString.charCodeAt(i);
                     }
-                    const blob = new Blob([ab], { type: mimeType });
-                    return new File([blob], filename, { type: mimeType });
+                    const blob = new Blob([ab], {type: mimeType});
+                    return new File([blob], filename, {type: mimeType});
                 },
                 simulateFileDrop(files) {
                     const dropZone = document.querySelector('[msglobalfiledragdrop]') || document.body;
@@ -180,8 +188,8 @@
                     if (element.tagName === 'TEXTAREA') proto = window.HTMLTextAreaElement.prototype;
                     const setter = Object.getOwnPropertyDescriptor(proto, "value").set;
                     setter.call(element, value);
-                    element.dispatchEvent(new Event('input', { bubbles: true }));
-                    element.dispatchEvent(new Event('change', { bubbles: true }));
+                    element.dispatchEvent(new Event('input', {bubbles: true}));
+                    element.dispatchEvent(new Event('change', {bubbles: true}));
                 }
             },
             Chat: {
@@ -246,6 +254,10 @@
                 }
             },
             Controls: {
+                getActiveModelName() {
+                    const card = document.querySelector('.model-selector-card');
+                    return card ? card.textContent.trim().replace(/\s+/g, ' ') : null;
+                },
                 async setModel(modelId) {
                     const selectorBtn = document.querySelector('.model-selector-card');
                     if (selectorBtn) {
@@ -258,14 +270,33 @@
                     }
                 },
                 async setThinkingLevel(level) {
-                    const select = document.querySelector('mat-select[aria-label="Thinking Level"]');
+                    let select = document.querySelector('mat-select[aria-label="Thinking Level"]');
+                    let attempts = 0;
+
+                    // The thinking level control might take a moment to render after a model swap
+                    while (!select && attempts < 10) {
+                        await new Promise(r => setTimeout(r, 200));
+                        select = document.querySelector('mat-select[aria-label="Thinking Level"]');
+                        attempts++;
+                    }
+
                     if (select) {
-                        select.click();
+                        const currentValue = select.querySelector('.mat-mdc-select-value-text')?.textContent?.trim();
+                        if (currentValue && currentValue.includes(level)) return; // Already set
+
+                        const trigger = select.querySelector('.mat-mdc-select-trigger') || select;
+                        trigger.click();
+
                         const panel = await AIStudioDOM.Utils.waitForElement('.mat-mdc-select-panel', 3000);
                         if (panel) {
+                            await new Promise(r => setTimeout(r, 300)); // Wait for expand animation
                             const options = Array.from(panel.querySelectorAll('mat-option, .mat-mdc-option'));
                             const target = options.find(opt => opt.textContent.includes(level));
-                            if (target) target.click();
+                            if (target) {
+                                target.click();
+                            } else {
+                                document.body.click(); // Close if not found
+                            }
                         }
                         await new Promise(r => setTimeout(r, 500));
                     }
@@ -399,14 +430,14 @@
                             if (titleInput && titleInput.value !== expectedTitle) {
                                 titleInput.focus();
                                 AIStudioDOM.Utils.setNativeValue(titleInput, expectedTitle);
-                                titleInput.dispatchEvent(new Event('blur', { bubbles: true }));
+                                titleInput.dispatchEvent(new Event('blur', {bubbles: true}));
                             }
 
                             const sysTextarea = dialog.querySelector('textarea[aria-label="System instructions"]');
                             if (sysTextarea && sysTextarea.value !== newInstructions) {
                                 sysTextarea.focus();
                                 AIStudioDOM.Utils.setNativeValue(sysTextarea, newInstructions);
-                                sysTextarea.dispatchEvent(new Event('blur', { bubbles: true }));
+                                sysTextarea.dispatchEvent(new Event('blur', {bubbles: true}));
                             }
 
                             await new Promise(r => setTimeout(r, 800));
@@ -416,6 +447,118 @@
                         if (closeBtn) closeBtn.click();
 
                         await new Promise(r => setTimeout(r, 500));
+                    }
+                }
+            },
+            Preferences: {
+                isProgrammaticUpdate: false,
+                snapshot: null,
+                STORAGE_KEY: 'cb_model_prefs',
+                saveTimeout: null,
+
+                getStore() {
+                    try {
+                        return JSON.parse(localStorage.getItem(this.STORAGE_KEY)) || {};
+                    } catch (e) {
+                        return {};
+                    }
+                },
+                saveStore(store) {
+                    localStorage.setItem(this.STORAGE_KEY, JSON.stringify(store));
+                },
+                getCurrentSettings() {
+                    const tempSlider = document.querySelector('input[type="range"][aria-label="Temperature"]');
+                    const thinkingSelect = document.querySelector('mat-select[aria-label="Thinking Level"]');
+                    const urlSwitch = document.querySelector('button[role="switch"][aria-label="Browse the url context"]');
+
+                    return {
+                        temperature: tempSlider ? parseFloat(tempSlider.value) : null,
+                        thinkingLevel: thinkingSelect ? thinkingSelect.textContent.trim() : null,
+                        urlContext: urlSwitch ? urlSwitch.getAttribute('aria-checked') === 'true' : null
+                    };
+                },
+                debounceSave() {
+                    clearTimeout(this.saveTimeout);
+                    this.saveTimeout = setTimeout(() => {
+                        if (this.isProgrammaticUpdate) return;
+                        const modelName = AIStudioDOM.Controls.getActiveModelName();
+                        if (!modelName) return;
+
+                        const settings = this.getCurrentSettings();
+                        const store = this.getStore();
+                        const existing = store[modelName] || {};
+
+                        if (settings.temperature !== null) existing.temperature = settings.temperature;
+                        if (settings.thinkingLevel !== null) existing.thinkingLevel = settings.thinkingLevel;
+                        if (settings.urlContext !== null) existing.urlContext = settings.urlContext;
+
+                        store[modelName] = existing;
+                        this.saveStore(store);
+                    }, 1000);
+                },
+                async applySavedSettings(modelName) {
+                    if (!modelName) return;
+                    const store = this.getStore();
+                    const saved = store[modelName];
+                    if (!saved) {
+                        this.debounceSave();
+                        return;
+                    }
+
+                    this.isProgrammaticUpdate = true;
+                    try {
+                        await new Promise(r => setTimeout(r, 500));
+                        if (saved.temperature !== undefined && saved.temperature !== null) {
+                            await AIStudioDOM.Controls.setTemperature(saved.temperature);
+                        }
+                        if (saved.thinkingLevel !== undefined && saved.thinkingLevel !== null) {
+                            await AIStudioDOM.Controls.setThinkingLevel(saved.thinkingLevel);
+                        }
+                        if (saved.urlContext !== undefined && saved.urlContext !== null) {
+                            await AIStudioDOM.Controls.setUrlContext(saved.urlContext);
+                        }
+                    } finally {
+                        this.isProgrammaticUpdate = false;
+                    }
+                },
+                snapshotCurrentState() {
+                    const modelName = AIStudioDOM.Controls.getActiveModelName();
+                    const settings = this.getCurrentSettings();
+                    this.snapshot = {modelName, ...settings};
+                },
+                async restoreSnapshot() {
+                    if (!this.snapshot) return;
+                    this.isProgrammaticUpdate = true;
+                    try {
+                        if (this.snapshot.modelName) {
+                            const current = AIStudioDOM.Controls.getActiveModelName();
+                            if (current !== this.snapshot.modelName) {
+                                const selectorBtn = document.querySelector('.model-selector-card');
+                                if (selectorBtn) {
+                                    selectorBtn.click();
+                                    const panel = await AIStudioDOM.Utils.waitForElement('mat-dialog-container, .mat-mdc-menu-panel, .model-selector-menu', 3000);
+                                    if (panel) {
+                                        const options = Array.from(document.querySelectorAll('button, mat-option, .mat-mdc-option, [role="menuitem"]'));
+                                        const target = options.find(opt => opt.textContent.replace(/\s+/g, ' ').trim().includes(this.snapshot.modelName));
+                                        if (target) target.click();
+                                        else document.body.click();
+                                    }
+                                    await new Promise(r => setTimeout(r, 800));
+                                }
+                            }
+                        }
+                        if (this.snapshot.temperature !== undefined && this.snapshot.temperature !== null) {
+                            await AIStudioDOM.Controls.setTemperature(this.snapshot.temperature);
+                        }
+                        if (this.snapshot.thinkingLevel !== undefined && this.snapshot.thinkingLevel !== null) {
+                            await AIStudioDOM.Controls.setThinkingLevel(this.snapshot.thinkingLevel);
+                        }
+                        if (this.snapshot.urlContext !== undefined && this.snapshot.urlContext !== null) {
+                            await AIStudioDOM.Controls.setUrlContext(this.snapshot.urlContext);
+                        }
+                    } finally {
+                        this.isProgrammaticUpdate = false;
+                        this.snapshot = null;
                     }
                 }
             },
@@ -466,12 +609,20 @@
                     const askBtn = document.createElement('button');
                     askBtn.id = 'cb-mode-ask';
                     askBtn.textContent = '💬 Ask';
-                    askBtn.onclick = (e) => { e.preventDefault(); win.__cbCurrentMode = 'ASK'; this.updateToggleStyles(); };
+                    askBtn.onclick = (e) => {
+                        e.preventDefault();
+                        win.__cbCurrentMode = 'ASK';
+                        this.updateToggleStyles();
+                    };
 
                     const editBtn = document.createElement('button');
                     editBtn.id = 'cb-mode-edit';
                     editBtn.textContent = '⚡ Edit';
-                    editBtn.onclick = (e) => { e.preventDefault(); win.__cbCurrentMode = 'EDIT'; this.updateToggleStyles(); };
+                    editBtn.onclick = (e) => {
+                        e.preventDefault();
+                        win.__cbCurrentMode = 'EDIT';
+                        this.updateToggleStyles();
+                    };
 
                     toggleContainer.appendChild(askBtn);
                     toggleContainer.appendChild(editBtn);
@@ -544,8 +695,12 @@
                             pointer-events: ${win.__cbIsBound ? 'auto' : 'none'};
                         `;
 
-                        sendBtn.onmouseover = () => { if (win.__cbIsBound) sendBtn.style.background = 'rgba(76, 175, 80, 0.1)'; };
-                        sendBtn.onmouseout = () => { sendBtn.style.background = 'transparent'; };
+                        sendBtn.onmouseover = () => {
+                            if (win.__cbIsBound) sendBtn.style.background = 'rgba(76, 175, 80, 0.1)';
+                        };
+                        sendBtn.onmouseout = () => {
+                            sendBtn.style.background = 'transparent';
+                        };
 
                         sendBtn.addEventListener('click', async (e) => {
                             e.preventDefault();
@@ -582,6 +737,51 @@
                 startObservers() {
                     setInterval(() => this.injectTurnButtons(), 1000);
                     setInterval(() => this.injectModeToggle(), 1000);
+
+                    let lastModelName = null;
+                    let initialLoad = true;
+                    setInterval(() => {
+                        const currentModel = AIStudioDOM.Controls.getActiveModelName();
+                        if (currentModel && currentModel !== lastModelName) {
+                            lastModelName = currentModel;
+
+                            if (AIStudioDOM.Preferences.isProgrammaticUpdate) return;
+
+                            if (initialLoad) {
+                                initialLoad = false;
+                                const title = AIStudioDOM.Chat.getTitle();
+                                if (title === "Playground" || title === "New Chat") {
+                                    AIStudioDOM.Preferences.applySavedSettings(currentModel);
+                                }
+                            } else {
+                                AIStudioDOM.Preferences.applySavedSettings(currentModel);
+                            }
+                        }
+                    }, 1000);
+
+                    document.addEventListener('input', (e) => {
+                        if (e.target.matches('input[type="range"][aria-label="Temperature"]')) {
+                            AIStudioDOM.Preferences.debounceSave();
+                        }
+                    }, true);
+
+                    document.addEventListener('change', (e) => {
+                        if (e.target.matches('input[type="range"][aria-label="Temperature"]')) {
+                            AIStudioDOM.Preferences.debounceSave();
+                        }
+                    }, true);
+
+                    document.addEventListener('click', (e) => {
+                        const switchBtn = e.target.closest('button[role="switch"][aria-label="Browse the url context"]');
+                        if (switchBtn) {
+                            setTimeout(() => AIStudioDOM.Preferences.debounceSave(), 100);
+                        }
+
+                        const option = e.target.closest('mat-option, .mat-mdc-option');
+                        if (option) {
+                            setTimeout(() => AIStudioDOM.Preferences.debounceSave(), 500);
+                        }
+                    }, true);
                 }
             },
             Diagnostics: {
@@ -593,76 +793,76 @@
                             new Promise((_, reject) => setTimeout(() => reject(new Error("TIMEOUT")), timeoutMs))
                         ]);
                         const duration = Math.round(performance.now() - start);
-                        return { name, status: 'PASS', durationMs: duration };
+                        return {name, status: 'PASS', durationMs: duration};
                     } catch (e) {
                         const duration = Math.round(performance.now() - start);
                         if (e.message === "TIMEOUT") {
-                            return { name, status: 'TIMEOUT', durationMs: duration, error: `Exceeded ${timeoutMs}ms` };
+                            return {name, status: 'TIMEOUT', durationMs: duration, error: `Exceeded ${timeoutMs}ms`};
                         }
-                        return { name, status: 'FAIL', durationMs: duration, error: e.stack || e.toString() };
+                        return {name, status: 'FAIL', durationMs: duration, error: e.stack || e.toString()};
                     }
                 },
                 async run(ws) {
                     showToast('🧪 Running Diagnostics...', '#9C27B0', 0);
+
+                    AIStudioDOM.Preferences.snapshotCurrentState();
+                    AIStudioDOM.Preferences.isProgrammaticUpdate = true;
+
                     const steps = [];
                     const totalStart = performance.now();
 
-                    steps.push(await this.runWithTimeout('Set Model to 3.7 Flash', async () => {
-                        await AIStudioDOM.Controls.setModel('models/gemini-3.7-flash');
+                    try {
+                        steps.push(await this.runWithTimeout('Set Model to 3.7 Flash', async () => {
+                            await AIStudioDOM.Controls.setModel('models/gemini-3.7-flash');
 
-                        const selectorBtn = document.querySelector('.model-selector-card');
-                        if (!selectorBtn) throw new Error("Model selector card not found in DOM");
-                        if (!selectorBtn.textContent.includes('3.7 Flash')) {
-                            throw new Error(`Model swap failed. Current text: ${selectorBtn.textContent}`);
-                        }
-                    }));
+                            const currentModel = AIStudioDOM.Controls.getActiveModelName();
+                            if (!currentModel || !currentModel.includes('3.7 Flash')) {
+                                throw new Error(`Model swap failed. Current text: ${currentModel}`);
+                            }
+                        }));
 
-                    steps.push(await this.runWithTimeout('Set Temperature to 0.2', async () => {
-                        await AIStudioDOM.Controls.setTemperature(0.2);
+                        steps.push(await this.runWithTimeout('Set Temperature to 0.2', async () => {
+                            await AIStudioDOM.Controls.setTemperature(0.2);
 
-                        const slider = document.querySelector('input[type="range"][aria-label="Temperature"]');
-                        if (!slider) throw new Error("Temperature slider not found in DOM");
-                        if (parseFloat(slider.value) !== 0.2) {
-                            throw new Error(`Temperature swap failed. Current value: ${slider.value}`);
-                        }
-                    }));
+                            const slider = document.querySelector('input[type="range"][aria-label="Temperature"]');
+                            if (!slider) throw new Error("Temperature slider not found in DOM");
+                            if (parseFloat(slider.value) !== 0.2) {
+                                throw new Error(`Temperature swap failed. Current value: ${slider.value}`);
+                            }
+                        }));
 
-                    steps.push(await this.runWithTimeout('Open/Close System Instructions', async () => {
-                        const sysCard = document.querySelector('[data-test-system-instructions-card]');
-                        if (!sysCard) throw new Error("System card not found");
-                        sysCard.click();
-                        const dialog = await AIStudioDOM.Utils.waitForElement('mat-dialog-container', 3000);
-                        if (!dialog) throw new Error("Dialog did not appear");
-                        await new Promise(r => setTimeout(r, 500));
-                        const closeBtn = dialog.querySelector('button[aria-label="Close panel"], button[data-test-close-button]');
-                        if (closeBtn) closeBtn.click();
-                        await new Promise(r => setTimeout(r, 500));
+                        steps.push(await this.runWithTimeout('Open/Close System Instructions', async () => {
+                            const sysCard = document.querySelector('[data-test-system-instructions-card]');
+                            if (!sysCard) throw new Error("System card not found");
+                            sysCard.click();
+                            const dialog = await AIStudioDOM.Utils.waitForElement('mat-dialog-container', 3000);
+                            if (!dialog) throw new Error("Dialog did not appear");
+                            await new Promise(r => setTimeout(r, 500));
+                            const closeBtn = dialog.querySelector('button[aria-label="Close panel"], button[data-test-close-button]');
+                            if (closeBtn) closeBtn.click();
+                            await new Promise(r => setTimeout(r, 500));
 
-                        const dialogStillOpen = document.querySelector('mat-dialog-container');
-                        if (dialogStillOpen) {
-                            throw new Error("System instructions dialog failed to close");
-                        }
-                    }));
+                            const dialogStillOpen = document.querySelector('mat-dialog-container');
+                            if (dialogStillOpen) {
+                                throw new Error("System instructions dialog failed to close");
+                            }
+                        }));
 
-                    steps.push(await this.runWithTimeout('Restore Settings (Pro, Temp 0.7)', async () => {
-                        await AIStudioDOM.Controls.setModel('models/gemini-3.1-pro-preview');
-                        await AIStudioDOM.Controls.setTemperature(0.7);
+                        steps.push(await this.runWithTimeout('Restore Settings', async () => {
+                            const snap = AIStudioDOM.Preferences.snapshot;
+                            await AIStudioDOM.Preferences.restoreSnapshot();
 
-                        const selectorBtn = document.querySelector('.model-selector-card');
-                        if (!selectorBtn) throw new Error("Model selector card not found in DOM");
-                        if (!selectorBtn.textContent.includes('3.1 Pro')) {
-                            throw new Error(`Model restore failed. Current text: ${selectorBtn.textContent}`);
-                        }
-
-                        const slider = document.querySelector('input[type="range"][aria-label="Temperature"]');
-                        if (!slider) throw new Error("Temperature slider not found in DOM");
-                        if (parseFloat(slider.value) !== 0.7) {
-                            throw new Error(`Temperature restore failed. Current value: ${slider.value}`);
-                        }
-                    }));
+                            const currentModel = AIStudioDOM.Controls.getActiveModelName();
+                            if (snap.modelName && currentModel !== snap.modelName) {
+                                throw new Error(`Model restore failed. Expected: ${snap.modelName}, Got: ${currentModel}`);
+                            }
+                        }));
+                    } finally {
+                        AIStudioDOM.Preferences.isProgrammaticUpdate = false;
+                    }
 
                     const totalDuration = Math.round(performance.now() - totalStart);
-                    const report = { totalDurationMs: totalDuration, steps };
+                    const report = {totalDurationMs: totalDuration, steps};
 
                     if (ws && ws.readyState === WebSocket.OPEN) {
                         ws.send("[DIAGNOSTIC_RESULT]" + JSON.stringify(report));
@@ -711,7 +911,8 @@
                             if (event.data.startsWith('[COMMANDS]')) {
                                 try {
                                     win.__cbCommands = JSON.parse(event.data.substring(10));
-                                } catch(e) {}
+                                } catch (e) {
+                                }
                                 return;
                             }
                             if (event.data === '[DIAGNOSTIC_RUN]') {
@@ -793,21 +994,25 @@
 
                 if (AIStudioDOM.Injections.activePrefix && AIStudioDOM.Injections.filteredCmds.length > 0) {
                     if (e.key === 'ArrowDown') {
-                        e.preventDefault(); e.stopPropagation();
+                        e.preventDefault();
+                        e.stopPropagation();
                         AIStudioDOM.Injections.selectedIndex = (AIStudioDOM.Injections.selectedIndex + 1) % AIStudioDOM.Injections.filteredCmds.length;
                         AIStudioDOM.Injections.updateSuggestions();
                         return;
                     } else if (e.key === 'ArrowUp') {
-                        e.preventDefault(); e.stopPropagation();
+                        e.preventDefault();
+                        e.stopPropagation();
                         AIStudioDOM.Injections.selectedIndex = (AIStudioDOM.Injections.selectedIndex - 1 + AIStudioDOM.Injections.filteredCmds.length) % AIStudioDOM.Injections.filteredCmds.length;
                         AIStudioDOM.Injections.updateSuggestions();
                         return;
                     } else if (e.key === 'Enter' || e.key === 'Tab') {
-                        e.preventDefault(); e.stopPropagation();
+                        e.preventDefault();
+                        e.stopPropagation();
                         AIStudioDOM.Input.applyCommand(AIStudioDOM.Injections.filteredCmds[AIStudioDOM.Injections.selectedIndex]);
                         return;
                     } else if (e.key === 'Escape') {
-                        e.preventDefault(); e.stopPropagation();
+                        e.preventDefault();
+                        e.stopPropagation();
                         AIStudioDOM.Injections.activePrefix = null;
                         AIStudioDOM.Injections.updateSuggestions();
                         return;
@@ -833,12 +1038,21 @@
         async function handleCommitGeneration(payloadObj) {
             showToast('⚙️ Configuring for Commit Generation...', '#FF9800', 0);
 
-            await AIStudioDOM.Controls.setModel('models/gemini-3.7-flash');
-            await AIStudioDOM.Controls.setThinkingLevel('High');
-            await AIStudioDOM.Controls.setUrlContext(true);
+            AIStudioDOM.Preferences.snapshotCurrentState();
+            AIStudioDOM.Preferences.isProgrammaticUpdate = true;
+            try {
+                await AIStudioDOM.Controls.setModel('models/gemini-3.7-flash');
+                await AIStudioDOM.Controls.setThinkingLevel('High');
+                await AIStudioDOM.Controls.setUrlContext(true);
+            } finally {
+                AIStudioDOM.Preferences.isProgrammaticUpdate = false;
+            }
 
             const textarea = AIStudioDOM.Input.getPromptArea();
-            if (!textarea) { isProcessing = false; return; }
+            if (!textarea) {
+                isProcessing = false;
+                return;
+            }
 
             AIStudioDOM.Input.setPromptText(payloadObj.text);
 
@@ -864,7 +1078,7 @@
                     if (allTurns.length === 0) return;
 
                     const lastTurn = allTurns[allTurns.length - 1];
-                    lastTurn.scrollIntoView({ behavior: 'auto', block: 'end' });
+                    lastTurn.scrollIntoView({behavior: 'auto', block: 'end'});
 
                     const hasThumbUp = lastTurn.querySelector('button[aria-label="Good response"]') !== null;
                     const isLoading = lastTurn.querySelector('ms-chat-loading-indicator') !== null;
@@ -886,9 +1100,7 @@
                         await AIStudioDOM.Chat.deleteLastTwoTurns();
 
                         showToast('⚙️ Restoring Settings...', '#FF9800', 0);
-                        await AIStudioDOM.Controls.setModel('models/gemini-3.1-pro-preview');
-                        await AIStudioDOM.Controls.setTemperature(0.7);
-                        await AIStudioDOM.Controls.setUrlContext(true);
+                        await AIStudioDOM.Preferences.restoreSnapshot();
 
                         isProcessing = false;
                         showToast('✅ Ready', '#4CAF50', 3000);
@@ -908,7 +1120,7 @@
                     if (allTurns.length === 0) return;
 
                     const lastTurn = allTurns[allTurns.length - 1];
-                    lastTurn.scrollIntoView({ behavior: 'auto', block: 'end' });
+                    lastTurn.scrollIntoView({behavior: 'auto', block: 'end'});
 
                     const hasThumbUp = lastTurn.querySelector('button[aria-label="Good response"]') !== null;
                     const isLoading = lastTurn.querySelector('ms-chat-loading-indicator') !== null;
@@ -940,7 +1152,7 @@
             try {
                 payloadObj = JSON.parse(payloadString);
             } catch (e) {
-                payloadObj = { text: payloadString, attachments: [], systemInstructions: "" };
+                payloadObj = {text: payloadString, attachments: [], systemInstructions: ""};
             }
 
             if (payloadObj.isCommit) {
@@ -970,7 +1182,10 @@
             }
 
             const textarea = AIStudioDOM.Input.getPromptArea();
-            if (!textarea) { isProcessing = false; return; }
+            if (!textarea) {
+                isProcessing = false;
+                return;
+            }
 
             AIStudioDOM.Input.setPromptText(payloadObj.text);
 
