@@ -1,0 +1,9 @@
+<idea-plugin>
+    <extensions defaultExtensionNs="org.jetbrains.kotlin">
+        <supportsKotlinPluginMode supportsK2="true" />
+    </extensions>
+    <extensions defaultExtensionNs="com.github.bumblebee202111.intellijcontextbridge">
+        <skeletonExtractor implementation="com.github.bumblebee202111.intellijcontextbridge.context.KotlinSkeletonExtractor"/>
+        <graphExtractor implementation="com.github.bumblebee202111.intellijcontextbridge.context.KotlinGraphExtractor"/>
+    </extensions>
+</idea-plugin>

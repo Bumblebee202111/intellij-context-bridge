@@ -13,18 +13,11 @@ import com.intellij.openapi.vcs.changes.ChangeListManager
 import com.intellij.openapi.vfs.VfsUtilCore
 import com.intellij.openapi.vfs.VirtualFile
 import com.intellij.psi.PsiElement
-import com.intellij.psi.PsiJavaFile
 import com.intellij.psi.PsiManager
 import com.intellij.psi.search.FilenameIndex
 import com.intellij.psi.search.GlobalSearchScope
 import com.intellij.psi.search.searches.ReferencesSearch
 import kotlinx.coroutines.delay
-import org.jetbrains.kotlin.lexer.KtTokens
-import org.jetbrains.kotlin.psi.KtClassOrObject
-import org.jetbrains.kotlin.psi.KtFile
-import org.jetbrains.kotlin.psi.KtNamedFunction
-import org.jetbrains.kotlin.psi.KtProperty
-import org.jetbrains.kotlin.psi.KtTypeAlias
 import kotlin.math.sqrt
 
 object ContextSuggestionEngine {
@@ -96,16 +89,8 @@ object ContextSuggestionEngine {
                 ProgressManager.checkCanceled()
                 val psiFile = psiManager.findFile(seed) ?: continue
 
-                val importedNames = mutableSetOf<String>()
-                if (psiFile is KtFile) {
-                    psiFile.importDirectives.forEach { import ->
-                        import.importedName?.asString()?.let { importedNames.add(it) }
-                    }
-                } else if (psiFile is PsiJavaFile) {
-                    psiFile.importList?.allImportStatements?.forEach { import ->
-                        import.importReference?.referenceName?.let { importedNames.add(it) }
-                    }
-                }
+                val extractor = LanguageGraphExtractor.EP_NAME.extensionList.firstOrNull { it.isSupported(psiFile) }
+                val importedNames = extractor?.getImportedNames(psiFile) ?: emptySet()
 
                 if (importedNames.isNotEmpty()) {
                     val matchedNames = allFilenames.filter { name ->
@@ -126,20 +111,11 @@ object ContextSuggestionEngine {
         for (seed in seedFiles) {
             // Yielding Read Action
             val primaryElements = readAction {
-                val elements = mutableListOf<PsiElement>()
-                if (!seed.isValid) return@readAction elements
+                if (!seed.isValid) return@readAction emptyList<PsiElement>()
 
-                val psiFile = psiManager.findFile(seed) ?: return@readAction elements
-                if (psiFile is KtFile) {
-                    val topLevelDeclarations = psiFile.declarations.filter { decl ->
-                        !decl.hasModifier(KtTokens.PRIVATE_KEYWORD) &&
-                        (decl is KtClassOrObject || decl is KtNamedFunction || decl is KtProperty || decl is KtTypeAlias)
-                    }
-                    elements.addAll(topLevelDeclarations)
-                } else if (psiFile is PsiJavaFile) {
-                    elements.addAll(psiFile.classes)
-                }
-                elements
+                val psiFile = psiManager.findFile(seed) ?: return@readAction emptyList<PsiElement>()
+                val extractor = LanguageGraphExtractor.EP_NAME.extensionList.firstOrNull { it.isSupported(psiFile) }
+                extractor?.getPrimaryDeclarations(psiFile) ?: emptyList()
             }
 
             for (element in primaryElements) {
