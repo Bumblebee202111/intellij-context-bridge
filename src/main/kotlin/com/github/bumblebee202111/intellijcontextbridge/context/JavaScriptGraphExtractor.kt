@@ -2,7 +2,6 @@ package com.github.bumblebee202111.intellijcontextbridge.context
 
 import com.intellij.lang.ecmascript6.psi.ES6ImportDeclaration
 import com.intellij.lang.javascript.psi.JSFile
-import com.intellij.lang.javascript.psi.ecmal4.JSClass
 import com.intellij.psi.PsiElement
 import com.intellij.psi.PsiFile
 
@@ -16,9 +15,7 @@ class JavaScriptGraphExtractor : LanguageGraphExtractor {
 
         jsFile.children.forEach { element ->
             if (element is ES6ImportDeclaration) {
-                element.importedBindings.forEach { binding ->
-                    binding.name?.let { importedNames.add(it) }
-                }
+                JsGraphUtil.extractImports(element, importedNames)
             }
         }
 
@@ -27,6 +24,12 @@ class JavaScriptGraphExtractor : LanguageGraphExtractor {
 
     override fun getPrimaryDeclarations(file: PsiFile): List<PsiElement> {
         val jsFile = file as? JSFile ?: return emptyList()
-        return jsFile.children.filterIsInstance<JSClass>()
+        val declarations = mutableListOf<PsiElement>()
+
+        for (child in jsFile.children) {
+            JsGraphUtil.collectDeclarations(child, declarations)
+        }
+
+        return declarations
     }
 }

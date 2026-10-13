@@ -3,5 +3,6 @@
         <skeletonExtractor implementation="com.github.bumblebee202111.intellijcontextbridge.context.JavaScriptSkeletonExtractor"/>
         <skeletonExtractor implementation="com.github.bumblebee202111.intellijcontextbridge.context.VueSkeletonExtractor"/>
         <graphExtractor implementation="com.github.bumblebee202111.intellijcontextbridge.context.JavaScriptGraphExtractor"/>
+        <graphExtractor implementation="com.github.bumblebee202111.intellijcontextbridge.context.VueGraphExtractor"/>
     </extensions>
 </idea-plugin>

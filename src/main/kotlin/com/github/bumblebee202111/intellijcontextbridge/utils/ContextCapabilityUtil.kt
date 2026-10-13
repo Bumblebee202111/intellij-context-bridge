@@ -6,7 +6,7 @@ import com.intellij.openapi.vfs.VirtualFile
 object ContextCapabilityUtil {
     val textExtensions = setOf(
         "kt", "kts", "java", "xml", "json", "md", "gradle", "yaml", "yml",
-        "sh", "py", "js", "ts", "html", "htm", "css", "txt", "csv", "properties", "pro"
+        "sh", "py", "js", "ts", "vue", "html", "htm", "css", "txt", "csv", "properties", "pro"
     )
 
     fun isSupportedMedia(extension: String): Boolean {
