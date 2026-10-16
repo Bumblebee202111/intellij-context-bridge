@@ -32,7 +32,7 @@ The system MUST provide an intelligent, reactive suggestion engine to act as a s
 * *Heuristics:* The engine MUST evaluate files based on Git modifications, active/open editor tabs, prompt text mentions, and 1st-degree incoming/outgoing PSI relationships.
 * *Smart Omission:* The engine MUST explicitly exclude files that have already reached their maximum context capability or whose maximum state is already stored in the deduplication cache.
 * *Relevance Filtering:* Unbounded usage searches MUST be mathematically penalized (e.g., Inverse Document Frequency) to prevent ubiquitous utility classes from flooding the suggestions.
-* *Performance Constraints:* The engine MUST run asynchronously within IDE-managed Coroutines, MUST be debounced to prevent index thrashing, and MUST cleanly yield via suspending `readAction`s if the user interrupts it or types in the editor.
+* *Performance Constraints:* The engine MUST run asynchronously within IDE-managed Coroutines, MUST be debounced to prevent index thrashing, and MUST cleanly yield via suspending `readAction`s if the user interrupts it or types in the editor. It MUST utilize dynamic extension points for PSI traversals to maintain strict cross-IDE classloader safety.
 
 ## 5. Project Configuration (`.contextbridge`)
 The plugin MUST support reading local configuration directories (e.g., `.contextbridge/`) at the project root.

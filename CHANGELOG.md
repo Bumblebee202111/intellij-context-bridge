@@ -6,6 +6,8 @@
 
 ## [Unreleased]
 ### Core Capabilities Implemented
+- **Cross-IDE Support**: Decoupled Java and Kotlin dependencies via dynamic Extension Points, enabling native support for WebStorm and other non-Java JetBrains IDEs.
+- **Advanced JS/TS/Vue Graph Engine**: Upgraded JavaScript and Vue extractors to deeply traverse module imports and non-class declarations for highly accurate proactive context suggestions.
 - **Implicit Chat Detection**: Decoupled network state from chat state. The userscript politely disables its custom UI and shortcut interception during normal AI Studio usage, activating only when the Context Bridge system instructions are detected.
 - **Per-Model Memory**: Replaced hardcoded settings with persistent, per-model preferences (temperature, thinking level, URL context) and intelligent session bootstrapping (`Playground` vs `Untitled prompt`).
 - **Precise State Restoration**: Ephemeral workflows (like AI commit generation) now utilize exact state snapshots to perfectly restore the user's prior model and parameter configurations after execution.

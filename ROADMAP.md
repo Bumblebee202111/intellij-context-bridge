@@ -3,6 +3,8 @@
 *Note: This project evolves organically through active dogfooding. This document serves as an idea backlog rather than a strict sequential plan.*
 
 ## Completed Milestones
+- Cross-IDE Compatibility (WebStorm, PyCharm, etc.) via Optional Dependencies
+- Vue & TypeScript AST Graph Traversal (Imports & Usages)
 - JavaScript, TypeScript, and Vue Skeleton Extraction
 - Kotlin Skeleton Extraction Refinements (Data classes, implicit returns, constructor defaults)
 - Core Context Extraction & UI
