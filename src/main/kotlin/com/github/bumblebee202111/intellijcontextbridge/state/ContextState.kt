@@ -11,34 +11,13 @@ import com.intellij.openapi.project.Project
 import com.intellij.openapi.project.guessProjectDir
 import com.intellij.openapi.vfs.VfsUtilCore
 import com.intellij.openapi.vfs.VirtualFile
+import kotlinx.coroutines.CoroutineScope
 import kotlinx.serialization.json.Json
 import java.security.MessageDigest
-import java.util.UUID
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.CopyOnWriteArrayList
-import kotlin.collections.get
 
-enum class IntentMode {
-    ASK, EDIT
-}
-
-enum class ContextLevel {
-    NONE, SKELETON, COMPLETE, MIXED
-}
-
-data class FileStateRecord(
-    var level: ContextLevel = ContextLevel.NONE,
-    var hash: String = ""
-)
-
-data class UserTurn(
-    var id: String = UUID.randomUUID().toString(),
-    var timestamp: Long = System.currentTimeMillis(),
-    var prompt: String = "",
-    var sentFiles: MutableMap<String, FileStateRecord> = mutableMapOf()
-)
-
-data class HashCacheEntry(
+private data class HashCacheEntry(
     val stamp: Long,
     val level: ContextLevel,
     val hash: String
@@ -46,7 +25,10 @@ data class HashCacheEntry(
 
 @Service(Service.Level.PROJECT)
 @State(name = "ContextBridgeState", storages = [Storage("ContextBridge.xml")])
-class ContextState(private val project: Project) : PersistentStateComponent<ContextState.State> {
+class ContextState(
+    private val project: Project,
+    val scope: CoroutineScope
+) : PersistentStateComponent<ContextState.State> {
 
     class State {
         var turns: MutableList<UserTurn> = CopyOnWriteArrayList()

@@ -7,7 +7,7 @@ import com.github.bumblebee202111.intellijcontextbridge.parser.FillCommitMessage
 import com.github.bumblebee202111.intellijcontextbridge.parser.ReadFileTool
 import com.github.bumblebee202111.intellijcontextbridge.parser.RenameFileTool
 import com.github.bumblebee202111.intellijcontextbridge.parser.ToolParser
-import com.github.bumblebee202111.intellijcontextbridge.services.CommitBridgeService
+import com.github.bumblebee202111.intellijcontextbridge.vcs.CommitBridgeService
 import com.intellij.diff.DiffContentFactory
 import com.intellij.diff.DiffManager
 import com.intellij.diff.requests.SimpleDiffRequest

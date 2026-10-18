@@ -3,11 +3,11 @@ package com.github.bumblebee202111.intellijcontextbridge.toolWindow
 import com.github.bumblebee202111.intellijcontextbridge.parser.FillCommitMessageTool
 import com.github.bumblebee202111.intellijcontextbridge.parser.ToolParser
 import com.github.bumblebee202111.intellijcontextbridge.server.ContextBridgeServer
-import com.github.bumblebee202111.intellijcontextbridge.services.CommitBridgeService
 import com.github.bumblebee202111.intellijcontextbridge.state.ContextState
 import com.github.bumblebee202111.intellijcontextbridge.ui.ContextComposerPanel
 import com.github.bumblebee202111.intellijcontextbridge.ui.ResponseViewerPanel
 import com.github.bumblebee202111.intellijcontextbridge.ui.SessionHistoryPanel
+import com.github.bumblebee202111.intellijcontextbridge.vcs.CommitBridgeService
 import com.intellij.openapi.Disposable
 import com.intellij.openapi.application.ApplicationManager
 import com.intellij.openapi.project.Project

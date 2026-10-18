@@ -1,4 +1,4 @@
-package com.github.bumblebee202111.intellijcontextbridge.services
+package com.github.bumblebee202111.intellijcontextbridge.vcs
 
 import com.intellij.openapi.application.ApplicationManager
 import com.intellij.openapi.components.Service

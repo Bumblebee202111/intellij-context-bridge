@@ -1,11 +1,9 @@
-package com.github.bumblebee202111.intellijcontextbridge.actions
+package com.github.bumblebee202111.intellijcontextbridge.vcs
 
 import com.github.bumblebee202111.intellijcontextbridge.context.core.PayloadGenerator
 import com.github.bumblebee202111.intellijcontextbridge.server.ContextBridgeServer
-import com.github.bumblebee202111.intellijcontextbridge.services.CommitBridgeService
 import com.github.bumblebee202111.intellijcontextbridge.state.ContextState
 import com.github.bumblebee202111.intellijcontextbridge.state.IntentMode
-import com.github.bumblebee202111.intellijcontextbridge.utils.VcsUtil
 import com.intellij.icons.AllIcons
 import com.intellij.openapi.actionSystem.AnAction
 import com.intellij.openapi.actionSystem.AnActionEvent
@@ -15,6 +13,7 @@ import com.intellij.openapi.diagnostic.thisLogger
 import com.intellij.openapi.vcs.CheckinProjectPanel
 import com.intellij.openapi.vcs.VcsDataKeys
 import com.intellij.vcs.commit.AbstractCommitWorkflowHandler
+import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
 
 class GenerateCommitMessageAction : AnAction("Generate AI Commit Message", "Generate commit message using Gemini", AllIcons.Actions.Commit) {

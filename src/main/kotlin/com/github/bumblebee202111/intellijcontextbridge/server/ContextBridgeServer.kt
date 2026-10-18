@@ -12,16 +12,14 @@ import io.ktor.server.websocket.*
 import io.ktor.websocket.*
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.launch
-import kotlinx.serialization.Serializable
 import java.net.ServerSocket
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.CopyOnWriteArrayList
 import kotlin.time.Duration.Companion.seconds
 
-data class BrowserTab(val id: String, val pathname: String, val title: String, val session: DefaultWebSocketServerSession)
-
-@Serializable
-data class SyncCommand(val name: String, val mode: String, val promptBody: String)
+data class BrowserTab(val id: String, val pathname: String, val title: String) {
+    override fun toString(): String = title
+}
 
 @Service(Service.Level.APP)
 class ContextBridgeServer(private val scope: CoroutineScope) : Disposable {
@@ -29,6 +27,7 @@ class ContextBridgeServer(private val scope: CoroutineScope) : Disposable {
     private var server: EmbeddedServer<CIOApplicationEngine, CIOApplicationEngine.Configuration>? = null
 
     private val activeTabs = ConcurrentHashMap<String, BrowserTab>()
+    private val tabSessions = ConcurrentHashMap<String, DefaultWebSocketServerSession>()
 
     private val tabsListeners = CopyOnWriteArrayList<(List<BrowserTab>) -> Unit>()
     private val messageListeners = CopyOnWriteArrayList<(String, String) -> Unit>()
@@ -103,8 +102,9 @@ class ContextBridgeServer(private val scope: CoroutineScope) : Disposable {
                                             val parts = text.removePrefix("[HANDSHAKE]").split("|", limit = 3)
                                             if (parts.size == 3) {
                                                 currentTabId = parts[0]
-                                                val tab = BrowserTab(parts[0], parts[1], parts[2], this@webSocket)
+                                                val tab = BrowserTab(parts[0], parts[1], parts[2])
                                                 activeTabs[parts[0]] = tab
+                                                tabSessions[parts[0]] = this@webSocket
                                                 notifyTabsChanged()
 
                                                 handshakeListeners.forEach { it.invoke(tab) }
@@ -122,7 +122,10 @@ class ContextBridgeServer(private val scope: CoroutineScope) : Disposable {
                                     }
                                 }
                             } finally {
-                                currentTabId?.let { activeTabs.remove(it) }
+                                currentTabId?.let {
+                                    activeTabs.remove(it)
+                                    tabSessions.remove(it)
+                                }
                                 notifyTabsChanged()
                             }
                         }
@@ -145,11 +148,11 @@ class ContextBridgeServer(private val scope: CoroutineScope) : Disposable {
     }
 
     fun sendToTab(tabId: String, message: String) {
-        val tab = activeTabs[tabId]
-        if (tab != null) {
+        val session = tabSessions[tabId]
+        if (session != null) {
             scope.launch {
                 try {
-                    tab.session.send(message)
+                    session.send(message)
                 } catch (e: Exception) {
                     thisLogger().warn("Failed to send message to tab $tabId")
                 }
@@ -161,6 +164,7 @@ class ContextBridgeServer(private val scope: CoroutineScope) : Disposable {
         server?.stop(1000, 2000)
         server = null
         activeTabs.clear()
+        tabSessions.clear()
         notifyTabsChanged()
     }
 }

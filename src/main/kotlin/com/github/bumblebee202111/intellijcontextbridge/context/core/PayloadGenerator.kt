@@ -2,14 +2,13 @@ package com.github.bumblebee202111.intellijcontextbridge.context.core
 
 import com.github.bumblebee202111.intellijcontextbridge.commands.CommandRegistryService
 import com.github.bumblebee202111.intellijcontextbridge.commands.SlashCommand
-import com.github.bumblebee202111.intellijcontextbridge.context.core.PsiSkeletonExtractor
 import com.github.bumblebee202111.intellijcontextbridge.state.ContextLevel
 import com.github.bumblebee202111.intellijcontextbridge.state.ContextState
 import com.github.bumblebee202111.intellijcontextbridge.state.FileStateRecord
 import com.github.bumblebee202111.intellijcontextbridge.state.IntentMode
 import com.github.bumblebee202111.intellijcontextbridge.state.UserTurn
 import com.github.bumblebee202111.intellijcontextbridge.utils.ContextCapabilityUtil
-import com.github.bumblebee202111.intellijcontextbridge.utils.VcsUtil
+import com.github.bumblebee202111.intellijcontextbridge.vcs.VcsUtil
 import com.intellij.openapi.components.service
 import com.intellij.openapi.fileEditor.FileDocumentManager
 import com.intellij.openapi.project.Project
@@ -17,12 +16,6 @@ import com.intellij.openapi.project.guessProjectDir
 import com.intellij.openapi.vfs.VfsUtilCore
 import com.intellij.openapi.vfs.VirtualFile
 import java.util.Base64
-
-data class PayloadGenerationResult(
-    val payload: AiPayload,
-    val turn: UserTurn,
-    val dedupedFiles: Set<VirtualFile> = emptySet()
-)
 
 object PayloadGenerator {
 

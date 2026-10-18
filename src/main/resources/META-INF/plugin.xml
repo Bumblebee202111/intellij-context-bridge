@@ -29,7 +29,7 @@
 
     <actions>
         <action id="ContextBridge.GenerateCommitMessage"
-                class="com.github.bumblebee202111.intellijcontextbridge.actions.GenerateCommitMessageAction"
+                class="com.github.bumblebee202111.intellijcontextbridge.vcs.GenerateCommitMessageAction"
                 text="Generate AI Commit Message"
                 description="Generate commit message using Gemini"
                 icon="AllIcons.Actions.Commit">

@@ -3,13 +3,12 @@ package com.github.bumblebee202111.intellijcontextbridge.ui
 import com.github.bumblebee202111.intellijcontextbridge.commands.CommandContextAction
 import com.github.bumblebee202111.intellijcontextbridge.commands.CommandRegistryService
 import com.github.bumblebee202111.intellijcontextbridge.commands.SlashCommand
+import com.github.bumblebee202111.intellijcontextbridge.commands.SyncCommand
 import com.github.bumblebee202111.intellijcontextbridge.context.core.ContextSuggestionEngine
 import com.github.bumblebee202111.intellijcontextbridge.context.core.PayloadGenerationResult
 import com.github.bumblebee202111.intellijcontextbridge.context.core.PayloadGenerator
 import com.github.bumblebee202111.intellijcontextbridge.server.BrowserTab
 import com.github.bumblebee202111.intellijcontextbridge.server.ContextBridgeServer
-import com.github.bumblebee202111.intellijcontextbridge.server.SyncCommand
-import com.github.bumblebee202111.intellijcontextbridge.services.ContextCoroutineScopeService
 import com.github.bumblebee202111.intellijcontextbridge.state.ContextLevel
 import com.github.bumblebee202111.intellijcontextbridge.state.ContextState
 import com.github.bumblebee202111.intellijcontextbridge.state.IntentMode
@@ -56,6 +55,7 @@ import com.intellij.util.ui.JBUI
 import com.intellij.util.ui.tree.TreeUtil
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.launch
+import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
 import java.awt.BorderLayout
 import java.awt.Dimension
@@ -73,15 +73,10 @@ import javax.swing.*
 import javax.swing.tree.DefaultMutableTreeNode
 import javax.swing.tree.DefaultTreeModel
 
-data class BrowserTabItem(val id: String, val pathname: String, val title: String) {
-    override fun toString() = title
-}
-
 class ContextComposerPanel(private val project: Project) : Disposable {
     private val contextState = project.service<ContextState>()
     private val server = ApplicationManager.getApplication().getService(ContextBridgeServer::class.java)
     private val treeManager = ContextTreeManager(project, contextState)
-    private val coroutineService = project.service<ContextCoroutineScopeService>()
 
     private var historyIndex = -1
     private var draftPrompt = ""
@@ -178,7 +173,7 @@ class ContextComposerPanel(private val project: Project) : Disposable {
     private val editRadio = JBRadioButton("⚡ Edit", true)
     private val askRadio = JBRadioButton("💬 Ask")
     private val copyButton = JButton("Copy", AllIcons.Actions.Copy)
-    private val tabComboBox = ComboBox<BrowserTabItem>().apply {
+    private val tabComboBox = ComboBox<BrowserTab>().apply {
         toolTipText = "Select the target AI Studio tab"
         preferredSize = Dimension(220, preferredSize.height)
     }
@@ -192,7 +187,7 @@ class ContextComposerPanel(private val project: Project) : Disposable {
     val content: JPanel = JPanel(BorderLayout())
 
     private var isUpdatingTabs = false
-    private val NONE_TAB = BrowserTabItem("", "", "<None / Disconnected>")
+    private val NONE_TAB = BrowserTab("", "", "<None / Disconnected>")
 
     init {
         ContextChangeTracker(this, project, contextState) { refreshUi() }
@@ -242,7 +237,7 @@ class ContextComposerPanel(private val project: Project) : Disposable {
         tabComboBox.addItemListener { event ->
             if (isUpdatingTabs) return@addItemListener
             if (event.stateChange == ItemEvent.SELECTED) {
-                val selected = event.item as? BrowserTabItem ?: return@addItemListener
+                val selected = event.item as? BrowserTab ?: return@addItemListener
                 changeBinding(selected.id, selected.pathname, selected.title)
             }
         }
@@ -255,12 +250,11 @@ class ContextComposerPanel(private val project: Project) : Disposable {
                     tabComboBox.removeAllItems()
                     tabComboBox.addItem(NONE_TAB)
 
-                    var matchedItem: BrowserTabItem? = null
-                    tabs.forEach {
-                        val item = BrowserTabItem(it.id, it.pathname, it.title)
-                        tabComboBox.addItem(item)
-                        if (it.id == previousSelectionId) {
-                            matchedItem = item
+                    var matchedItem: BrowserTab? = null
+                    tabs.forEach { tab ->
+                        tabComboBox.addItem(tab)
+                        if (tab.id == previousSelectionId) {
+                            matchedItem = tab
                         }
                     }
 
@@ -268,7 +262,7 @@ class ContextComposerPanel(private val project: Project) : Disposable {
                         tabComboBox.selectedItem = matchedItem
                     } else if (contextState.activeTabId != null) {
                         val state = contextState.getState()
-                        val disconnectedItem = BrowserTabItem(contextState.activeTabId!!, contextState.activeTabPathname ?: "", "${state.boundTabTitle} (Disconnected)")
+                        val disconnectedItem = BrowserTab(contextState.activeTabId!!, contextState.activeTabPathname ?: "", "${state.boundTabTitle} (Disconnected)")
                         tabComboBox.addItem(disconnectedItem)
                         tabComboBox.selectedItem = disconnectedItem
                     } else {
@@ -572,7 +566,7 @@ class ContextComposerPanel(private val project: Project) : Disposable {
 
         copyButton.addActionListener { executePayloadAction(isWsSend = false) }
         sendWsButton.addActionListener {
-            val selectedTab = tabComboBox.selectedItem as? BrowserTabItem ?: return@addActionListener
+            val selectedTab = tabComboBox.selectedItem as? BrowserTab ?: return@addActionListener
             if (selectedTab.id.isNotEmpty()) {
                 executePayloadAction(isWsSend = true, selectedTab = selectedTab)
             }
@@ -640,7 +634,7 @@ class ContextComposerPanel(private val project: Project) : Disposable {
         )
     }
 
-    private fun executePayloadAction(isWsSend: Boolean, selectedTab: BrowserTabItem? = null) {
+    private fun executePayloadAction(isWsSend: Boolean, selectedTab: BrowserTab? = null) {
         val promptText = promptArea.text
         val intent = if (askRadio.isSelected) IntentMode.ASK else IntentMode.EDIT
         historyIndex = -1
@@ -786,7 +780,7 @@ class ContextComposerPanel(private val project: Project) : Disposable {
     private fun refreshTree(currentPromptText: String) {
         treeUpdateJob?.cancel()
 
-        treeUpdateJob = coroutineService.scope.launch {
+        treeUpdateJob = contextState.scope.launch {
             if (!isConfigLoaded) {
                 readAction {
                     if (contextState.getLastTurn() == null) {
