@@ -18,7 +18,14 @@ import javax.swing.Icon
 import javax.swing.JTree
 import javax.swing.tree.DefaultMutableTreeNode
 
-data class NodeData(val file: VirtualFile?, val displayName: String)
+data class NodeData(
+    val file: VirtualFile?,
+    val displayName: String,
+    val isDirectory: Boolean = false,
+    val isEmptyDirectory: Boolean = false,
+    val maxLevel: ContextLevel = ContextLevel.COMPLETE,
+    val icon: Icon? = null
+)
 
 class StateIcon(private val level: ContextLevel) : Icon {
     override fun paintIcon(c: Component?, g: Graphics?, x: Int, y: Int) {
@@ -101,13 +108,13 @@ class ContextTreeCellRenderer(
         val level = getComputedLevel(node)
 
         if (file != null) {
-            val cached = !file.isDirectory && isCached(file)
+            val cached = !nodeData.isDirectory && isCached(file)
 
             val rowIcon = RowIcon(2)
             rowIcon.setIcon(StateIcon(level), 0)
 
-            val baseIcon = if (file.isDirectory) AllIcons.Nodes.Folder else file.fileType.icon
-            val fileIcon = if (cached && baseIcon != null) CachedOverlayIcon(baseIcon) else baseIcon
+            val baseIcon = nodeData.icon ?: if (nodeData.isDirectory) AllIcons.Nodes.Folder else AllIcons.FileTypes.Any_type
+            val fileIcon = if (cached) CachedOverlayIcon(baseIcon) else baseIcon
             rowIcon.setIcon(fileIcon, 1)
 
             icon = rowIcon
@@ -121,7 +128,7 @@ class ContextTreeCellRenderer(
             // Synthetic Root Node (e.g., [AI Requested Files])
             val rowIcon = RowIcon(2)
             rowIcon.setIcon(StateIcon(level), 0)
-            rowIcon.setIcon(AllIcons.Nodes.ConfigFolder, 1)
+            rowIcon.setIcon(nodeData.icon ?: AllIcons.Nodes.ConfigFolder, 1)
             icon = rowIcon
 
             append(nodeData.displayName, SimpleTextAttributes.REGULAR_BOLD_ATTRIBUTES)

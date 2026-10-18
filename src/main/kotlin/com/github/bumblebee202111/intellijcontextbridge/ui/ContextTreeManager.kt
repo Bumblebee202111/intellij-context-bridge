@@ -4,6 +4,7 @@ import com.github.bumblebee202111.intellijcontextbridge.state.ContextLevel
 import com.github.bumblebee202111.intellijcontextbridge.state.ContextState
 import com.github.bumblebee202111.intellijcontextbridge.utils.ContextCapabilityUtil
 import com.github.bumblebee202111.intellijcontextbridge.utils.FileFilterUtil
+import com.intellij.icons.AllIcons
 import com.intellij.openapi.progress.ProgressManager
 import com.intellij.openapi.project.Project
 import com.intellij.openapi.vfs.VirtualFile
@@ -41,20 +42,22 @@ class ContextTreeManager(private val project: Project, private val contextState:
 
     fun getNextToggleLevel(node: DefaultMutableTreeNode, file: VirtualFile?): ContextLevel {
         val currentLevel = getComputedLevel(node)
-        val maxLevel = if (file == null || (file.isDirectory && file.children.isNotEmpty())) {
+        val nodeData = node.userObject as? NodeData
+        val maxLevel = if (nodeData == null || file == null || (nodeData.isDirectory && !nodeData.isEmptyDirectory)) {
             ContextLevel.COMPLETE
         } else {
-            ContextCapabilityUtil.getMaxLevel(file)
+            nodeData.maxLevel
         }
         return ContextCapabilityUtil.getNextLevel(currentLevel, maxLevel)
     }
 
     private fun getAggregatedState(node: DefaultMutableTreeNode): AggregatedState {
-        val file = (node.userObject as? NodeData)?.file
-        
-        if (file != null && (!file.isDirectory || file.children.isEmpty())) {
+        val nodeData = node.userObject as? NodeData
+        val file = nodeData?.file
+
+        if (file != null && (!nodeData.isDirectory || nodeData.isEmptyDirectory)) {
             val level = contextState.getLevel(file)
-            val maxLevel = if (file.isDirectory) ContextLevel.SKELETON else ContextCapabilityUtil.getMaxLevel(file)
+            val maxLevel = nodeData.maxLevel
             return AggregatedState(
                 allMaxed = (level == maxLevel),
                 allSkeleton = (level == ContextLevel.SKELETON),
@@ -89,13 +92,15 @@ class ContextTreeManager(private val project: Project, private val contextState:
     }
 
     fun applyStateToNode(node: DefaultMutableTreeNode, level: ContextLevel) {
-        val file = (node.userObject as? NodeData)?.file
-        if (file == null || file.isDirectory) {
+        val nodeData = node.userObject as? NodeData
+        val file = nodeData?.file
+        if (file == null || nodeData.isDirectory) {
             val enumeration = node.depthFirstEnumeration()
             while (enumeration.hasMoreElements()) {
                 val descendant = enumeration.nextElement() as DefaultMutableTreeNode
-                val descFile = (descendant.userObject as? NodeData)?.file ?: continue
-                if (!descFile.isDirectory || descFile.children.isEmpty()) {
+                val descData = descendant.userObject as? NodeData ?: continue
+                val descFile = descData.file ?: continue
+                if (!descData.isDirectory || descData.isEmptyDirectory) {
                     contextState.applyStateRecursively(descFile, level, checkIgnore = false)
                 }
             }
@@ -122,6 +127,7 @@ class ContextTreeManager(private val project: Project, private val contextState:
         val validChildNodes = mutableListOf<DefaultMutableTreeNode>()
 
         for (child in children) {
+            ProgressManager.checkCanceled()
             if (child.isDirectory) {
                 val childNode = buildFileTree(child, showSelectedOnly, allowedLeaves, false)
                 if (childNode != null) {
@@ -136,7 +142,20 @@ class ContextTreeManager(private val project: Project, private val contextState:
                 val passesSelection = !showSelectedOnly || isSelected || allowedLeaves != null
 
                 if (passesSelection) {
-                    validChildNodes.add(DefaultMutableTreeNode(NodeData(child, child.name)))
+                    val maxLevel = ContextCapabilityUtil.getMaxLevel(child)
+                    val icon = child.fileType.icon ?: AllIcons.FileTypes.Any_type
+                    validChildNodes.add(
+                        DefaultMutableTreeNode(
+                            NodeData(
+                                file = child,
+                                displayName = child.name,
+                                isDirectory = false,
+                                isEmptyDirectory = false,
+                                maxLevel = maxLevel,
+                                icon = icon
+                            )
+                        )
+                    )
                 }
             }
         }
@@ -154,14 +173,24 @@ class ContextTreeManager(private val project: Project, private val contextState:
         if (!isRoot && validChildNodes.size == 1) {
             val singleChildNode = validChildNodes[0]
             val singleChildData = singleChildNode.userObject as? NodeData
-            if (singleChildData != null && singleChildData.file != null && singleChildData.file.isDirectory) {
+            if (singleChildData != null && singleChildData.file != null && singleChildData.isDirectory) {
                 val compactedDisplayName = "${dir.name}.${singleChildData.displayName}"
-                singleChildNode.userObject = NodeData(singleChildData.file, compactedDisplayName)
+                singleChildNode.userObject = singleChildData.copy(displayName = compactedDisplayName)
                 return singleChildNode
             }
         }
 
-        val node = DefaultMutableTreeNode(NodeData(dir, dir.name))
+        val isEmptyDir = children.isEmpty()
+        val node = DefaultMutableTreeNode(
+            NodeData(
+                file = dir,
+                displayName = dir.name,
+                isDirectory = true,
+                isEmptyDirectory = isEmptyDir,
+                maxLevel = if (isEmptyDir) ContextLevel.SKELETON else ContextLevel.COMPLETE,
+                icon = AllIcons.Nodes.Folder
+            )
+        )
         for (childNode in validChildNodes) {
             node.add(childNode)
         }

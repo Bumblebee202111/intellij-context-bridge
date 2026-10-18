@@ -86,7 +86,10 @@ private sealed interface PromptCompletionItem : Comparable<PromptCompletionItem>
 
     data class FileMention(
         val file: VirtualFile,
-        val relativePath: String
+        val relativePath: String,
+        val fileName: String,
+        val isDirectory: Boolean,
+        val icon: Icon
     ) : PromptCompletionItem {
         override fun compareTo(other: PromptCompletionItem): Int = when (other) {
             is Command -> 1
@@ -169,7 +172,7 @@ class ContextComposerPanel(private val project: Project) : Disposable {
         object : TextFieldWithAutoCompletionListProvider<PromptCompletionItem>(emptyList()) {
             override fun getLookupString(item: PromptCompletionItem): String = when (item) {
                 is PromptCompletionItem.Command -> "/${item.slashCommand.name}"
-                is PromptCompletionItem.FileMention -> "@${item.file.name}"
+                is PromptCompletionItem.FileMention -> "@${item.fileName}"
             }
 
             override fun getTailText(item: PromptCompletionItem): String = when (item) {
@@ -185,7 +188,7 @@ class ContextComposerPanel(private val project: Project) : Disposable {
 
             override fun getTypeText(item: PromptCompletionItem): String = when (item) {
                 is PromptCompletionItem.Command -> item.slashCommand.mode.name
-                is PromptCompletionItem.FileMention -> if (item.file.isDirectory) "Folder" else ""
+                is PromptCompletionItem.FileMention -> if (item.isDirectory) "Folder" else ""
             }
 
             override fun compare(item1: PromptCompletionItem, item2: PromptCompletionItem): Int =
@@ -210,14 +213,9 @@ class ContextComposerPanel(private val project: Project) : Disposable {
                     }
 
                     is PromptCompletionItem.FileMention -> {
-                        val icon = if (item.file.isDirectory) {
-                            AllIcons.Nodes.Folder
-                        } else {
-                            item.file.fileType.icon ?: AllIcons.FileTypes.Any_type
-                        }
                         super.createLookupBuilder(item)
                             .withLookupString("@${item.relativePath}")
-                            .withIcon(icon)
+                            .withIcon(item.icon)
                             .withInsertHandler { context, _ ->
                                 val start = context.startOffset
                                 val end = context.tailOffset
@@ -435,25 +433,32 @@ class ContextComposerPanel(private val project: Project) : Disposable {
     }
 
     fun handleReadFileToolCall(paths: List<String>, reason: String) {
-        val projectDir = project.guessProjectDir() ?: return
-        val requestedFiles = mutableSetOf<VirtualFile>()
-
-        paths.forEach { path ->
-            val file = projectDir.findFileByRelativePath(path)
-            if (file != null && file.exists() && !file.isDirectory) {
-                requestedFiles.add(file)
+        contextState.scope.launch {
+            val requestedFiles = readAction {
+                val projectDir = project.guessProjectDir() ?: return@readAction emptySet<VirtualFile>()
+                val found = mutableSetOf<VirtualFile>()
+                for (path in paths) {
+                    ProgressManager.checkCanceled()
+                    val file = projectDir.findFileByRelativePath(path)
+                    if (file != null && file.exists() && !file.isDirectory) {
+                        found.add(file)
+                    }
+                }
+                found
             }
-        }
 
-        if (requestedFiles.isNotEmpty()) {
-            pendingAiRequests = requestedFiles
-            promptArea.text = "AI requested files to: $reason\n\n"
-            refreshUi()
-        } else {
-            Messages.showWarningDialog(
-                "The AI requested files, but none were found in the project.\n\nReason: $reason\nPaths: ${paths.joinToString()}",
-                "Tool Call: read_file"
-            )
+            ApplicationManager.getApplication().invokeLater({
+                if (requestedFiles.isNotEmpty()) {
+                    pendingAiRequests = requestedFiles
+                    promptArea.text = "AI requested files to: $reason\n\n"
+                    refreshUi()
+                } else {
+                    Messages.showWarningDialog(
+                        "The AI requested files, but none were found in the project.\n\nReason: $reason\nPaths: ${paths.joinToString()}",
+                        "Tool Call: read_file"
+                    )
+                }
+            }, ModalityState.nonModal())
         }
     }
 
@@ -826,7 +831,7 @@ class ContextComposerPanel(private val project: Project) : Disposable {
                             e.consume()
                         }
                     } else if (e.clickCount == 2) {
-                        if (file != null && !file.isDirectory) {
+                        if (file != null && !nodeData.isDirectory) {
                             OpenFileDescriptor(project, file).navigate(true)
                             e.consume()
                         }
@@ -845,8 +850,9 @@ class ContextComposerPanel(private val project: Project) : Disposable {
                 if (keyCode == KeyEvent.VK_ENTER) {
                     for (path in paths) {
                         val node = path.lastPathComponent as? DefaultMutableTreeNode ?: continue
-                        val file = (node.userObject as? NodeData)?.file
-                        if (file != null && !file.isDirectory) {
+                        val nodeData = node.userObject as? NodeData ?: continue
+                        val file = nodeData.file
+                        if (file != null && !nodeData.isDirectory) {
                             OpenFileDescriptor(project, file).navigate(true)
                         }
                     }
@@ -901,8 +907,22 @@ class ContextComposerPanel(private val project: Project) : Disposable {
                 ProgressManager.checkCanceled()
                 if (FileFilterUtil.isIgnored(project, child)) continue
                 val relativePath = VfsUtilCore.getRelativePath(child, projectDir) ?: continue
-                result.add(PromptCompletionItem.FileMention(child, relativePath))
-                if (child.isDirectory) {
+                val isDir = child.isDirectory
+                val icon = if (isDir) {
+                    AllIcons.Nodes.Folder
+                } else {
+                    child.fileType.icon ?: AllIcons.FileTypes.Any_type
+                }
+                result.add(
+                    PromptCompletionItem.FileMention(
+                        file = child,
+                        relativePath = relativePath,
+                        fileName = child.name,
+                        isDirectory = isDir,
+                        icon = icon
+                    )
+                )
+                if (isDir) {
                     visit(child)
                 }
             }
@@ -1018,7 +1038,14 @@ class ContextComposerPanel(private val project: Project) : Disposable {
                         val node =
                             treeManager.buildFileTree(projectDir, false, allowedLeaves = currentRequests, isRoot = true)
                         if (node != null) {
-                            node.userObject = NodeData(null, "[AI Requested Files]")
+                            node.userObject = NodeData(
+                                file = null,
+                                displayName = "[AI Requested Files]",
+                                isDirectory = true,
+                                isEmptyDirectory = false,
+                                maxLevel = ContextLevel.COMPLETE,
+                                icon = AllIcons.Nodes.ConfigFolder
+                            )
                             node
                         } else null
                     } else null

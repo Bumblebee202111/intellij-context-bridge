@@ -7,11 +7,16 @@ import com.github.bumblebee202111.intellijcontextbridge.parser.FillCommitMessage
 import com.github.bumblebee202111.intellijcontextbridge.parser.ReadFileTool
 import com.github.bumblebee202111.intellijcontextbridge.parser.RenameFileTool
 import com.github.bumblebee202111.intellijcontextbridge.parser.ToolParser
+import com.github.bumblebee202111.intellijcontextbridge.state.ContextState
 import com.github.bumblebee202111.intellijcontextbridge.vcs.CommitBridgeService
 import com.intellij.diff.DiffContentFactory
 import com.intellij.diff.DiffManager
 import com.intellij.diff.requests.SimpleDiffRequest
+import com.intellij.openapi.application.ApplicationManager
+import com.intellij.openapi.application.ModalityState
+import com.intellij.openapi.application.readAction
 import com.intellij.openapi.command.WriteCommandAction
+import com.intellij.openapi.components.service
 import com.intellij.openapi.diagnostic.thisLogger
 import com.intellij.openapi.fileEditor.FileDocumentManager
 import com.intellij.openapi.fileEditor.OpenFileDescriptor
@@ -31,6 +36,7 @@ import com.intellij.ui.components.JBList
 import com.intellij.ui.components.JBScrollPane
 import com.intellij.ui.components.JBTextArea
 import com.intellij.util.ui.JBUI
+import kotlinx.coroutines.launch
 import java.awt.BorderLayout
 import java.awt.event.KeyAdapter
 import java.awt.event.KeyEvent
@@ -43,6 +49,7 @@ class ResponseViewerPanel(
     private val project: Project,
     private val onReadFileRequested: (ReadFileTool) -> Unit
 ) {
+    private val scope = project.service<ContextState>().scope
 
     private val responseArea = JBTextArea().apply {
         lineWrap = true
@@ -96,16 +103,22 @@ class ResponseViewerPanel(
         }
 
         actionList.addListSelectionListener {
+            if (it.valueIsAdjusting) return@addListSelectionListener
             val action = actionList.selectedValue
             executeButton.isEnabled = action != null
 
             if (action is EditFileTool) {
-                val projectPath = project.guessProjectDir()?.path ?: return@addListSelectionListener
-                val targetFile = File(projectPath, action.filePath)
-
-                val virtualFile = LocalFileSystem.getInstance().findFileByIoFile(targetFile)
-                if (virtualFile != null) {
-                    OpenFileDescriptor(project, virtualFile).navigate(true)
+                scope.launch {
+                    val virtualFile = readAction {
+                        val projectPath = project.guessProjectDir()?.path ?: return@readAction null
+                        val targetFile = File(projectPath, action.filePath)
+                        LocalFileSystem.getInstance().findFileByIoFile(targetFile)
+                    }
+                    if (virtualFile != null) {
+                        ApplicationManager.getApplication().invokeLater({
+                            OpenFileDescriptor(project, virtualFile).navigate(true)
+                        }, ModalityState.nonModal())
+                    }
                 }
             }
         }
@@ -183,71 +196,96 @@ class ResponseViewerPanel(
                 project.getService(CommitBridgeService::class.java).injectCommitMessage(action.message)
             }
             is EditFileTool -> {
-                val projectPath = project.guessProjectDir()?.path ?: return
-                val targetFile = File(projectPath, action.filePath)
-                var virtualFile = LocalFileSystem.getInstance().findFileByIoFile(targetFile)
+                scope.launch {
+                    val resolved = readAction {
+                        val projectPath = project.guessProjectDir()?.path ?: return@readAction null
+                        val targetFile = File(projectPath, action.filePath)
+                        val vf = LocalFileSystem.getInstance().findFileByIoFile(targetFile)
+                        val ft = vf?.fileType ?: FileTypeManager.getInstance().getFileTypeByExtension(action.language)
+                        val doc = vf?.let { FileDocumentManager.getInstance().getDocument(it) }
+                        Triple(targetFile, vf, ft to doc)
+                    } ?: return@launch
 
-                if (virtualFile == null) {
-                    val result = Messages.showYesNoDialog(
-                        project,
-                        "File '${action.filePath}' does not exist. Create it?",
-                        "Create File",
-                        Messages.getQuestionIcon()
-                    )
-                    if (result == Messages.YES) {
-                        WriteCommandAction.runWriteCommandAction(project) {
-                            try {
-                                val parentDir = VfsUtil.createDirectoryIfMissing(targetFile.parentFile.absolutePath)
-                                virtualFile = parentDir?.createChildData(this, targetFile.name)
-                            } catch (e: Exception) {
-                                thisLogger().error("Failed to create file", e)
-                            }
+                    val (targetFile, existingVf, typeAndDoc) = resolved
+                    val (initialFileType, existingDoc) = typeAndDoc
+
+                    ApplicationManager.getApplication().invokeLater({
+                        var virtualFile = existingVf
+                        var document = existingDoc
+                        var fileType = initialFileType
+
+                        if (virtualFile == null) {
+                            val result = Messages.showYesNoDialog(
+                                project,
+                                "File '${action.filePath}' does not exist. Create it?",
+                                "Create File",
+                                Messages.getQuestionIcon()
+                            )
+                            if (result == Messages.YES) {
+                                WriteCommandAction.runWriteCommandAction(project) {
+                                    try {
+                                        val parentDir = VfsUtil.createDirectoryIfMissing(targetFile.parentFile.absolutePath)
+                                        virtualFile = parentDir?.createChildData(this, targetFile.name)
+                                        document = virtualFile?.let { FileDocumentManager.getInstance().getDocument(it) }
+                                        fileType = virtualFile?.fileType ?: initialFileType
+                                    } catch (e: Exception) {
+                                        thisLogger().error("Failed to create file", e)
+                                    }
+                                }
+                            } else return@invokeLater
                         }
-                    } else return
+
+                        val diffContentFactory = DiffContentFactory.getInstance()
+                        val leftContent = if (document != null) {
+                            diffContentFactory.create(project, document!!)
+                        } else {
+                            diffContentFactory.create(project, "", fileType)
+                        }
+
+                        val rightContent = diffContentFactory.create(project, action.code, fileType)
+                        val title = if (action.explanation.isNotBlank()) {
+                            "Apply AI Snippet: ${action.filePath} - ${action.explanation}"
+                        } else "Apply AI Snippet: ${action.filePath}"
+
+                        val request = SimpleDiffRequest(title, leftContent, rightContent, "Local Code", "AI Snippet")
+                        DiffManager.getInstance().showDiff(project, request)
+                    }, ModalityState.nonModal())
                 }
-
-                val diffContentFactory = DiffContentFactory.getInstance()
-                val fileType = virtualFile?.fileType ?: FileTypeManager.getInstance().getFileTypeByExtension(action.language)
-
-                val leftContent = if (virtualFile != null) {
-                    val document = FileDocumentManager.getInstance().getDocument(virtualFile!!)
-                    if (document != null) diffContentFactory.create(project, document)
-                    else diffContentFactory.create(project, "", fileType)
-                } else {
-                    diffContentFactory.create(project, "", fileType)
-                }
-
-                val rightContent = diffContentFactory.create(project, action.code, fileType)
-                val title = if (action.explanation.isNotBlank()) {
-                    "Apply AI Snippet: ${action.filePath} - ${action.explanation}"
-                } else "Apply AI Snippet: ${action.filePath}"
-
-                val request = SimpleDiffRequest(title, leftContent, rightContent, "Local Code", "AI Snippet")
-                DiffManager.getInstance().showDiff(project, request)
             }
             is DeleteFileTool -> {
-                val projectPath = project.guessProjectDir()?.path ?: return
-                val virtualFile = LocalFileSystem.getInstance().findFileByIoFile(File(projectPath, action.filePath))
-                if (virtualFile != null) {
-                    val psiFile = PsiManager.getInstance(project).findFile(virtualFile)
-                    if (psiFile != null) {
-                        SafeDeleteHandler.invoke(project, arrayOf(psiFile), true)
+                scope.launch {
+                    val psiFile = readAction {
+                        val projectPath = project.guessProjectDir()?.path ?: return@readAction null
+                        val virtualFile = LocalFileSystem.getInstance().findFileByIoFile(File(projectPath, action.filePath))
+                        virtualFile?.let { PsiManager.getInstance(project).findFile(it) }
                     }
-                } else {
-                    Messages.showErrorDialog("File not found: ${action.filePath}", "Delete Error")
+                    ApplicationManager.getApplication().invokeLater({
+                        if (psiFile != null && psiFile.isValid) {
+                            SafeDeleteHandler.invoke(project, arrayOf(psiFile), true)
+                        } else {
+                            Messages.showErrorDialog("File not found: ${action.filePath}", "Delete Error")
+                        }
+                    }, ModalityState.nonModal())
                 }
             }
             is RenameFileTool -> {
-                val projectPath = project.guessProjectDir()?.path ?: return
-                val virtualFile = LocalFileSystem.getInstance().findFileByIoFile(File(projectPath, action.sourcePath))
-                val targetFile = File(projectPath, action.targetPath)
-                if (virtualFile != null) {
-                    val psiFile = PsiManager.getInstance(project).findFile(virtualFile)
-                    if (psiFile != null) {
-                        RenameProcessor(project, psiFile, targetFile.name, false, false).run()
+                scope.launch {
+                    val resolved = readAction {
+                        val projectPath = project.guessProjectDir()?.path ?: return@readAction null
+                        val virtualFile = LocalFileSystem.getInstance().findFileByIoFile(File(projectPath, action.sourcePath))
+                        val targetName = File(projectPath, action.targetPath).name
+                        val psiFile = virtualFile?.let { PsiManager.getInstance(project).findFile(it) }
+                        psiFile to targetName
                     }
-                } else {
-                    Messages.showErrorDialog("Source file not found: ${action.sourcePath}", "Rename Error")
+                    ApplicationManager.getApplication().invokeLater({
+                        val psiFile = resolved?.first
+                        val targetName = resolved?.second
+                        if (psiFile != null && psiFile.isValid && targetName != null) {
+                            RenameProcessor(project, psiFile, targetName, false, false).run()
+                        } else {
+                            Messages.showErrorDialog("Source file not found: ${action.sourcePath}", "Rename Error")
+                        }
+                    }, ModalityState.nonModal())
                 }
             }
         }
