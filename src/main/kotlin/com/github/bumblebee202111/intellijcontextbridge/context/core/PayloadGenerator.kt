@@ -19,6 +19,8 @@ import java.util.Base64
 
 object PayloadGenerator {
 
+    private val FILE_MENTION_REGEX = Regex("(?:^|\\s)@([a-zA-Z0-9_./-]+)")
+
     private fun loadPrompt(filename: String): String {
         return PayloadGenerator::class.java.getResourceAsStream("/prompts/$filename")
             ?.bufferedReader(Charsets.UTF_8)
@@ -97,9 +99,19 @@ object PayloadGenerator {
             }
         }
 
-        val finalUserPrompt = remainingPrompt.ifBlank { "Execute the applied commands." }
+        if (projectDir != null && remainingPrompt.contains('@')) {
+            for (match in FILE_MENTION_REGEX.findAll(remainingPrompt)) {
+                val rawPath = match.groupValues[1].trimEnd('.', ',', ':', ';', ')', ']')
+                if (rawPath.isNotEmpty()) {
+                    val mentionedFile = projectDir.findFileByRelativePath(rawPath)
+                    if (mentionedFile != null && mentionedFile.exists()) {
+                        contextState.applyStateRecursively(mentionedFile, ContextLevel.COMPLETE, checkIgnore = true)
+                    }
+                }
+            }
+        }
 
-        val markdownText =  buildString {
+        val markdownText = buildString {
             // 2. Project Context
             appendLine("<project_context>")
             appendLine()
@@ -242,7 +254,9 @@ object PayloadGenerator {
             // 3. User Prompt
             val modeString = if (intentMode == IntentMode.ASK) "ASK" else "EDIT"
             appendLine("<user_prompt mode=\"$modeString\">")
-            appendLine(finalUserPrompt)
+            if (remainingPrompt.isNotBlank()) {
+                appendLine(remainingPrompt)
+            }
             appendLine("</user_prompt>")
         }
 

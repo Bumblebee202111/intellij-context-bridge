@@ -4,6 +4,7 @@ import com.github.bumblebee202111.intellijcontextbridge.state.ContextLevel
 import com.github.bumblebee202111.intellijcontextbridge.state.ContextState
 import com.github.bumblebee202111.intellijcontextbridge.utils.ContextCapabilityUtil
 import com.github.bumblebee202111.intellijcontextbridge.utils.FileFilterUtil
+import com.intellij.openapi.progress.ProgressManager
 import com.intellij.openapi.project.Project
 import com.intellij.openapi.vfs.VirtualFile
 import com.intellij.ui.treeStructure.Tree
@@ -111,6 +112,7 @@ class ContextTreeManager(private val project: Project, private val contextState:
         allowedLeaves: Set<VirtualFile>? = null,
         isRoot: Boolean = false
     ): DefaultMutableTreeNode? {
+        ProgressManager.checkCanceled()
         if (FileFilterUtil.isIgnored(project, dir)) return null
 
         val children = dir.children

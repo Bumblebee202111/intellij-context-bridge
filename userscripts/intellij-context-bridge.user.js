@@ -375,7 +375,6 @@
                     }
 
                     const mode = win.__cbCurrentMode || 'ASK';
-                    const finalUserPrompt = remainingPrompt || "Execute the applied commands.";
 
                     let wrapped = "";
                     if (appliedCommands.length > 0) {
@@ -385,7 +384,9 @@
                         });
                         wrapped += "</applied_commands>\n\n";
                     }
-                    wrapped += `<user_prompt mode="${mode}">\n${finalUserPrompt}\n</user_prompt>`;
+                    wrapped += remainingPrompt
+                        ? `<user_prompt mode="${mode}">\n${remainingPrompt}\n</user_prompt>`
+                        : `<user_prompt mode="${mode}">\n</user_prompt>`;
 
                     AIStudioDOM.Utils.setNativeValue(textarea, wrapped);
                 }

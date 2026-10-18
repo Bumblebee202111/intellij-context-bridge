@@ -12,6 +12,7 @@ import com.github.bumblebee202111.intellijcontextbridge.server.ContextBridgeServ
 import com.github.bumblebee202111.intellijcontextbridge.state.ContextLevel
 import com.github.bumblebee202111.intellijcontextbridge.state.ContextState
 import com.github.bumblebee202111.intellijcontextbridge.state.IntentMode
+import com.github.bumblebee202111.intellijcontextbridge.utils.FileFilterUtil
 import com.intellij.codeInsight.AutoPopupController
 import com.intellij.codeInsight.lookup.LookupElementBuilder
 import com.intellij.icons.AllIcons
@@ -34,6 +35,7 @@ import com.intellij.openapi.fileEditor.FileDocumentManager
 import com.intellij.openapi.fileEditor.FileEditorManager
 import com.intellij.openapi.fileEditor.OpenFileDescriptor
 import com.intellij.openapi.ide.CopyPasteManager
+import com.intellij.openapi.progress.ProgressManager
 import com.intellij.openapi.project.Project
 import com.intellij.openapi.project.guessProjectDir
 import com.intellij.openapi.ui.ComboBox
@@ -72,6 +74,26 @@ import java.util.Date
 import javax.swing.*
 import javax.swing.tree.DefaultMutableTreeNode
 import javax.swing.tree.DefaultTreeModel
+import kotlin.plus
+
+private sealed interface PromptCompletionItem : Comparable<PromptCompletionItem> {
+    data class Command(val slashCommand: SlashCommand) : PromptCompletionItem {
+        override fun compareTo(other: PromptCompletionItem): Int = when (other) {
+            is Command -> slashCommand.name.compareTo(other.slashCommand.name)
+            is FileMention -> -1
+        }
+    }
+
+    data class FileMention(
+        val file: VirtualFile,
+        val relativePath: String
+    ) : PromptCompletionItem {
+        override fun compareTo(other: PromptCompletionItem): Int = when (other) {
+            is Command -> 1
+            is FileMention -> relativePath.compareTo(other.relativePath)
+        }
+    }
+}
 
 class ContextComposerPanel(private val project: Project) : Disposable {
     private val contextState = project.service<ContextState>()
@@ -87,11 +109,13 @@ class ContextComposerPanel(private val project: Project) : Disposable {
 
     private var pendingAiRequests = emptySet<VirtualFile>()
 
+    @Volatile
+    private var cachedFileMentionItems: List<PromptCompletionItem.FileMention> = emptyList()
+
     private var treeUpdateJob: Job? = null
 
     private val uiRefreshTimer = Timer(300) {
-        val currentPromptText = promptArea.text
-        refreshTree(currentPromptText)
+        refreshTree()
     }.apply { isRepeats = false }
 
     private val dateFormat = SimpleDateFormat("HH:mm:ss")
@@ -132,38 +156,83 @@ class ContextComposerPanel(private val project: Project) : Disposable {
         isVisible = false
     }
 
-    private val commandCompletionProvider =
-        object : TextFieldWithAutoCompletionListProvider<SlashCommand>(emptyList()) {
-            override fun getLookupString(item: SlashCommand): String = "/${item.name}"
-            override fun getTailText(item: SlashCommand): String = " - ${item.description}"
-            override fun getTypeText(item: SlashCommand): String = item.mode.name
-            override fun compare(item1: SlashCommand, item2: SlashCommand): Int = item1.name.compareTo(item2.name)
+    private val promptCompletionProvider =
+        object : TextFieldWithAutoCompletionListProvider<PromptCompletionItem>(emptyList()) {
+            override fun getLookupString(item: PromptCompletionItem): String = when (item) {
+                is PromptCompletionItem.Command -> "/${item.slashCommand.name}"
+                is PromptCompletionItem.FileMention -> "@${item.file.name}"
+            }
 
-            override fun createLookupBuilder(item: SlashCommand): LookupElementBuilder {
-                return super.createLookupBuilder(item)
-                    .withIcon(AllIcons.Nodes.Function)
-                    .withInsertHandler { context, _ ->
-                        val start = context.startOffset
-                        val end = context.tailOffset
-                        context.document.replaceString(start, end, "/${item.name} ")
-                        val newOffset = start + item.name.length + 2
-                        context.editor.caretModel.moveToOffset(newOffset)
-
-                        ApplicationManager.getApplication().invokeLater {
-                            applyCommandContext(item)
-                        }
+            override fun getTailText(item: PromptCompletionItem): String = when (item) {
+                is PromptCompletionItem.Command -> " - ${item.slashCommand.description}"
+                is PromptCompletionItem.FileMention -> {
+                    if (item.relativePath.contains('/')) {
+                        " (${item.relativePath.substringBeforeLast('/')})"
+                    } else {
+                        ""
                     }
+                }
+            }
+
+            override fun getTypeText(item: PromptCompletionItem): String = when (item) {
+                is PromptCompletionItem.Command -> item.slashCommand.mode.name
+                is PromptCompletionItem.FileMention -> if (item.file.isDirectory) "Folder" else ""
+            }
+
+            override fun compare(item1: PromptCompletionItem, item2: PromptCompletionItem): Int =
+                item1.compareTo(item2)
+
+            override fun createLookupBuilder(item: PromptCompletionItem): LookupElementBuilder {
+                return when (item) {
+                    is PromptCompletionItem.Command -> {
+                        super.createLookupBuilder(item)
+                            .withIcon(AllIcons.Nodes.Function)
+                            .withInsertHandler { context, _ ->
+                                val start = context.startOffset
+                                val end = context.tailOffset
+                                val replacement = "/${item.slashCommand.name} "
+                                context.document.replaceString(start, end, replacement)
+                                context.editor.caretModel.moveToOffset(start + replacement.length)
+
+                                ApplicationManager.getApplication().invokeLater {
+                                    applyCommandContext(item.slashCommand)
+                                }
+                            }
+                    }
+
+                    is PromptCompletionItem.FileMention -> {
+                        val icon = if (item.file.isDirectory) {
+                            AllIcons.Nodes.Folder
+                        } else {
+                            item.file.fileType.icon ?: AllIcons.FileTypes.Any_type
+                        }
+                        super.createLookupBuilder(item)
+                            .withLookupString("@${item.relativePath}")
+                            .withIcon(icon)
+                            .withInsertHandler { context, _ ->
+                                val start = context.startOffset
+                                val end = context.tailOffset
+                                val replacement = "@${item.relativePath} "
+                                context.document.replaceString(start, end, replacement)
+                                context.editor.caretModel.moveToOffset(start + replacement.length)
+
+                                ApplicationManager.getApplication().invokeLater {
+                                    applyFileMentionContext(item.file)
+                                }
+                            }
+                    }
+                }
             }
         }
 
     private val promptArea = TextFieldWithAutoCompletion(
         project,
-        commandCompletionProvider,
+        promptCompletionProvider,
         false,
         ""
     ).apply {
         setOneLineMode(false)
-        setPlaceholder("Type your prompt here or start with '/' for commands...")
+        setPlaceholder("Type your prompt here... ('/' for commands, '@' to mention files)")
         addSettingsProvider { editor ->
             editor.settings.isUseSoftWraps = true
             editor.settings.additionalLinesCount = 0
@@ -394,6 +463,18 @@ class ContextComposerPanel(private val project: Project) : Disposable {
             .submit(AppExecutorUtil.getAppExecutorService())
     }
 
+    private fun applyFileMentionContext(file: VirtualFile) {
+        ReadAction.nonBlocking<Unit> {
+            if (file.isValid) {
+                contextState.applyStateRecursively(file, ContextLevel.COMPLETE, checkIgnore = true)
+            }
+        }
+            .finishOnUiThread(ModalityState.nonModal()) {
+                refreshUi()
+            }
+            .submit(AppExecutorUtil.getAppExecutorService())
+    }
+
     private fun setupTopToolbar(): JPanel {
         val topToolbar = JPanel(BorderLayout(5, 0)).apply { border = JBUI.Borders.empty(5) }
 
@@ -456,7 +537,6 @@ class ContextComposerPanel(private val project: Project) : Disposable {
                 if (historyIndex == -1) {
                     draftPrompt = promptArea.text
                 }
-                refreshUi()
 
                 val text = promptArea.text.trimStart()
                 val commandRegex = Regex("^/([a-zA-Z0-9_-]+)")
@@ -484,7 +564,7 @@ class ContextComposerPanel(private val project: Project) : Disposable {
                 }
 
                 val newText = event.newFragment.toString()
-                if (newText == "/") {
+                if (newText == "/" || newText == "@") {
                     val offset = event.offset
                     val docText = event.document.text
                     if (offset == 0 || docText.getOrNull(offset - 1) == '\n' || docText.getOrNull(offset - 1) == ' ') {
@@ -772,12 +852,40 @@ class ContextComposerPanel(private val project: Project) : Disposable {
         }
     }
 
+    private fun updateCompletionItems() {
+        val commandItems = project.service<CommandRegistryService>()
+            .getCommands()
+            .map { PromptCompletionItem.Command(it) }
+        promptCompletionProvider.setItems(commandItems + cachedFileMentionItems)
+    }
+
+    @Suppress("UnsafeVfsRecursion")
+    private fun collectFileMentionItems(projectDir: VirtualFile): List<PromptCompletionItem.FileMention> {
+        val result = mutableListOf<PromptCompletionItem.FileMention>()
+
+        fun visit(dir: VirtualFile) {
+            ProgressManager.checkCanceled()
+            for (child in dir.children) {
+                ProgressManager.checkCanceled()
+                if (FileFilterUtil.isIgnored(project, child)) continue
+                val relativePath = VfsUtilCore.getRelativePath(child, projectDir) ?: continue
+                result.add(PromptCompletionItem.FileMention(child, relativePath))
+                if (child.isDirectory) {
+                    visit(child)
+                }
+            }
+        }
+
+        visit(projectDir)
+        return result
+    }
+
     fun refreshUi() {
-        commandCompletionProvider.setItems(project.service<CommandRegistryService>().getCommands())
+        updateCompletionItems()
         uiRefreshTimer.restart()
     }
 
-    private fun refreshTree(currentPromptText: String) {
+    private fun refreshTree() {
         treeUpdateJob?.cancel()
 
         treeUpdateJob = contextState.scope.launch {
@@ -792,7 +900,7 @@ class ContextComposerPanel(private val project: Project) : Disposable {
                 isConfigLoaded = true
             }
 
-            val suggestions = ContextSuggestionEngine.calculateSuggestions(project, contextState, currentPromptText)
+            val suggestions = ContextSuggestionEngine.calculateSuggestions(project, contextState)
 
             val newDedupedFiles = mutableSetOf<VirtualFile>()
             val projectDir = project.guessProjectDir()
@@ -817,6 +925,14 @@ class ContextComposerPanel(private val project: Project) : Disposable {
                             }
                         }
                     }
+                }
+            }
+
+            val fileMentionItems = readAction {
+                if (projectDir != null) {
+                    collectFileMentionItems(projectDir)
+                } else {
+                    emptyList()
                 }
             }
 
@@ -855,6 +971,8 @@ class ContextComposerPanel(private val project: Project) : Disposable {
             // Switch to the EDT for UI updates safely
             ApplicationManager.getApplication().invokeLater({
                 lastDedupedFiles = newDedupedFiles
+                cachedFileMentionItems = fileMentionItems
+                updateCompletionItems()
 
                 // CAPTURE: Record which folders the user currently has open across all 3 trees
                 val expandedMain = treeManager.getExpandedFilePaths(tree)
@@ -892,6 +1010,7 @@ class ContextComposerPanel(private val project: Project) : Disposable {
             }, ModalityState.nonModal())
         }
     }
+
     override fun dispose() {
         treeUpdateJob?.cancel()
     }

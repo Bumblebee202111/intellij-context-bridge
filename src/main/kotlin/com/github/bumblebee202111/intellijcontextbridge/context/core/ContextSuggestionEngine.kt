@@ -3,6 +3,7 @@ package com.github.bumblebee202111.intellijcontextbridge.context.core
 import com.github.bumblebee202111.intellijcontextbridge.context.ep.LanguageGraphExtractor
 import com.github.bumblebee202111.intellijcontextbridge.state.ContextLevel
 import com.github.bumblebee202111.intellijcontextbridge.state.ContextState
+import com.github.bumblebee202111.intellijcontextbridge.state.SeedGraphCacheEntry
 import com.github.bumblebee202111.intellijcontextbridge.utils.ContextCapabilityUtil
 import com.github.bumblebee202111.intellijcontextbridge.utils.FileFilterUtil
 import com.intellij.openapi.application.readAction
@@ -18,14 +19,17 @@ import com.intellij.psi.PsiManager
 import com.intellij.psi.search.FilenameIndex
 import com.intellij.psi.search.GlobalSearchScope
 import com.intellij.psi.search.searches.ReferencesSearch
+import com.intellij.psi.util.PsiModificationTracker
 import kotlinx.coroutines.delay
 import kotlin.math.sqrt
 
 object ContextSuggestionEngine {
 
-    suspend fun calculateSuggestions(project: Project, contextState: ContextState, promptText: String): Set<VirtualFile> {
+    suspend fun calculateSuggestions(project: Project, contextState: ContextState): Set<VirtualFile> {
         val scores = mutableMapOf<VirtualFile, Int>()
         val seedFiles = mutableSetOf<VirtualFile>()
+        val uncachedSeeds = mutableListOf<VirtualFile>()
+        val outgoingBySeed = mutableMapOf<VirtualFile, Set<VirtualFile>>()
 
         fun award(file: VirtualFile, points: Int) {
             if (!file.isValid || file.isDirectory || FileFilterUtil.isIgnored(project, file)) return
@@ -35,10 +39,11 @@ object ContextSuggestionEngine {
         val psiManager = PsiManager.getInstance(project)
         val projectScope = GlobalSearchScope.projectScope(project)
 
-        // Yielding Read Action: Will suspend if the user types
-        val allFilenames = readAction { FilenameIndex.getAllFilenames(project) }
+        val psiModCount = readAction {
+            PsiModificationTracker.getInstance(project).modificationCount
+        }
 
-        // Yielding Read Action
+        // Yielding Read Action: Collect seeds and resolve cached graphs or outgoing imports
         readAction {
             // 1. Active File (+50)
             val fileEditorManager = FileEditorManager.getInstance(project)
@@ -62,56 +67,55 @@ object ContextSuggestionEngine {
                 seedFiles.add(it)
             }
 
-            // 4. Prompt Mentions (+30)
-            val words = promptText.split(Regex("\\W+")).filter { it.length > 2 }.toSet()
-            if (words.isNotEmpty()) {
-                val matchedNames = allFilenames.filter { name ->
-                    ProgressManager.checkCanceled()
-                    val nameWithoutExt = name.substringBeforeLast('.')
-                    words.any { word -> nameWithoutExt.equals(word, ignoreCase = true) }
-                }
-                matchedNames.forEach { name ->
-                    FilenameIndex.getVirtualFilesByName(name, projectScope).forEach { file ->
-                        award(file, 30)
-                        seedFiles.add(file)
-                    }
-                }
-            }
-
-            // 5. Expand Seeds with COMPLETE Context Files (Excluding SKELETON)
+            // 4. Expand Seeds with COMPLETE Context Files (including @-mentioned files)
             contextState.fileStates.forEach { (file, level) ->
-                if (level == ContextLevel.COMPLETE) {
+                if (level == ContextLevel.COMPLETE && file.isValid && !file.isDirectory) {
                     seedFiles.add(file)
                 }
             }
 
-            // 6. Dependencies (Outgoing)
             for (seed in seedFiles) {
                 ProgressManager.checkCanceled()
-                val psiFile = psiManager.findFile(seed) ?: continue
+                val cachedGraph = contextState.getCachedSeedGraph(seed, psiModCount)
+                if (cachedGraph != null) {
+                    cachedGraph.outgoingFiles.forEach { award(it, 15) }
+                    cachedGraph.incomingScores.forEach { (callerFile, idfScore) -> award(callerFile, idfScore) }
+                } else {
+                    uncachedSeeds.add(seed)
+                }
+            }
 
-                val extractor =
-                    LanguageGraphExtractor.Companion.EP_NAME.extensionList.firstOrNull { it.isSupported(psiFile) }
-                val importedNames = extractor?.getImportedNames(psiFile) ?: emptySet()
+            // 5. Outgoing Dependencies (only for uncached seeds)
+            if (uncachedSeeds.isNotEmpty()) {
+                val filenamesByShortName = FilenameIndex.getAllFilenames(project)
+                    .groupBy { it.substringBeforeLast('.') }
 
-                if (importedNames.isNotEmpty()) {
-                    val matchedNames = allFilenames.filter { name ->
+                for (seed in uncachedSeeds) {
+                    ProgressManager.checkCanceled()
+                    val psiFile = psiManager.findFile(seed) ?: continue
+
+                    val extractor =
+                        LanguageGraphExtractor.Companion.EP_NAME.extensionList.firstOrNull { it.isSupported(psiFile) }
+                    val importedNames = extractor?.getImportedNames(psiFile) ?: emptySet()
+
+                    val seedOutgoing = mutableSetOf<VirtualFile>()
+                    for (importedName in importedNames) {
                         ProgressManager.checkCanceled()
-                        val nameWithoutExt = name.substringBeforeLast('.')
-                        importedNames.contains(nameWithoutExt)
-                    }
-                    matchedNames.forEach { name ->
-                        FilenameIndex.getVirtualFilesByName(name, projectScope).forEach { importedFile ->
-                            award(importedFile, 15)
+                        val matchingFilenames = filenamesByShortName[importedName] ?: continue
+                        for (name in matchingFilenames) {
+                            FilenameIndex.getVirtualFilesByName(name, projectScope).forEach { importedFile ->
+                                seedOutgoing.add(importedFile)
+                                award(importedFile, 15)
+                            }
                         }
                     }
+                    outgoingBySeed[seed] = seedOutgoing
                 }
             }
         }
 
-        // 7. Unbounded Graph Traversal (Incoming Usages)
-        for (seed in seedFiles) {
-            // Yielding Read Action
+        // 6. Unbounded Graph Traversal (Incoming Usages for uncached seeds)
+        for (seed in uncachedSeeds) {
             val primaryElements = readAction {
                 if (!seed.isValid) return@readAction emptyList<PsiElement>()
 
@@ -120,6 +124,8 @@ object ContextSuggestionEngine {
                     LanguageGraphExtractor.Companion.EP_NAME.extensionList.firstOrNull { it.isSupported(psiFile) }
                 extractor?.getPrimaryDeclarations(psiFile) ?: emptyList()
             }
+
+            val seedIncomingScores = mutableMapOf<VirtualFile, Int>()
 
             for (element in primaryElements) {
                 // CPU THROTTLE: Yield the coroutine thread completely between elements.
@@ -144,14 +150,26 @@ object ContextSuggestionEngine {
                         // INVERSE DOCUMENT FREQUENCY (IDF) SCORING: 40 / sqrt(N)
                         val idfScore = (40.0 / sqrt(usageFiles.size.toDouble())).toInt()
                         if (idfScore > 0) {
-                            usageFiles.forEach { award(it, idfScore) }
+                            usageFiles.forEach { callerFile ->
+                                seedIncomingScores[callerFile] = (seedIncomingScores[callerFile] ?: 0) + idfScore
+                                award(callerFile, idfScore)
+                            }
                         }
                     }
                 }
             }
+
+            contextState.cacheSeedGraph(
+                seed,
+                SeedGraphCacheEntry(
+                    psiModificationCount = psiModCount,
+                    outgoingFiles = outgoingBySeed[seed] ?: emptySet(),
+                    incomingScores = seedIncomingScores
+                )
+            )
         }
 
-        // 8. Filter & Sort
+        // 7. Filter & Sort
         val projectDir = project.guessProjectDir()
         val dedupCache = contextState.getDedupCache()
         val validSuggestions = mutableSetOf<VirtualFile>()

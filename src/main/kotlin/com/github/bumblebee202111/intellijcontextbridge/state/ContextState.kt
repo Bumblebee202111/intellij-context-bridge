@@ -17,6 +17,12 @@ import java.security.MessageDigest
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.CopyOnWriteArrayList
 
+data class SeedGraphCacheEntry(
+    val psiModificationCount: Long,
+    val outgoingFiles: Set<VirtualFile>,
+    val incomingScores: Map<VirtualFile, Int>
+)
+
 private data class HashCacheEntry(
     val stamp: Long,
     val level: ContextLevel,
@@ -69,6 +75,9 @@ class ContextState(
 
     // Transient cache to prevent re-hashing unmodified files during UI renders
     private val hashCache = ConcurrentHashMap<VirtualFile, HashCacheEntry>()
+
+    // Transient cache for per-seed PSI graph results (outgoing imports + incoming ReferencesSearch scores)
+    private val seedGraphCache = ConcurrentHashMap<VirtualFile, SeedGraphCacheEntry>()
 
     private val jsonParser = Json { ignoreUnknownKeys = true }
 
@@ -170,6 +179,19 @@ class ContextState(
         return hash
     }
 
+    fun getCachedSeedGraph(file: VirtualFile, psiModificationCount: Long): SeedGraphCacheEntry? {
+        val cached = seedGraphCache[file]
+        return if (cached != null && cached.psiModificationCount == psiModificationCount) {
+            cached
+        } else {
+            null
+        }
+    }
+
+    fun cacheSeedGraph(file: VirtualFile, entry: SeedGraphCacheEntry) {
+        seedGraphCache[file] = entry
+    }
+
     fun addTurn(turn: UserTurn) {
         myState.turns.add(turn)
     }
@@ -206,5 +228,6 @@ class ContextState(
         fileStates.clear()
         myState.turns.clear()
         hashCache.clear()
+        seedGraphCache.clear()
     }
 }
