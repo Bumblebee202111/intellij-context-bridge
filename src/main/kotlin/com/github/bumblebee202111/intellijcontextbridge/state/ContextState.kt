@@ -1,7 +1,5 @@
 package com.github.bumblebee202111.intellijcontextbridge.state
 
-import com.github.bumblebee202111.intellijcontextbridge.context.AiContextConfig
-import com.github.bumblebee202111.intellijcontextbridge.context.PsiSkeletonExtractor
 import com.github.bumblebee202111.intellijcontextbridge.utils.ContextCapabilityUtil
 import com.github.bumblebee202111.intellijcontextbridge.utils.FileFilterUtil
 import com.intellij.openapi.components.PersistentStateComponent
@@ -9,7 +7,6 @@ import com.intellij.openapi.components.Service
 import com.intellij.openapi.components.State
 import com.intellij.openapi.components.Storage
 import com.intellij.openapi.diagnostic.thisLogger
-import com.intellij.openapi.fileEditor.FileDocumentManager
 import com.intellij.openapi.project.Project
 import com.intellij.openapi.project.guessProjectDir
 import com.intellij.openapi.vfs.VfsUtilCore
@@ -19,6 +16,11 @@ import java.security.MessageDigest
 import java.util.UUID
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.CopyOnWriteArrayList
+import kotlin.collections.get
+
+enum class IntentMode {
+    ASK, EDIT
+}
 
 enum class ContextLevel {
     NONE, SKELETON, COMPLETE, MIXED
@@ -171,33 +173,18 @@ class ContextState(private val project: Project) : PersistentStateComponent<Cont
         return bytes.joinToString("") { "%02x".format(it) }
     }
 
-    /**
-     * Safely retrieves or computes the hash of a file.
-     * Uses the file's native modification stamp to instantly return cached hashes for unmodified files.
-     */
-    fun getFileHash(project: Project, file: VirtualFile, level: ContextLevel): String {
+    fun getCachedHash(file: VirtualFile, level: ContextLevel): String? {
         val currentStamp = file.modificationStamp
         val cached = hashCache[file]
-
-        if (cached != null && cached.stamp == currentStamp && cached.level == level) {
-            return cached.hash
-        }
-
-        val extension = file.extension?.lowercase() ?: ""
-        val isTextFile = ContextCapabilityUtil.textExtensions.contains(extension) || !file.fileType.isBinary
-
-        val hash = if (isTextFile) {
-            val extractedText = if (level == ContextLevel.COMPLETE) {
-                FileDocumentManager.getInstance().getCachedDocument(file)?.text ?: VfsUtilCore.loadText(file)
-            } else {
-                PsiSkeletonExtractor.extract(project, file) ?: "OMITTED_NON_CODE_SKELETON"
-            }
-            calculateHash(extractedText)
+        return if (cached != null && cached.stamp == currentStamp && cached.level == level) {
+            cached.hash
         } else {
-            if (level == ContextLevel.COMPLETE) calculateHash("${file.modificationStamp}_${file.length}") else "OMITTED_BINARY_SKELETON"
+            null
         }
+    }
 
-        hashCache[file] = HashCacheEntry(currentStamp, level, hash)
+    fun cacheHash(file: VirtualFile, level: ContextLevel, hash: String): String {
+        hashCache[file] = HashCacheEntry(file.modificationStamp, level, hash)
         return hash
     }
 

@@ -5,6 +5,7 @@ import com.github.bumblebee202111.intellijcontextbridge.commands.SlashCommand
 import com.github.bumblebee202111.intellijcontextbridge.state.ContextLevel
 import com.github.bumblebee202111.intellijcontextbridge.state.ContextState
 import com.github.bumblebee202111.intellijcontextbridge.state.FileStateRecord
+import com.github.bumblebee202111.intellijcontextbridge.state.IntentMode
 import com.github.bumblebee202111.intellijcontextbridge.state.UserTurn
 import com.github.bumblebee202111.intellijcontextbridge.utils.ContextCapabilityUtil
 import com.github.bumblebee202111.intellijcontextbridge.utils.VcsUtil
@@ -16,9 +17,11 @@ import com.intellij.openapi.vfs.VfsUtilCore
 import com.intellij.openapi.vfs.VirtualFile
 import java.util.Base64
 
-enum class IntentMode {
-    ASK, EDIT
-}
+data class PayloadGenerationResult(
+    val payload: AiPayload,
+    val turn: UserTurn,
+    val dedupedFiles: Set<VirtualFile> = emptySet()
+)
 
 object PayloadGenerator {
 
@@ -29,6 +32,34 @@ object PayloadGenerator {
             ?: throw IllegalStateException("Missing required prompt resource: $filename")
     }
 
+    fun getFileHash(project: Project, contextState: ContextState, file: VirtualFile, level: ContextLevel): String {
+        contextState.getCachedHash(file, level)?.let { return it }
+
+        val extension = file.extension?.lowercase() ?: ""
+        val isTextFile = ContextCapabilityUtil.textExtensions.contains(extension) || !file.fileType.isBinary
+
+        val hash = if (isTextFile) {
+            val extractedText = extractTextContent(project, file, level) ?: "OMITTED_NON_CODE_SKELETON"
+            contextState.calculateHash(extractedText)
+        } else {
+            if (level == ContextLevel.COMPLETE) {
+                contextState.calculateHash("${file.modificationStamp}_${file.length}")
+            } else {
+                "OMITTED_BINARY_SKELETON"
+            }
+        }
+
+        return contextState.cacheHash(file, level, hash)
+    }
+
+    private fun extractTextContent(project: Project, file: VirtualFile, level: ContextLevel): String? {
+        return if (level == ContextLevel.COMPLETE) {
+            FileDocumentManager.getInstance().getCachedDocument(file)?.text ?: VfsUtilCore.loadText(file)
+        } else {
+            PsiSkeletonExtractor.extract(project, file)
+        }
+    }
+
     fun generatePayload(
         project: Project,
         contextState: ContextState,
@@ -36,7 +67,7 @@ object PayloadGenerator {
         intentMode: IntentMode,
         isCommit: Boolean = false,
         dynamicVariables: Map<String, String> = emptyMap()
-    ): AiPayload {
+    ): PayloadGenerationResult {
         val projectDir = project.guessProjectDir()
         val attachments = mutableListOf<AiAttachment>()
 
@@ -113,7 +144,7 @@ object PayloadGenerator {
                     val mime = getMimeType(extension)
 
                     // Retrieve the cached hash instantly
-                    val currentHash = contextState.getFileHash(project, file, level)
+                    val currentHash = getFileHash(project, contextState, file, level)
                     val previousRecord = currentCache[relativePath]
 
                     if (previousRecord != null && previousRecord.level == level && previousRecord.hash == currentHash) {
@@ -153,9 +184,25 @@ object PayloadGenerator {
                 var contentToAppend: String?
                 var isNonCodeSkeleton = false
                 try {
-                    // Retrieve the cached hash instantly
-                    val currentHash = contextState.getFileHash(project, file, level)
+                    val cachedHash = contextState.getCachedHash(file, level)
                     val previousRecord = currentCache[relativePath]
+
+                    if (cachedHash != null && previousRecord != null && previousRecord.level == level && previousRecord.hash == cachedHash) {
+                        dedupedFilesTracker.add(file)
+                        newTurn.sentFiles[relativePath] = FileStateRecord(level, cachedHash)
+                        continue
+                    }
+
+                    val extractedText = extractTextContent(project, file, level)
+                    if (level != ContextLevel.COMPLETE && extractedText == null) {
+                        isNonCodeSkeleton = true
+                    }
+
+                    val currentHash = cachedHash ?: contextState.cacheHash(
+                        file,
+                        level,
+                        contextState.calculateHash(extractedText ?: "OMITTED_NON_CODE_SKELETON")
+                    )
 
                     if (previousRecord != null && previousRecord.level == level && previousRecord.hash == currentHash) {
                         dedupedFilesTracker.add(file)
@@ -163,17 +210,6 @@ object PayloadGenerator {
                         continue
                     } else {
                         newTurn.sentFiles[relativePath] = FileStateRecord(level, currentHash)
-
-                        // Extract the content because it was NOT deduplicated
-                        val extractedText = if (level == ContextLevel.COMPLETE) {
-                            FileDocumentManager.getInstance().getCachedDocument(file)?.text ?: VfsUtilCore.loadText(file)
-                        } else {
-                            val skeleton = PsiSkeletonExtractor.extract(project, file)
-                            if (skeleton == null) {
-                                isNonCodeSkeleton = true
-                            }
-                            skeleton
-                        }
                         contentToAppend = extractedText
                     }
                 } catch (e: Exception) {
@@ -222,9 +258,11 @@ object PayloadGenerator {
             attachments = attachments,
             isCommit = isCommit
         )
-        payload.dedupedFiles = dedupedFilesTracker
-        payload.turn = newTurn
-        return payload
+        return PayloadGenerationResult(
+            payload = payload,
+            turn = newTurn,
+            dedupedFiles = dedupedFilesTracker
+        )
     }
 
     private fun getMimeType(extension: String): String {

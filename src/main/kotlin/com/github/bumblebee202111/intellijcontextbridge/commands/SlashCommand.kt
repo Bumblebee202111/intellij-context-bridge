@@ -1,6 +1,6 @@
 package com.github.bumblebee202111.intellijcontextbridge.commands
 
-import com.github.bumblebee202111.intellijcontextbridge.context.IntentMode
+import com.github.bumblebee202111.intellijcontextbridge.state.IntentMode
 
 enum class CommandContextAction {
     ADDITIVE, REPLACE

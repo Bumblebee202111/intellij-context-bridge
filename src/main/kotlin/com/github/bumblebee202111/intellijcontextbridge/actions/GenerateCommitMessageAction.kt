@@ -1,11 +1,10 @@
 package com.github.bumblebee202111.intellijcontextbridge.actions
 
-import com.github.bumblebee202111.intellijcontextbridge.context.AiPayload
-import com.github.bumblebee202111.intellijcontextbridge.context.IntentMode
 import com.github.bumblebee202111.intellijcontextbridge.context.PayloadGenerator
 import com.github.bumblebee202111.intellijcontextbridge.server.ContextBridgeServer
 import com.github.bumblebee202111.intellijcontextbridge.services.CommitBridgeService
 import com.github.bumblebee202111.intellijcontextbridge.state.ContextState
+import com.github.bumblebee202111.intellijcontextbridge.state.IntentMode
 import com.github.bumblebee202111.intellijcontextbridge.utils.VcsUtil
 import com.intellij.icons.AllIcons
 import com.intellij.openapi.actionSystem.AnAction
@@ -53,7 +52,7 @@ class GenerateCommitMessageAction : AnAction("Generate AI Commit Message", "Gene
                 val diffString = VcsUtil.getProjectDiff(project, selectedChanges)
                 val contextState = project.service<ContextState>()
 
-                val payload = PayloadGenerator.generatePayload(
+                val result = PayloadGenerator.generatePayload(
                     project = project,
                     contextState = contextState,
                     userPrompt = "/commit",
@@ -66,7 +65,7 @@ class GenerateCommitMessageAction : AnAction("Generate AI Commit Message", "Gene
                 val server = ApplicationManager.getApplication().getService(ContextBridgeServer::class.java)
 
                 if (activeTabId != null) {
-                    val jsonString = Json.encodeToString(payload)
+                    val jsonString = Json.encodeToString(result.payload)
                     server.sendToTab(activeTabId, jsonString)
                 } else {
                     thisLogger().warn("GenerateCommitMessageAction: activeTabId is null. The user has not bound a tab in the Context Bridge panel.")

@@ -171,7 +171,7 @@ object ContextSuggestionEngine {
 
                 if (cachedRecord != null && cachedRecord.level == maxLevel) {
                     try {
-                        val currentHash = readAction { contextState.getFileHash(project, file, maxLevel) }
+                        val currentHash = readAction { PayloadGenerator.getFileHash(project, contextState, file, maxLevel) }
                         if (currentHash == cachedRecord.hash) {
                             isMaxLevelCached = true
                         }

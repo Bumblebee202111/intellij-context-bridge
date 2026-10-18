@@ -1,4 +1,4 @@
-package com.github.bumblebee202111.intellijcontextbridge.context
+package com.github.bumblebee202111.intellijcontextbridge.state
 
 import kotlinx.serialization.Serializable
 

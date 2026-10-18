@@ -3,9 +3,8 @@ package com.github.bumblebee202111.intellijcontextbridge.ui
 import com.github.bumblebee202111.intellijcontextbridge.commands.CommandContextAction
 import com.github.bumblebee202111.intellijcontextbridge.commands.CommandRegistryService
 import com.github.bumblebee202111.intellijcontextbridge.commands.SlashCommand
-import com.github.bumblebee202111.intellijcontextbridge.context.AiPayload
 import com.github.bumblebee202111.intellijcontextbridge.context.ContextSuggestionEngine
-import com.github.bumblebee202111.intellijcontextbridge.context.IntentMode
+import com.github.bumblebee202111.intellijcontextbridge.context.PayloadGenerationResult
 import com.github.bumblebee202111.intellijcontextbridge.context.PayloadGenerator
 import com.github.bumblebee202111.intellijcontextbridge.server.BrowserTab
 import com.github.bumblebee202111.intellijcontextbridge.server.ContextBridgeServer
@@ -13,6 +12,7 @@ import com.github.bumblebee202111.intellijcontextbridge.server.SyncCommand
 import com.github.bumblebee202111.intellijcontextbridge.services.ContextCoroutineScopeService
 import com.github.bumblebee202111.intellijcontextbridge.state.ContextLevel
 import com.github.bumblebee202111.intellijcontextbridge.state.ContextState
+import com.github.bumblebee202111.intellijcontextbridge.state.IntentMode
 import com.intellij.codeInsight.AutoPopupController
 import com.intellij.codeInsight.lookup.LookupElementBuilder
 import com.intellij.icons.AllIcons
@@ -653,11 +653,12 @@ class ContextComposerPanel(private val project: Project) : Disposable {
 
         setGeneratingState(true)
 
-        ReadAction.nonBlocking<AiPayload> {
+        ReadAction.nonBlocking<PayloadGenerationResult> {
             PayloadGenerator.generatePayload(project, contextState, promptText, intent)
         }
-            .finishOnUiThread(ModalityState.nonModal()) { payloadObj ->
-                payloadObj.turn?.let { contextState.addTurn(it) }
+            .finishOnUiThread(ModalityState.nonModal()) { result ->
+                val payloadObj = result.payload
+                contextState.addTurn(result.turn)
                 refreshUi()
 
                 if (isWsSend && selectedTab != null) {
@@ -815,7 +816,7 @@ class ContextComposerPanel(private val project: Project) : Disposable {
 
                         if (cachedRecord != null && cachedRecord.level == currentLevel) {
                             try {
-                                val currentHash = contextState.getFileHash(project, file, currentLevel)
+                                val currentHash = PayloadGenerator.getFileHash(project, contextState, file, currentLevel)
                                 if (currentHash == cachedRecord.hash) {
                                     newDedupedFiles.add(file)
                                 }
