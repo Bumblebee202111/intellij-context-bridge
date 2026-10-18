@@ -7,6 +7,7 @@ import com.intellij.openapi.components.Service
 import com.intellij.openapi.components.State
 import com.intellij.openapi.components.Storage
 import com.intellij.openapi.diagnostic.thisLogger
+import com.intellij.openapi.progress.ProgressManager
 import com.intellij.openapi.project.Project
 import com.intellij.openapi.project.guessProjectDir
 import com.intellij.openapi.vfs.VfsUtilCore
@@ -18,7 +19,7 @@ import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.CopyOnWriteArrayList
 
 data class SeedGraphCacheEntry(
-    val psiModificationCount: Long,
+    val modificationStamp: Long,
     val outgoingFiles: Set<VirtualFile>,
     val incomingScores: Map<VirtualFile, Int>
 )
@@ -86,6 +87,7 @@ class ContextState(
     }
 
     fun applyStateRecursively(file: VirtualFile, level: ContextLevel, checkIgnore: Boolean = true) {
+        ProgressManager.checkCanceled()
         // Skip slow index operations if we already know the file is valid (e.g., from a UI click)
         if (checkIgnore && FileFilterUtil.isIgnored(project, file)) return
 
@@ -130,11 +132,13 @@ class ContextState(
         }
 
         config.skeleton.forEach { path ->
+            ProgressManager.checkCanceled()
             val file = if (path == "." || path == "/") projectDir else projectDir.findFileByRelativePath(path)
             if (file != null && file.exists()) applyStateRecursively(file, ContextLevel.SKELETON, checkIgnore = true)
         }
 
         config.complete.forEach { path ->
+            ProgressManager.checkCanceled()
             val file = if (path == "." || path == "/") projectDir else projectDir.findFileByRelativePath(path)
             if (file != null && file.exists()) applyStateRecursively(file, ContextLevel.COMPLETE, checkIgnore = true)
         }
@@ -152,6 +156,7 @@ class ContextState(
 
         fileStates.clear()
         for ((path, record) in lastTurn.sentFiles) {
+            ProgressManager.checkCanceled()
             val file = projectDir.findFileByRelativePath(path)
             if (file != null && file.exists()) {
                 fileStates[file] = record.level
@@ -179,17 +184,22 @@ class ContextState(
         return hash
     }
 
-    fun getCachedSeedGraph(file: VirtualFile, psiModificationCount: Long): SeedGraphCacheEntry? {
+    fun getCachedSeedGraph(file: VirtualFile): SeedGraphCacheEntry? {
+        val currentStamp = file.modificationStamp
         val cached = seedGraphCache[file]
-        return if (cached != null && cached.psiModificationCount == psiModificationCount) {
+        return if (cached != null && cached.modificationStamp == currentStamp) {
             cached
         } else {
             null
         }
     }
 
-    fun cacheSeedGraph(file: VirtualFile, entry: SeedGraphCacheEntry) {
-        seedGraphCache[file] = entry
+    fun cacheSeedGraph(file: VirtualFile, outgoingFiles: Set<VirtualFile>, incomingScores: Map<VirtualFile, Int>) {
+        seedGraphCache[file] = SeedGraphCacheEntry(
+            modificationStamp = file.modificationStamp,
+            outgoingFiles = outgoingFiles,
+            incomingScores = incomingScores
+        )
     }
 
     fun addTurn(turn: UserTurn) {

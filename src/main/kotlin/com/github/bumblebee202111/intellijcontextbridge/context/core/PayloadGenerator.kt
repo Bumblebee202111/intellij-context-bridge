@@ -9,8 +9,10 @@ import com.github.bumblebee202111.intellijcontextbridge.state.IntentMode
 import com.github.bumblebee202111.intellijcontextbridge.state.UserTurn
 import com.github.bumblebee202111.intellijcontextbridge.utils.ContextCapabilityUtil
 import com.github.bumblebee202111.intellijcontextbridge.vcs.VcsUtil
+import com.intellij.openapi.application.readAction
 import com.intellij.openapi.components.service
 import com.intellij.openapi.fileEditor.FileDocumentManager
+import com.intellij.openapi.progress.ProgressManager
 import com.intellij.openapi.project.Project
 import com.intellij.openapi.project.guessProjectDir
 import com.intellij.openapi.vfs.VfsUtilCore
@@ -29,6 +31,7 @@ object PayloadGenerator {
     }
 
     fun getFileHash(project: Project, contextState: ContextState, file: VirtualFile, level: ContextLevel): String {
+        ProgressManager.checkCanceled()
         contextState.getCachedHash(file, level)?.let { return it }
 
         val extension = file.extension?.lowercase() ?: ""
@@ -56,7 +59,7 @@ object PayloadGenerator {
         }
     }
 
-    fun generatePayload(
+    suspend fun generatePayload(
         project: Project,
         contextState: ContextState,
         userPrompt: String,
@@ -88,7 +91,7 @@ object PayloadGenerator {
                 var body = cmd.promptBody
 
                 if (body.contains("{{vcs_diff}}")) {
-                    val diff = dynamicVariables["vcs_diff"] ?: VcsUtil.getProjectDiff(project)
+                    val diff = dynamicVariables["vcs_diff"] ?: readAction { VcsUtil.getProjectDiff(project) }
                     body = body.replace("{{vcs_diff}}", diff)
                 }
 
@@ -100,14 +103,137 @@ object PayloadGenerator {
         }
 
         if (projectDir != null && remainingPrompt.contains('@')) {
-            for (match in FILE_MENTION_REGEX.findAll(remainingPrompt)) {
-                val rawPath = match.groupValues[1].trimEnd('.', ',', ':', ';', ')', ']')
-                if (rawPath.isNotEmpty()) {
-                    val mentionedFile = projectDir.findFileByRelativePath(rawPath)
-                    if (mentionedFile != null && mentionedFile.exists()) {
-                        contextState.applyStateRecursively(mentionedFile, ContextLevel.COMPLETE, checkIgnore = true)
+            readAction {
+                for (match in FILE_MENTION_REGEX.findAll(remainingPrompt)) {
+                    ProgressManager.checkCanceled()
+                    val rawPath = match.groupValues[1].trimEnd('.', ',', ':', ';', ')', ']')
+                    if (rawPath.isNotEmpty()) {
+                        val mentionedFile = projectDir.findFileByRelativePath(rawPath)
+                        if (mentionedFile != null && mentionedFile.exists()) {
+                            contextState.applyStateRecursively(mentionedFile, ContextLevel.COMPLETE, checkIgnore = true)
+                        }
                     }
                 }
+            }
+        }
+
+        val sortedFiles = contextState.fileStates.entries
+            .filter { it.value != ContextLevel.NONE }
+            .sortedBy { it.key.path }
+
+        val fileSections = mutableListOf<String>()
+
+        for ((file, level) in sortedFiles) {
+            val section = readAction {
+                ProgressManager.checkCanceled()
+                if (!file.isValid) return@readAction null
+
+                val relativePath = if (projectDir != null) {
+                    VfsUtilCore.getRelativePath(file, projectDir) ?: file.path
+                } else {
+                    file.path
+                }
+
+                if (file.isDirectory) {
+                    if (file.children.isNotEmpty()) return@readAction null
+
+                    val currentHash = "EMPTY_DIR"
+                    val previousRecord = currentCache[relativePath]
+
+                    if (previousRecord != null && previousRecord.level == level && previousRecord.hash == currentHash) {
+                        dedupedFilesTracker.add(file)
+                        newTurn.sentFiles[relativePath] = FileStateRecord(level, currentHash)
+                        return@readAction null
+                    }
+                    newTurn.sentFiles[relativePath] = FileStateRecord(level, currentHash)
+
+                    return@readAction "### \uD83D\uDCC1 `$relativePath/` (Empty Directory)\n*(This directory is empty)*\n"
+                }
+
+                val extension = file.extension?.lowercase() ?: ""
+                val isTextFile = ContextCapabilityUtil.textExtensions.contains(extension) || !file.fileType.isBinary
+
+                if (!isTextFile) {
+                    val mime = getMimeType(extension)
+                    val currentHash = getFileHash(project, contextState, file, level)
+                    val previousRecord = currentCache[relativePath]
+
+                    if (previousRecord != null && previousRecord.level == level && previousRecord.hash == currentHash) {
+                        dedupedFilesTracker.add(file)
+                        newTurn.sentFiles[relativePath] = FileStateRecord(level, currentHash)
+                        return@readAction null
+                    }
+                    newTurn.sentFiles[relativePath] = FileStateRecord(level, currentHash)
+
+                    if (level == ContextLevel.COMPLETE) {
+                        try {
+                            if (mime != "application/octet-stream") {
+                                val bytes = file.contentsToByteArray()
+                                val base64 = Base64.getEncoder().encodeToString(bytes)
+                                attachments.add(AiAttachment(file.name, mime, base64))
+                                "### 🖼️ `$relativePath` (Attached Media)\n*(This file has been attached to the prompt natively)*\n"
+                            } else {
+                                "### 📦 `$relativePath` (Binary File)\n*(Opaque binary file, contents excluded)*\n"
+                            }
+                        } catch (e: Exception) {
+                            "### ❌ `$relativePath` (Error reading file: ${e.message})\n"
+                        }
+                    } else {
+                        if (mime != "application/octet-stream") {
+                            "### 🖼️ `$relativePath` (Skeleton Media)\n"
+                        } else {
+                            "### 📦 `$relativePath` (Binary File)\n"
+                        }
+                    }
+                } else {
+                    var contentToAppend: String?
+                    var isNonCodeSkeleton = false
+                    try {
+                        val cachedHash = contextState.getCachedHash(file, level)
+                        val previousRecord = currentCache[relativePath]
+
+                        if (cachedHash != null && previousRecord != null && previousRecord.level == level && previousRecord.hash == cachedHash) {
+                            dedupedFilesTracker.add(file)
+                            newTurn.sentFiles[relativePath] = FileStateRecord(level, cachedHash)
+                            return@readAction null
+                        }
+
+                        val extractedText = extractTextContent(project, file, level)
+                        if (level != ContextLevel.COMPLETE && extractedText == null) {
+                            isNonCodeSkeleton = true
+                        }
+
+                        val currentHash = cachedHash ?: contextState.cacheHash(
+                            file,
+                            level,
+                            contextState.calculateHash(extractedText ?: "OMITTED_NON_CODE_SKELETON")
+                        )
+
+                        if (previousRecord != null && previousRecord.level == level && previousRecord.hash == currentHash) {
+                            dedupedFilesTracker.add(file)
+                            newTurn.sentFiles[relativePath] = FileStateRecord(level, currentHash)
+                            return@readAction null
+                        } else {
+                            newTurn.sentFiles[relativePath] = FileStateRecord(level, currentHash)
+                            contentToAppend = extractedText
+                        }
+                    } catch (e: Exception) {
+                        contentToAppend = "// Error reading file: ${e.message}"
+                    }
+
+                    if (isNonCodeSkeleton) {
+                        "### \uD83D\uDCC4 `$relativePath` (Skeleton)\n*(File exists, contents omitted in Skeleton mode)*\n"
+                    } else if (contentToAppend != null) {
+                        val levelTag = if (level == ContextLevel.COMPLETE) "" else " (Skeleton)"
+                        "### \uD83D\uDCC4 `$relativePath`$levelTag\n```${getMarkdownLang(extension)}\n$contentToAppend\n```\n"
+                    } else {
+                        null
+                    }
+                }
+            }
+
+            if (section != null) {
+                fileSections.add(section)
             }
         }
 
@@ -116,125 +242,8 @@ object PayloadGenerator {
             appendLine("<project_context>")
             appendLine()
 
-            // Sort files alphabetically by path for deterministic output
-            val sortedFiles = contextState.fileStates.entries
-                .filter { it.value != ContextLevel.NONE }
-                .sortedBy { it.key.path }
-
-            for ((file, level) in sortedFiles) {
-                val relativePath = if (projectDir != null) VfsUtilCore.getRelativePath(file, projectDir) ?: file.path else file.path
-
-                // Skip directories ONLY if they have children (non-empty).
-                if (file.isDirectory) {
-                    if (file.children.isNotEmpty()) continue
-
-                    val currentHash = "EMPTY_DIR"
-                    val previousRecord = currentCache[relativePath]
-
-                    if (previousRecord != null && previousRecord.level == level && previousRecord.hash == currentHash) {
-                        dedupedFilesTracker.add(file)
-                        newTurn.sentFiles[relativePath] = FileStateRecord(level, currentHash)
-                        continue
-                    }
-                    newTurn.sentFiles[relativePath] = FileStateRecord(level, currentHash)
-
-                    appendLine("### \uD83D\uDCC1 `$relativePath/` (Empty Directory)")
-                    appendLine("*(This directory is empty)*\n")
-                    continue
-                }
-
-                val extension = file.extension?.lowercase() ?: ""
-                val isTextFile = ContextCapabilityUtil.textExtensions.contains(extension) || !file.fileType.isBinary
-
-                if (!isTextFile) {
-                    val mime = getMimeType(extension)
-
-                    // Retrieve the cached hash instantly
-                    val currentHash = getFileHash(project, contextState, file, level)
-                    val previousRecord = currentCache[relativePath]
-
-                    if (previousRecord != null && previousRecord.level == level && previousRecord.hash == currentHash) {
-                        dedupedFilesTracker.add(file)
-                        newTurn.sentFiles[relativePath] = FileStateRecord(level, currentHash)
-                        continue
-                    }
-                    newTurn.sentFiles[relativePath] = FileStateRecord(level, currentHash)
-
-                    // --- ATTACHMENT & BINARY HANDLING ---
-                    if (level == ContextLevel.COMPLETE) {
-                        try {
-                            if (mime != "application/octet-stream") {
-                                val bytes = file.contentsToByteArray()
-                                val base64 = Base64.getEncoder().encodeToString(bytes)
-                                attachments.add(AiAttachment(file.name, mime, base64))
-                                appendLine("### 🖼️ `$relativePath` (Attached Media)")
-                                appendLine("*(This file has been attached to the prompt natively)*\n")
-                            } else {
-                                appendLine("### 📦 `$relativePath` (Binary File)")
-                                appendLine("*(Opaque binary file, contents excluded)*\n")
-                            }
-                        } catch (e: Exception) {
-                            appendLine("### ❌ `$relativePath` (Error reading file: ${e.message})\n")
-                        }
-                    } else {
-                        if (mime != "application/octet-stream") {
-                            appendLine("### 🖼️ `$relativePath` (Skeleton Media)\n")
-                        } else {
-                            appendLine("### 📦 `$relativePath` (Binary File)\n")
-                        }
-                    }
-                    continue
-                }
-
-                // --- TEXT/CODE HANDLING (with Deduplication) ---
-                var contentToAppend: String?
-                var isNonCodeSkeleton = false
-                try {
-                    val cachedHash = contextState.getCachedHash(file, level)
-                    val previousRecord = currentCache[relativePath]
-
-                    if (cachedHash != null && previousRecord != null && previousRecord.level == level && previousRecord.hash == cachedHash) {
-                        dedupedFilesTracker.add(file)
-                        newTurn.sentFiles[relativePath] = FileStateRecord(level, cachedHash)
-                        continue
-                    }
-
-                    val extractedText = extractTextContent(project, file, level)
-                    if (level != ContextLevel.COMPLETE && extractedText == null) {
-                        isNonCodeSkeleton = true
-                    }
-
-                    val currentHash = cachedHash ?: contextState.cacheHash(
-                        file,
-                        level,
-                        contextState.calculateHash(extractedText ?: "OMITTED_NON_CODE_SKELETON")
-                    )
-
-                    if (previousRecord != null && previousRecord.level == level && previousRecord.hash == currentHash) {
-                        dedupedFilesTracker.add(file)
-                        newTurn.sentFiles[relativePath] = FileStateRecord(level, currentHash)
-                        continue
-                    } else {
-                        newTurn.sentFiles[relativePath] = FileStateRecord(level, currentHash)
-                        contentToAppend = extractedText
-                    }
-                } catch (e: Exception) {
-                    contentToAppend = "// Error reading file: ${e.message}"
-                }
-
-                if (isNonCodeSkeleton) {
-                    appendLine("### \uD83D\uDCC4 `$relativePath` (Skeleton)")
-                    appendLine("*(File exists, contents omitted in Skeleton mode)*\n")
-                    continue
-                }
-
-                if (contentToAppend == null) continue
-
-                val levelTag = if (level == ContextLevel.COMPLETE) "" else " (Skeleton)"
-                appendLine("### \uD83D\uDCC4 `$relativePath`$levelTag")
-                appendLine("```${getMarkdownLang(extension)}")
-                appendLine(contentToAppend)
-                appendLine("```\n")
+            for (section in fileSections) {
+                appendLine(section)
             }
 
             appendLine("</project_context>")

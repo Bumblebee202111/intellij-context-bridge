@@ -3,7 +3,6 @@ package com.github.bumblebee202111.intellijcontextbridge.context.core
 import com.github.bumblebee202111.intellijcontextbridge.context.ep.LanguageGraphExtractor
 import com.github.bumblebee202111.intellijcontextbridge.state.ContextLevel
 import com.github.bumblebee202111.intellijcontextbridge.state.ContextState
-import com.github.bumblebee202111.intellijcontextbridge.state.SeedGraphCacheEntry
 import com.github.bumblebee202111.intellijcontextbridge.utils.ContextCapabilityUtil
 import com.github.bumblebee202111.intellijcontextbridge.utils.FileFilterUtil
 import com.intellij.openapi.application.readAction
@@ -19,158 +18,156 @@ import com.intellij.psi.PsiManager
 import com.intellij.psi.search.FilenameIndex
 import com.intellij.psi.search.GlobalSearchScope
 import com.intellij.psi.search.searches.ReferencesSearch
-import com.intellij.psi.util.PsiModificationTracker
 import kotlinx.coroutines.delay
 import kotlin.math.sqrt
 
 object ContextSuggestionEngine {
 
+    private fun isEligible(project: Project, file: VirtualFile): Boolean {
+        return file.isValid && !file.isDirectory && !FileFilterUtil.isIgnored(project, file)
+    }
+
     suspend fun calculateSuggestions(project: Project, contextState: ContextState): Set<VirtualFile> {
         val scores = mutableMapOf<VirtualFile, Int>()
-        val seedFiles = mutableSetOf<VirtualFile>()
-        val uncachedSeeds = mutableListOf<VirtualFile>()
-        val outgoingBySeed = mutableMapOf<VirtualFile, Set<VirtualFile>>()
 
-        fun award(file: VirtualFile, points: Int) {
-            if (!file.isValid || file.isDirectory || FileFilterUtil.isIgnored(project, file)) return
+        fun addScore(file: VirtualFile, points: Int) {
             scores[file] = (scores[file] ?: 0) + points
         }
 
         val psiManager = PsiManager.getInstance(project)
         val projectScope = GlobalSearchScope.projectScope(project)
 
-        val psiModCount = readAction {
-            PsiModificationTracker.getInstance(project).modificationCount
-        }
+        // 1. Fast Read Action: Collect seeds and apply already-cached graphs
+        val (initialScores, uncachedSeeds) = readAction {
+            val localScores = mutableMapOf<VirtualFile, Int>()
+            val seedFiles = mutableSetOf<VirtualFile>()
+            val localUncached = mutableListOf<VirtualFile>()
 
-        // Yielding Read Action: Collect seeds and resolve cached graphs or outgoing imports
-        readAction {
-            // 1. Active File (+50)
+            fun awardLocal(file: VirtualFile, points: Int) {
+                if (!isEligible(project, file)) return
+                localScores[file] = (localScores[file] ?: 0) + points
+            }
+
             val fileEditorManager = FileEditorManager.getInstance(project)
             val activeFiles = fileEditorManager.selectedFiles.toSet()
             activeFiles.forEach {
-                award(it, 50)
-                seedFiles.add(it)
+                awardLocal(it, 50)
+                if (isEligible(project, it)) seedFiles.add(it)
             }
 
-            // 2. Open Files (+20)
             fileEditorManager.openFiles.forEach {
                 if (!activeFiles.contains(it)) {
-                    award(it, 20)
-                    seedFiles.add(it)
+                    awardLocal(it, 20)
+                    if (isEligible(project, it)) seedFiles.add(it)
                 }
             }
 
-            // 3. Git Changes (+40)
             ChangeListManager.getInstance(project).affectedFiles.forEach {
-                award(it, 40)
-                seedFiles.add(it)
+                awardLocal(it, 40)
+                if (isEligible(project, it)) seedFiles.add(it)
             }
 
-            // 4. Expand Seeds with COMPLETE Context Files (including @-mentioned files)
             contextState.fileStates.forEach { (file, level) ->
-                if (level == ContextLevel.COMPLETE && file.isValid && !file.isDirectory) {
+                if (level == ContextLevel.COMPLETE && isEligible(project, file)) {
                     seedFiles.add(file)
                 }
             }
 
             for (seed in seedFiles) {
                 ProgressManager.checkCanceled()
-                val cachedGraph = contextState.getCachedSeedGraph(seed, psiModCount)
+                val cachedGraph = contextState.getCachedSeedGraph(seed)
                 if (cachedGraph != null) {
-                    cachedGraph.outgoingFiles.forEach { award(it, 15) }
-                    cachedGraph.incomingScores.forEach { (callerFile, idfScore) -> award(callerFile, idfScore) }
+                    cachedGraph.outgoingFiles.forEach { awardLocal(it, 15) }
+                    cachedGraph.incomingScores.forEach { (callerFile, idfScore) -> awardLocal(callerFile, idfScore) }
                 } else {
-                    uncachedSeeds.add(seed)
+                    localUncached.add(seed)
                 }
             }
 
-            // 5. Outgoing Dependencies (only for uncached seeds)
-            if (uncachedSeeds.isNotEmpty()) {
-                val filenamesByShortName = FilenameIndex.getAllFilenames(project)
-                    .groupBy { it.substringBeforeLast('.') }
+            localScores to localUncached
+        }
 
-                for (seed in uncachedSeeds) {
+        initialScores.forEach { (file, pts) -> addScore(file, pts) }
+
+        // 2. Pre-index project filenames only if there are uncached seeds
+        val filenamesByShortName = if (uncachedSeeds.isNotEmpty()) {
+            readAction {
+                FilenameIndex.getAllFilenames(project).groupBy { it.substringBeforeLast('.') }
+            }
+        } else {
+            emptyMap()
+        }
+
+        // 3. Granular Per-Seed Graph Traversal (Outgoing + Incoming saved per seed)
+        for (seed in uncachedSeeds) {
+            val (seedOutgoing, primaryElements) = readAction {
+                if (!seed.isValid) return@readAction emptySet<VirtualFile>() to emptyList<PsiElement>()
+                val psiFile = psiManager.findFile(seed)
+                    ?: return@readAction emptySet<VirtualFile>() to emptyList<PsiElement>()
+
+                val extractor =
+                    LanguageGraphExtractor.Companion.EP_NAME.extensionList.firstOrNull { it.isSupported(psiFile) }
+                val importedNames = extractor?.getImportedNames(psiFile) ?: emptySet()
+                val outgoing = mutableSetOf<VirtualFile>()
+
+                for (importedName in importedNames) {
                     ProgressManager.checkCanceled()
-                    val psiFile = psiManager.findFile(seed) ?: continue
-
-                    val extractor =
-                        LanguageGraphExtractor.Companion.EP_NAME.extensionList.firstOrNull { it.isSupported(psiFile) }
-                    val importedNames = extractor?.getImportedNames(psiFile) ?: emptySet()
-
-                    val seedOutgoing = mutableSetOf<VirtualFile>()
-                    for (importedName in importedNames) {
-                        ProgressManager.checkCanceled()
-                        val matchingFilenames = filenamesByShortName[importedName] ?: continue
-                        for (name in matchingFilenames) {
-                            FilenameIndex.getVirtualFilesByName(name, projectScope).forEach { importedFile ->
-                                seedOutgoing.add(importedFile)
-                                award(importedFile, 15)
+                    val matchingFilenames = filenamesByShortName[importedName] ?: continue
+                    for (name in matchingFilenames) {
+                        FilenameIndex.getVirtualFilesByName(name, projectScope).forEach { importedFile ->
+                            if (isEligible(project, importedFile)) {
+                                outgoing.add(importedFile)
                             }
                         }
                     }
-                    outgoingBySeed[seed] = seedOutgoing
                 }
-            }
-        }
 
-        // 6. Unbounded Graph Traversal (Incoming Usages for uncached seeds)
-        for (seed in uncachedSeeds) {
-            val primaryElements = readAction {
-                if (!seed.isValid) return@readAction emptyList<PsiElement>()
-
-                val psiFile = psiManager.findFile(seed) ?: return@readAction emptyList<PsiElement>()
-                val extractor =
-                    LanguageGraphExtractor.Companion.EP_NAME.extensionList.firstOrNull { it.isSupported(psiFile) }
-                extractor?.getPrimaryDeclarations(psiFile) ?: emptyList()
+                val declarations = extractor?.getPrimaryDeclarations(psiFile) ?: emptyList()
+                outgoing to declarations
             }
 
+            seedOutgoing.forEach { addScore(it, 15) }
             val seedIncomingScores = mutableMapOf<VirtualFile, Int>()
 
             for (element in primaryElements) {
-                // CPU THROTTLE: Yield the coroutine thread completely between elements.
                 delay(10)
 
-                // Yielding Read Action: Will suspend if the user types during the search
-                readAction {
-                    if (!element.isValid) return@readAction
+                val elementUsageFiles = readAction {
+                    if (!element.isValid) return@readAction emptySet<VirtualFile>()
 
                     val usageFiles = mutableSetOf<VirtualFile>()
 
-                    // MEMORY THROTTLE: Use forEach instead of findAll() to prevent massive memory spikes
                     ReferencesSearch.search(element, projectScope).forEach { ref ->
                         ProgressManager.checkCanceled()
                         ref.element.containingFile?.virtualFile?.let { callerFile ->
-                            if (callerFile != seed) usageFiles.add(callerFile)
+                            if (callerFile != seed && isEligible(project, callerFile)) {
+                                usageFiles.add(callerFile)
+                            }
                         }
-                        true // continue searching
+                        true
                     }
 
-                    if (usageFiles.isNotEmpty()) {
-                        // INVERSE DOCUMENT FREQUENCY (IDF) SCORING: 40 / sqrt(N)
-                        val idfScore = (40.0 / sqrt(usageFiles.size.toDouble())).toInt()
-                        if (idfScore > 0) {
-                            usageFiles.forEach { callerFile ->
-                                seedIncomingScores[callerFile] = (seedIncomingScores[callerFile] ?: 0) + idfScore
-                                award(callerFile, idfScore)
-                            }
+                    usageFiles
+                }
+
+                if (elementUsageFiles.isNotEmpty()) {
+                    val idfScore = (40.0 / sqrt(elementUsageFiles.size.toDouble())).toInt()
+                    if (idfScore > 0) {
+                        elementUsageFiles.forEach { callerFile ->
+                            seedIncomingScores[callerFile] = (seedIncomingScores[callerFile] ?: 0) + idfScore
+                            addScore(callerFile, idfScore)
                         }
                     }
                 }
             }
 
-            contextState.cacheSeedGraph(
-                seed,
-                SeedGraphCacheEntry(
-                    psiModificationCount = psiModCount,
-                    outgoingFiles = outgoingBySeed[seed] ?: emptySet(),
-                    incomingScores = seedIncomingScores
-                )
-            )
+            if (seed.isValid) {
+                contextState.cacheSeedGraph(seed, seedOutgoing, seedIncomingScores)
+            }
         }
 
-        // 7. Filter & Sort
-        val projectDir = project.guessProjectDir()
+        // 4. Filter & Sort
+        val projectDir = readAction { project.guessProjectDir() }
         val dedupCache = contextState.getDedupCache()
         val validSuggestions = mutableSetOf<VirtualFile>()
 
@@ -178,32 +175,38 @@ object ContextSuggestionEngine {
             if (score < 15) continue
             if (validSuggestions.size >= 15) break // Cap tree size to prevent UI vertical clutter
 
-            val currentLevel = contextState.getLevel(file)
-            val maxLevel = ContextCapabilityUtil.getMaxLevel(file)
+            val shouldInclude = readAction {
+                ProgressManager.checkCanceled()
+                if (!file.isValid) return@readAction false
 
-            // EXCLUSION: Disappear if it has reached its maximum capability
-            if (currentLevel == maxLevel) continue
+                val currentLevel = contextState.getLevel(file)
+                val maxLevel = ContextCapabilityUtil.getMaxLevel(file)
 
-            // SMART OMISSION: Check if the AI already has the max level in its memory
-            var isMaxLevelCached = false
-            if (projectDir != null) {
-                val relativePath = VfsUtilCore.getRelativePath(file, projectDir) ?: file.path
-                val cachedRecord = dedupCache[relativePath]
+                // EXCLUSION: Disappear if it has reached its maximum capability
+                if (currentLevel == maxLevel) return@readAction false
 
-                if (cachedRecord != null && cachedRecord.level == maxLevel) {
-                    try {
-                        val currentHash =
-                            readAction { PayloadGenerator.getFileHash(project, contextState, file, maxLevel) }
-                        if (currentHash == cachedRecord.hash) {
-                            isMaxLevelCached = true
+                // SMART OMISSION: Check if the AI already has the max level in its memory
+                var isMaxLevelCached = false
+                if (projectDir != null) {
+                    val relativePath = VfsUtilCore.getRelativePath(file, projectDir) ?: file.path
+                    val cachedRecord = dedupCache[relativePath]
+
+                    if (cachedRecord != null && cachedRecord.level == maxLevel) {
+                        try {
+                            val currentHash = PayloadGenerator.getFileHash(project, contextState, file, maxLevel)
+                            if (currentHash == cachedRecord.hash) {
+                                isMaxLevelCached = true
+                            }
+                        } catch (e: Exception) {
+                            // Safely ignore
                         }
-                    } catch (e: Exception) {
-                        // Safely ignore
                     }
                 }
+
+                !isMaxLevelCached
             }
 
-            if (!isMaxLevelCached) {
+            if (shouldInclude) {
                 validSuggestions.add(file)
             }
         }

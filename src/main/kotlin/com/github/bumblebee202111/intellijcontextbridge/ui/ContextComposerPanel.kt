@@ -615,10 +615,14 @@ class ContextComposerPanel(private val project: Project) : Disposable {
                     val turn = contextState.removeLastTurn()
                     if (turn != null) {
                         promptArea.text = turn.prompt
-                        ApplicationManager.getApplication().runReadAction {
-                            contextState.restoreFromLastTurn()
+                        contextState.scope.launch {
+                            readAction {
+                                contextState.restoreFromLastTurn()
+                            }
+                            ApplicationManager.getApplication().invokeLater({
+                                refreshUi()
+                            }, ModalityState.nonModal())
                         }
-                        refreshUi()
                     }
                 }
 
@@ -725,44 +729,61 @@ class ContextComposerPanel(private val project: Project) : Disposable {
 
         setGeneratingState(true)
 
-        ReadAction.nonBlocking<PayloadGenerationResult> {
-            PayloadGenerator.generatePayload(project, contextState, promptText, intent)
-        }
-            .finishOnUiThread(ModalityState.nonModal()) { result ->
-                val payloadObj = result.payload
-                contextState.addTurn(result.turn)
-                refreshUi()
+        contextState.scope.launch {
+            try {
+                val result = PayloadGenerator.generatePayload(project, contextState, promptText, intent)
+                ApplicationManager.getApplication().invokeLater({
+                    val payloadObj = result.payload
+                    contextState.addTurn(result.turn)
+                    refreshUi()
 
-                if (isWsSend && selectedTab != null) {
-                    val jsonString = Json.encodeToString(payloadObj)
-                    server.sendToTab(selectedTab.id, jsonString)
+                    if (isWsSend && selectedTab != null) {
+                        val jsonString = Json.encodeToString(payloadObj)
+                        server.sendToTab(selectedTab.id, jsonString)
 
-                    val originalText = sendWsButton.text
-                    sendWsButton.text = "Sent!"
-                    Timer(1500) { sendWsButton.text = originalText }.apply { isRepeats = false }.start()
-                } else {
-                    CopyPasteManager.getInstance().setContents(StringSelection(payloadObj.text))
-                    if (payloadObj.attachments.isNotEmpty()) {
-                        Messages.showWarningDialog(
-                            "You copied ${payloadObj.attachments.size} media file(s). They cannot be copied to the clipboard.",
-                            "Media Files Skipped"
-                        )
+                        val originalText = sendWsButton.text
+                        sendWsButton.text = "Sent!"
+                        Timer(1500) { sendWsButton.text = originalText }.apply { isRepeats = false }.start()
+                    } else {
+                        CopyPasteManager.getInstance().setContents(StringSelection(payloadObj.text))
+                        if (payloadObj.attachments.isNotEmpty()) {
+                            Messages.showWarningDialog(
+                                "You copied ${payloadObj.attachments.size} media file(s). They cannot be copied to the clipboard.",
+                                "Media Files Skipped"
+                            )
+                        }
+                        val originalText = copyButton.text
+                        copyButton.text = "Copied!"
+                        Timer(1500) { copyButton.text = originalText }.apply { isRepeats = false }.start()
                     }
-                    val originalText = copyButton.text
-                    copyButton.text = "Copied!"
-                    Timer(1500) { copyButton.text = originalText }.apply { isRepeats = false }.start()
-                }
 
-                promptArea.text = ""
-                setGeneratingState(false)
+                    promptArea.text = ""
+                    setGeneratingState(false)
+                }, ModalityState.nonModal())
+            } catch (e: Exception) {
+                ApplicationManager.getApplication().invokeLater({
+                    setGeneratingState(false)
+                }, ModalityState.nonModal())
             }
-            .submit(AppExecutorUtil.getAppExecutorService())
+        }
     }
 
     private fun setGeneratingState(isGenerating: Boolean) {
         loadingIcon.isVisible = isGenerating
         copyButton.isEnabled = !isGenerating
         updateSendButtonState()
+    }
+
+    private fun applyNodeStateAsync(targetTree: Tree, action: () -> Unit) {
+        contextState.scope.launch {
+            readAction {
+                action()
+            }
+            ApplicationManager.getApplication().invokeLater({
+                targetTree.repaint()
+                refreshUi()
+            }, ModalityState.nonModal())
+        }
     }
 
     private fun createTreeMouseListener(targetTree: Tree): MouseAdapter {
@@ -776,21 +797,17 @@ class ContextComposerPanel(private val project: Project) : Disposable {
                 val file = nodeData.file
 
                 if (SwingUtilities.isRightMouseButton(e)) {
-                    treeManager.applyStateToNode(node, ContextLevel.NONE)
-
-                    // OPTIMISTIC UPDATE: Paint instantly, calculate heavily later
-                    targetTree.repaint()
-                    refreshUi()
+                    applyNodeStateAsync(targetTree) {
+                        treeManager.applyStateToNode(node, ContextLevel.NONE)
+                    }
                     e.consume()
                 } else if (SwingUtilities.isLeftMouseButton(e)) {
                     if (e.clickCount == 1) {
                         if (e.x >= bounds.x && e.x < bounds.x + 28) {
-                            val nextLevel = treeManager.getNextToggleLevel(node, file)
-                            treeManager.applyStateToNode(node, nextLevel)
-
-                            // OPTIMISTIC UPDATE: Paint instantly, calculate heavily later
-                            targetTree.repaint()
-                            refreshUi()
+                            applyNodeStateAsync(targetTree) {
+                                val nextLevel = treeManager.getNextToggleLevel(node, file)
+                                treeManager.applyStateToNode(node, nextLevel)
+                            }
                             e.consume()
                         }
                     } else if (e.clickCount == 2) {
@@ -808,44 +825,44 @@ class ContextComposerPanel(private val project: Project) : Disposable {
         return object : KeyAdapter() {
             override fun keyPressed(e: KeyEvent) {
                 val paths = targetTree.selectionPaths ?: return
-                var stateChanged = false
+                val keyCode = e.keyCode
 
-                for (path in paths) {
-                    val node = path.lastPathComponent as? DefaultMutableTreeNode ?: continue
-                    val nodeData = node.userObject as? NodeData ?: continue
-                    val file = nodeData.file
-
-                    when (e.keyCode) {
-                        KeyEvent.VK_ENTER -> {
-                            if (file != null && !file.isDirectory) OpenFileDescriptor(project, file).navigate(true)
-                        }
-
-                        KeyEvent.VK_SPACE -> {
-                            val nextLevel = treeManager.getNextToggleLevel(node, file)
-                            treeManager.applyStateToNode(node, nextLevel)
-                            stateChanged = true
-                        }
-
-                        KeyEvent.VK_S -> {
-                            treeManager.applyStateToNode(node, ContextLevel.SKELETON)
-                            stateChanged = true
-                        }
-
-                        KeyEvent.VK_F -> {
-                            treeManager.applyStateToNode(node, ContextLevel.COMPLETE)
-                            stateChanged = true
-                        }
-
-                        KeyEvent.VK_BACK_SPACE, KeyEvent.VK_DELETE -> {
-                            treeManager.applyStateToNode(node, ContextLevel.NONE)
-                            stateChanged = true
+                if (keyCode == KeyEvent.VK_ENTER) {
+                    for (path in paths) {
+                        val node = path.lastPathComponent as? DefaultMutableTreeNode ?: continue
+                        val file = (node.userObject as? NodeData)?.file
+                        if (file != null && !file.isDirectory) {
+                            OpenFileDescriptor(project, file).navigate(true)
                         }
                     }
+                    return
                 }
-                if (stateChanged) {
-                    // OPTIMISTIC UPDATE: Paint instantly, calculate heavily later
-                    targetTree.repaint()
-                    refreshUi()
+
+                if (keyCode == KeyEvent.VK_SPACE ||
+                    keyCode == KeyEvent.VK_S ||
+                    keyCode == KeyEvent.VK_F ||
+                    keyCode == KeyEvent.VK_BACK_SPACE ||
+                    keyCode == KeyEvent.VK_DELETE
+                ) {
+                    applyNodeStateAsync(targetTree) {
+                        for (path in paths) {
+                            val node = path.lastPathComponent as? DefaultMutableTreeNode ?: continue
+                            val nodeData = node.userObject as? NodeData ?: continue
+                            val file = nodeData.file
+
+                            when (keyCode) {
+                                KeyEvent.VK_SPACE -> {
+                                    val nextLevel = treeManager.getNextToggleLevel(node, file)
+                                    treeManager.applyStateToNode(node, nextLevel)
+                                }
+                                KeyEvent.VK_S -> treeManager.applyStateToNode(node, ContextLevel.SKELETON)
+                                KeyEvent.VK_F -> treeManager.applyStateToNode(node, ContextLevel.COMPLETE)
+                                KeyEvent.VK_BACK_SPACE, KeyEvent.VK_DELETE -> {
+                                    treeManager.applyStateToNode(node, ContextLevel.NONE)
+                                }
+                            }
+                        }
+                    }
                     e.consume()
                 }
             }
@@ -905,25 +922,31 @@ class ContextComposerPanel(private val project: Project) : Disposable {
             val newDedupedFiles = mutableSetOf<VirtualFile>()
             val projectDir = project.guessProjectDir()
 
-            readAction {
-                if (projectDir != null) {
-                    val cache = contextState.getDedupCache()
-                    for ((file, currentLevel) in contextState.fileStates) {
-                        if (currentLevel == ContextLevel.NONE || currentLevel == ContextLevel.MIXED) continue
+            if (projectDir != null) {
+                val cache = contextState.getDedupCache()
+                for ((file, currentLevel) in contextState.fileStates) {
+                    if (currentLevel == ContextLevel.NONE || currentLevel == ContextLevel.MIXED) continue
 
+                    val isDeduped = readAction {
+                        ProgressManager.checkCanceled()
+                        if (!file.isValid) return@readAction false
                         val relativePath = VfsUtilCore.getRelativePath(file, projectDir) ?: file.path
                         val cachedRecord = cache[relativePath]
 
                         if (cachedRecord != null && cachedRecord.level == currentLevel) {
                             try {
                                 val currentHash = PayloadGenerator.getFileHash(project, contextState, file, currentLevel)
-                                if (currentHash == cachedRecord.hash) {
-                                    newDedupedFiles.add(file)
-                                }
+                                currentHash == cachedRecord.hash
                             } catch (e: Exception) {
-                                // Safely ignore file read errors
+                                false
                             }
+                        } else {
+                            false
                         }
+                    }
+
+                    if (isDeduped) {
+                        newDedupedFiles.add(file)
                     }
                 }
             }

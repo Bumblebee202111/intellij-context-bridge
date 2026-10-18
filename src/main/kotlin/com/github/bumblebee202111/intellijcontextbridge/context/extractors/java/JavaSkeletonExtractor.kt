@@ -1,6 +1,7 @@
 package com.github.bumblebee202111.intellijcontextbridge.context.extractors.java
 
 import com.github.bumblebee202111.intellijcontextbridge.context.ep.LanguageSkeletonExtractor
+import com.intellij.openapi.progress.ProgressManager
 import com.intellij.psi.JavaTokenType
 import com.intellij.psi.PsiClass
 import com.intellij.psi.PsiFile
@@ -33,6 +34,7 @@ class JavaSkeletonExtractor : LanguageSkeletonExtractor {
     }
 
     private fun processJavaClass(psiClass: PsiClass, indent: String): String? {
+        ProgressManager.checkCanceled()
         // Strip private (Package-private is kept for intra-module LLM context)
         if (psiClass.hasModifierProperty(PsiModifier.PRIVATE)) return null
 

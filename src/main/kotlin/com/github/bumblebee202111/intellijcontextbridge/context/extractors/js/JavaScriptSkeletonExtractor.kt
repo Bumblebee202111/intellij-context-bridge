@@ -6,6 +6,7 @@ import com.intellij.lang.ecmascript6.psi.ES6ExportDefaultAssignment
 import com.intellij.lang.ecmascript6.psi.ES6ImportDeclaration
 import com.intellij.lang.javascript.psi.*
 import com.intellij.lang.javascript.psi.ecmal4.JSClass
+import com.intellij.openapi.progress.ProgressManager
 import com.intellij.psi.PsiElement
 import com.intellij.psi.PsiFile
 
@@ -53,6 +54,7 @@ class JavaScriptSkeletonExtractor : LanguageSkeletonExtractor {
         val replacements = mutableListOf<Pair<IntRange, String>>()
 
         fun visit(el: PsiElement) {
+            ProgressManager.checkCanceled()
             // 1. Standard Function Blocks
             if (el is JSBlockStatement && el.parent is JSFunction) {
                 replacements.add(el.textRange.startOffset..el.textRange.endOffset to "{ /* ... */ }")

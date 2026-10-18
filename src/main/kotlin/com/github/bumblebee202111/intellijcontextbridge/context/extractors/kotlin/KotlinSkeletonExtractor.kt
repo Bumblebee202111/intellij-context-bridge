@@ -1,6 +1,7 @@
 package com.github.bumblebee202111.intellijcontextbridge.context.extractors.kotlin
 
 import com.github.bumblebee202111.intellijcontextbridge.context.ep.LanguageSkeletonExtractor
+import com.intellij.openapi.progress.ProgressManager
 import com.intellij.psi.PsiFile
 import org.jetbrains.kotlin.lexer.KtTokens
 import org.jetbrains.kotlin.psi.KtAnonymousInitializer
@@ -43,6 +44,7 @@ class KotlinSkeletonExtractor : LanguageSkeletonExtractor {
     }
 
     private fun processKtDeclaration(declaration: KtDeclaration, indent: String = ""): String? {
+        ProgressManager.checkCanceled()
         // Strip private members (Internal is kept for intra-module LLM context)
         if (declaration.hasModifier(KtTokens.PRIVATE_KEYWORD)) return null
 

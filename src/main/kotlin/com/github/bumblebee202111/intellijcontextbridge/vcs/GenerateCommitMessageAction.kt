@@ -8,11 +8,13 @@ import com.intellij.icons.AllIcons
 import com.intellij.openapi.actionSystem.AnAction
 import com.intellij.openapi.actionSystem.AnActionEvent
 import com.intellij.openapi.application.ApplicationManager
+import com.intellij.openapi.application.readAction
 import com.intellij.openapi.components.service
 import com.intellij.openapi.diagnostic.thisLogger
 import com.intellij.openapi.vcs.CheckinProjectPanel
 import com.intellij.openapi.vcs.VcsDataKeys
 import com.intellij.vcs.commit.AbstractCommitWorkflowHandler
+import kotlinx.coroutines.launch
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
 
@@ -44,11 +46,11 @@ class GenerateCommitMessageAction : AnAction("Generate AI Commit Message", "Gene
         }
 
         project.service<CommitBridgeService>().registerPanel(commitMessageI)
+        val contextState = project.service<ContextState>()
 
-        ApplicationManager.getApplication().executeOnPooledThread {
+        contextState.scope.launch {
             try {
-                val diffString = VcsUtil.getProjectDiff(project, selectedChanges)
-                val contextState = project.service<ContextState>()
+                val diffString = readAction { VcsUtil.getProjectDiff(project, selectedChanges) }
 
                 val result = PayloadGenerator.generatePayload(
                     project = project,
