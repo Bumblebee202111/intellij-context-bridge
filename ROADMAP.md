@@ -3,6 +3,8 @@
 *Note: This project evolves organically through active dogfooding. This document serves as an idea backlog rather than a strict sequential plan.*
 
 ## Completed Milestones
+- Inline `@` File/Folder Mentions & Auto-Promotion to Complete Context
+- Per-Seed PSI Graph Caching, Granular Yielding Read Actions, & Off-EDT Tree Rendering
 - Cross-IDE Compatibility (WebStorm, PyCharm, etc.) via Optional Dependencies
 - Vue & TypeScript AST Graph Traversal (Imports & Usages)
 - JavaScript, TypeScript, and Vue Skeleton Extraction

@@ -6,6 +6,8 @@
 
 ## [Unreleased]
 ### Core Capabilities Implemented
+- **Explicit `@` Context Mentions**: Added `@` file and folder auto-completion in the prompt composer that inserts relative paths inline and automatically promotes mentioned targets to `Complete` context.
+- **Granular Read Actions & Per-Seed Graph Caching**: Chunked multi-file payload, hash, and PSI operations into granular yielding `readAction` blocks, cached unbounded PSI graph traversals per seed file modification stamp, and eliminated EDT VFS/PSI lookups across tree rendering and tool execution.
 - **Cross-IDE Support**: Decoupled Java and Kotlin dependencies via dynamic Extension Points, enabling native support for WebStorm and other non-Java JetBrains IDEs.
 - **Advanced JS/TS/Vue Graph Engine**: Upgraded JavaScript and Vue extractors to deeply traverse module imports and non-class declarations for highly accurate proactive context suggestions.
 - **Implicit Chat Detection**: Decoupled network state from chat state. The userscript politely disables its custom UI and shortcut interception during normal AI Studio usage, activating only when the Context Bridge system instructions are detected.

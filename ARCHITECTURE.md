@@ -5,7 +5,8 @@ The plugin consists of four decoupled layers. Implementation details for each la
 ## 1. UI Layer (Tool Window)
 * **Native Interface:** Built using standard IntelliJ platform components (`EditorTextField` for prompts, `ActionToolbar` for actions, `AsyncProcessIcon` for background tasks) to ensure a seamless, first-class IDE experience.
 * **Tabbed Interface:** Organizes the workflow into distinct functional panels (Context Composer, Response Viewer, and Session History).
-* **Multi-Tree File View:** Managed by a dedicated `ContextTreeManager`. Renders a primary project tree, a dynamic "Suggested Context" staging area, and a temporary "Pending AI Requests" group for manual tool-call approval. Supports quick toggling, intuitive keyboard navigation, sub-tree compaction, native `TreeSpeedSearch` for non-destructive filtering, and strictly preserves user expansion state during rapid context gathering.
+* **Multi-Tree File View:** Managed by a dedicated `ContextTreeManager`. Renders a primary project tree, a dynamic "Suggested Context" staging area, and a temporary "Pending AI Requests" group for manual tool-call approval. Pre-resolves VFS metadata off the EDT, repaints in-place unless structural VFS topology changes, and strictly preserves both user expansion and selection state.
+* **Dual-Prefix Composer (`/` & `@`):** Supports inline auto-completion for both `/` slash commands and `@` file/directory mentions, automatically promoting `@`-mentioned paths to `Complete` context.
 * **Intent Selection:** Segmented controls allow users to quickly specify the desired AI behavior (e.g., Ask vs. Edit) to tailor the underlying system instructions and constraints.
 
 ## 2. Context Extraction & Suggestion Engine
@@ -14,11 +15,11 @@ The plugin consists of four decoupled layers. Implementation details for each la
   * *Logic:* Walks the syntax tree. For `Skeleton` mode, it extracts the structural overview of the file (public signatures, properties, class structures) while stripping out internal logic and unused imports. Utilizes dynamic Extension Points (`skeletonExtractor` and `graphExtractor`) to safely support Kotlin, Java, JS, TS, and Vue without breaking classloader compatibility across different JetBrains IDEs (e.g., WebStorm, IntelliJ Community).
   * *Fallback:* For non-code files, `Skeleton` mode safely indicates the file's presence while omitting its raw contents.
 * **Context Suggestion Engine:**
-  * *Heuristic Seeds:* Monitors active editors, background tabs, Git modifications, and regex-matched prompt mentions to identify the user's current working set.
-  * *Graph Traversal:* Performs unbounded background searches for outgoing dependencies and incoming usages based on the seed files.
+  * *Heuristic Seeds:* Monitors active editors, background tabs, Git modifications, and `Complete` context files (including `@`-mentioned files) to identify the user's current working set.
+  * *Graph Traversal & Caching:* Performs unbounded background searches for outgoing dependencies and incoming usages based on the seed files, caching per-seed graph results by `modificationStamp` to avoid redundant PSI traversals.
   * *Mathematical Scoring:* Utilizes Inverse Document Frequency (IDF) scoring to mathematically penalize ubiquitous utility classes (e.g., `Logger`) from polluting the suggestions.
     * *Smart Omission:* Actively suppresses suggestions if the file has already reached its maximum context capability or if its maximum state is already safely stored in the deduplication cache.
-  * *Power Efficiency:* Strictly executes inside IDE-managed Coroutines using yielding `readAction` blocks and suspension delays to ensure the IDE never stutters, typing is never blocked, and battery life is preserved.
+  * *Power Efficiency:* Strictly executes inside IDE-managed Coroutines using granular per-file/per-element `readAction` blocks, `ProgressManager.checkCanceled()`, and suspension delays to ensure the IDE never stutters, typing is never blocked, and battery life is preserved.
 * **Capability Checker:** Evaluates file extensions and MIME types to prevent encoding errors from opaque binaries, while identifying supported media files to encode as Base64 attachments.
 
 ## 3. State & Memory Manager
