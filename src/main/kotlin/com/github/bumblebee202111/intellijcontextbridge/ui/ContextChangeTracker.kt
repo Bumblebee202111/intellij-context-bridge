@@ -16,6 +16,7 @@ import com.intellij.openapi.vfs.VfsUtilCore
 import com.intellij.openapi.vfs.VirtualFile
 import com.intellij.openapi.vfs.VirtualFileManager
 import com.intellij.openapi.vfs.newvfs.BulkFileListener
+import com.intellij.openapi.vfs.newvfs.events.VFileContentChangeEvent
 import com.intellij.openapi.vfs.newvfs.events.VFileEvent
 
 /**
@@ -26,7 +27,7 @@ class ContextChangeTracker(
     private val parentDisposable: Disposable,
     private val project: Project,
     private val contextState: ContextState,
-    private val onRefreshNeeded: () -> Unit
+    private val onRefreshNeeded: (vfsStructureChanged: Boolean) -> Unit
 ) {
     init {
         val connection = project.messageBus.connect(parentDisposable)
@@ -35,28 +36,34 @@ class ContextChangeTracker(
         ApplicationManager.getApplication().messageBus.connect(parentDisposable).subscribe(VirtualFileManager.VFS_CHANGES, object : BulkFileListener {
             override fun after(events: MutableList<out VFileEvent>) {
                 var needsRefresh = false
+                var structureChanged = false
                 val projectDir = project.guessProjectDir() ?: return
 
                 for (event in events) {
                     val file = event.file
                     if (file != null && VfsUtilCore.isAncestor(projectDir, file, false)) {
                         needsRefresh = true
-                        break
+                        if (event !is VFileContentChangeEvent) {
+                            structureChanged = true
+                        }
+                    } else if (file == null && event.path.startsWith(projectDir.path)) {
+                        needsRefresh = true
+                        structureChanged = true
                     }
                 }
 
                 if (needsRefresh) {
                     contextState.fileStates.keys.removeIf { !it.isValid }
-                    onRefreshNeeded()
+                    onRefreshNeeded(structureChanged)
                 }
             }
         })
 
         // 2. Editor Focus Changes
         connection.subscribe(FileEditorManagerListener.FILE_EDITOR_MANAGER, object : FileEditorManagerListener {
-            override fun selectionChanged(event: FileEditorManagerEvent) { onRefreshNeeded() }
-            override fun fileOpened(source: FileEditorManager, file: VirtualFile) { onRefreshNeeded() }
-            override fun fileClosed(source: FileEditorManager, file: VirtualFile) { onRefreshNeeded() }
+            override fun selectionChanged(event: FileEditorManagerEvent) { onRefreshNeeded(false) }
+            override fun fileOpened(source: FileEditorManager, file: VirtualFile) { onRefreshNeeded(false) }
+            override fun fileClosed(source: FileEditorManager, file: VirtualFile) { onRefreshNeeded(false) }
         })
 
         // 3. Document Changes
@@ -64,7 +71,7 @@ class ContextChangeTracker(
             override fun documentChanged(event: DocumentEvent) {
                 val file = FileDocumentManager.getInstance().getFile(event.document)
                 if (file != null && contextState.fileStates.containsKey(file)) {
-                    onRefreshNeeded()
+                    onRefreshNeeded(false)
                 }
             }
         }, parentDisposable)

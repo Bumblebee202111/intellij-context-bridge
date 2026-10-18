@@ -209,4 +209,47 @@ class ContextTreeManager(private val project: Project, private val contextState:
 
         traverseAndExpand(root, TreePath(root))
     }
+
+    /**
+     * Captures the paths of all currently selected nodes in the tree.
+     */
+    fun getSelectedFilePaths(tree: Tree): Set<String> {
+        val selected = mutableSetOf<String>()
+        val paths = tree.selectionPaths ?: return selected
+        for (path in paths) {
+            val node = path.lastPathComponent as? DefaultMutableTreeNode ?: continue
+            val nodeData = node.userObject as? NodeData ?: continue
+            val pathStr = nodeData.file?.path ?: nodeData.displayName
+            selected.add(pathStr)
+        }
+        return selected
+    }
+
+    /**
+     * Restores node selection in the new model based on the captured paths.
+     */
+    fun restoreSelectedFilePaths(tree: Tree, selectedFiles: Set<String>) {
+        if (selectedFiles.isEmpty()) return
+        val root = tree.model.root as? DefaultMutableTreeNode ?: return
+        val pathsToSelect = mutableListOf<TreePath>()
+
+        fun traverseAndCollect(node: DefaultMutableTreeNode, path: TreePath) {
+            val nodeData = node.userObject as? NodeData
+            if (nodeData != null) {
+                val pathStr = nodeData.file?.path ?: nodeData.displayName
+                if (selectedFiles.contains(pathStr)) {
+                    pathsToSelect.add(path)
+                }
+            }
+            for (i in 0 until node.childCount) {
+                val child = node.getChildAt(i) as? DefaultMutableTreeNode ?: continue
+                traverseAndCollect(child, path.pathByAddingChild(child))
+            }
+        }
+
+        traverseAndCollect(root, TreePath(root))
+        if (pathsToSelect.isNotEmpty()) {
+            tree.selectionPaths = pathsToSelect.toTypedArray()
+        }
+    }
 }

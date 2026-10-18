@@ -112,6 +112,15 @@ class ContextComposerPanel(private val project: Project) : Disposable {
     @Volatile
     private var cachedFileMentionItems: List<PromptCompletionItem.FileMention> = emptyList()
 
+    @Volatile
+    private var vfsStructureDirty = true
+
+    @Volatile
+    private var mainTreeForceRebuild = true
+
+    private var lastSuggestions: Set<VirtualFile>? = null
+    private var lastRequestedFiles: Set<VirtualFile>? = null
+
     private var treeUpdateJob: Job? = null
 
     private val uiRefreshTimer = Timer(300) {
@@ -259,7 +268,12 @@ class ContextComposerPanel(private val project: Project) : Disposable {
     private val NONE_TAB = BrowserTab("", "", "<None / Disconnected>")
 
     init {
-        ContextChangeTracker(this, project, contextState) { refreshUi() }
+        ContextChangeTracker(this, project, contextState) { vfsStructureChanged ->
+            if (vfsStructureChanged) {
+                vfsStructureDirty = true
+            }
+            refreshUi()
+        }
 
         tree.cellRenderer =
             ContextTreeCellRenderer(treeManager::getComputedLevel) { file -> lastDedupedFiles.contains(file) }
@@ -504,6 +518,7 @@ class ContextComposerPanel(private val project: Project) : Disposable {
                 override fun isSelected(e: AnActionEvent): Boolean = showSelectedOnly
                 override fun setSelected(e: AnActionEvent, state: Boolean) {
                     showSelectedOnly = state
+                    mainTreeForceRebuild = true
                     refreshUi()
                 }
             })
@@ -920,7 +935,7 @@ class ContextComposerPanel(private val project: Project) : Disposable {
             val suggestions = ContextSuggestionEngine.calculateSuggestions(project, contextState)
 
             val newDedupedFiles = mutableSetOf<VirtualFile>()
-            val projectDir = project.guessProjectDir()
+            val projectDir = readAction { project.guessProjectDir() }
 
             if (projectDir != null) {
                 val cache = contextState.getDedupCache()
@@ -951,83 +966,127 @@ class ContextComposerPanel(private val project: Project) : Disposable {
                 }
             }
 
-            val fileMentionItems = readAction {
-                if (projectDir != null) {
-                    collectFileMentionItems(projectDir)
-                } else {
-                    emptyList()
+            val shouldRefreshVfs = vfsStructureDirty
+            val fileMentionItems = if (shouldRefreshVfs) {
+                readAction {
+                    if (projectDir != null) {
+                        collectFileMentionItems(projectDir)
+                    } else {
+                        emptyList()
+                    }
                 }
+            } else {
+                null
             }
 
             treeManager.clearCache()
 
-            val mainRootNode = readAction {
-                if (projectDir != null) {
-                    treeManager.buildFileTree(projectDir, showSelectedOnly, isRoot = true) ?: DefaultMutableTreeNode(
-                        NodeData(projectDir, "No Project Root")
-                    )
-                } else {
-                    DefaultMutableTreeNode("No Project Root")
+            val shouldRebuildMainTree = shouldRefreshVfs || mainTreeForceRebuild || showSelectedOnly
+            val mainRootNode = if (shouldRebuildMainTree) {
+                readAction {
+                    if (projectDir != null) {
+                        treeManager.buildFileTree(projectDir, showSelectedOnly, isRoot = true) ?: DefaultMutableTreeNode(
+                            NodeData(projectDir, "No Project Root")
+                        )
+                    } else {
+                        DefaultMutableTreeNode("No Project Root")
+                    }
                 }
+            } else {
+                null
             }
 
-            val suggestionRootNode = readAction {
-                if (projectDir != null && suggestions.isNotEmpty()) {
-                    treeManager.buildFileTree(projectDir, false, allowedLeaves = suggestions, isRoot = true)
-                        ?: DefaultMutableTreeNode("No Suggestions")
-                } else {
-                    DefaultMutableTreeNode("No Suggestions")
+            val shouldRebuildSuggestionTree = shouldRefreshVfs || suggestions != lastSuggestions
+            val suggestionRootNode = if (shouldRebuildSuggestionTree) {
+                readAction {
+                    if (projectDir != null && suggestions.isNotEmpty()) {
+                        treeManager.buildFileTree(projectDir, false, allowedLeaves = suggestions, isRoot = true)
+                            ?: DefaultMutableTreeNode("No Suggestions")
+                    } else {
+                        DefaultMutableTreeNode("No Suggestions")
+                    }
                 }
+            } else {
+                null
             }
 
-            val requestedRootNode = readAction {
-                if (projectDir != null && pendingAiRequests.isNotEmpty()) {
-                    val node =
-                        treeManager.buildFileTree(projectDir, false, allowedLeaves = pendingAiRequests, isRoot = true)
-                    if (node != null) {
-                        node.userObject = NodeData(null, "[AI Requested Files]")
-                        node
+            val currentRequests = pendingAiRequests
+            val shouldRebuildRequestedTree = shouldRefreshVfs || currentRequests != lastRequestedFiles
+            val requestedRootNode = if (shouldRebuildRequestedTree) {
+                readAction {
+                    if (projectDir != null && currentRequests.isNotEmpty()) {
+                        val node =
+                            treeManager.buildFileTree(projectDir, false, allowedLeaves = currentRequests, isRoot = true)
+                        if (node != null) {
+                            node.userObject = NodeData(null, "[AI Requested Files]")
+                            node
+                        } else null
                     } else null
-                } else null
+                }
+            } else {
+                null
             }
 
             // Switch to the EDT for UI updates safely
             ApplicationManager.getApplication().invokeLater({
+                if (shouldRefreshVfs) {
+                    vfsStructureDirty = false
+                }
+                if (shouldRebuildMainTree) {
+                    mainTreeForceRebuild = false
+                }
+
                 lastDedupedFiles = newDedupedFiles
-                cachedFileMentionItems = fileMentionItems
-                updateCompletionItems()
-
-                // CAPTURE: Record which folders the user currently has open across all 3 trees
-                val expandedMain = treeManager.getExpandedFilePaths(tree)
-                val expandedSugg = treeManager.getExpandedFilePaths(suggestionTree)
-                val expandedReq = treeManager.getExpandedFilePaths(requestedTree)
-
-                // SWAP: Replace the models
-                tree.model = DefaultTreeModel(mainRootNode)
-
-                // RESTORE: Re-open the folders precisely
-                treeManager.restoreExpandedFilePaths(tree, expandedMain)
-                // If it's the very first load and nothing was expanded, open the root
-                if (expandedMain.isEmpty() && tree.rowCount > 0) {
-                    tree.expandRow(0)
+                if (fileMentionItems != null) {
+                    cachedFileMentionItems = fileMentionItems
+                    updateCompletionItems()
                 }
 
-                suggestionTree.model = DefaultTreeModel(suggestionRootNode)
-                val hasSuggestions = suggestionRootNode.childCount > 0
-                suggestionTreeContainer.isVisible = hasSuggestions
-                if (hasSuggestions) {
-                    treeManager.restoreExpandedFilePaths(suggestionTree, expandedSugg)
-                    if (expandedSugg.isEmpty()) TreeUtil.expandAll(suggestionTree)
-                }
-
-                if (requestedRootNode != null) {
-                    requestedTree.model = DefaultTreeModel(requestedRootNode)
-                    requestedTreeContainer.isVisible = true
-                    treeManager.restoreExpandedFilePaths(requestedTree, expandedReq)
-                    if (expandedReq.isEmpty()) TreeUtil.expandAll(requestedTree)
+                if (mainRootNode != null) {
+                    val expandedMain = treeManager.getExpandedFilePaths(tree)
+                    val selectedMain = treeManager.getSelectedFilePaths(tree)
+                    tree.model = DefaultTreeModel(mainRootNode)
+                    treeManager.restoreExpandedFilePaths(tree, expandedMain)
+                    if (expandedMain.isEmpty() && tree.rowCount > 0) {
+                        tree.expandRow(0)
+                    }
+                    treeManager.restoreSelectedFilePaths(tree, selectedMain)
                 } else {
-                    requestedTree.model = DefaultTreeModel(DefaultMutableTreeNode("No pending requests."))
-                    requestedTreeContainer.isVisible = false
+                    tree.repaint()
+                }
+
+                if (shouldRebuildSuggestionTree && suggestionRootNode != null) {
+                    lastSuggestions = suggestions
+                    val expandedSugg = treeManager.getExpandedFilePaths(suggestionTree)
+                    val selectedSugg = treeManager.getSelectedFilePaths(suggestionTree)
+                    suggestionTree.model = DefaultTreeModel(suggestionRootNode)
+                    val hasSuggestions = suggestionRootNode.childCount > 0
+                    suggestionTreeContainer.isVisible = hasSuggestions
+                    if (hasSuggestions) {
+                        treeManager.restoreExpandedFilePaths(suggestionTree, expandedSugg)
+                        if (expandedSugg.isEmpty()) TreeUtil.expandAll(suggestionTree)
+                        treeManager.restoreSelectedFilePaths(suggestionTree, selectedSugg)
+                    }
+                } else {
+                    suggestionTree.repaint()
+                }
+
+                if (shouldRebuildRequestedTree) {
+                    lastRequestedFiles = currentRequests
+                    if (requestedRootNode != null) {
+                        val expandedReq = treeManager.getExpandedFilePaths(requestedTree)
+                        val selectedReq = treeManager.getSelectedFilePaths(requestedTree)
+                        requestedTree.model = DefaultTreeModel(requestedRootNode)
+                        requestedTreeContainer.isVisible = true
+                        treeManager.restoreExpandedFilePaths(requestedTree, expandedReq)
+                        if (expandedReq.isEmpty()) TreeUtil.expandAll(requestedTree)
+                        treeManager.restoreSelectedFilePaths(requestedTree, selectedReq)
+                    } else {
+                        requestedTree.model = DefaultTreeModel(DefaultMutableTreeNode("No pending requests."))
+                        requestedTreeContainer.isVisible = false
+                    }
+                } else {
+                    requestedTree.repaint()
                 }
 
             }, ModalityState.nonModal())
