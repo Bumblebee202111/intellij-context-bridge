@@ -17,8 +17,8 @@
     </extensions>
 
     <extensionPoints>
-        <extensionPoint name="skeletonExtractor" interface="com.github.bumblebee202111.intellijcontextbridge.context.LanguageSkeletonExtractor" dynamic="true"/>
-        <extensionPoint name="graphExtractor" interface="com.github.bumblebee202111.intellijcontextbridge.context.LanguageGraphExtractor" dynamic="true"/>
+        <extensionPoint name="skeletonExtractor" interface="com.github.bumblebee202111.intellijcontextbridge.context.ep.LanguageSkeletonExtractor" dynamic="true"/>
+        <extensionPoint name="graphExtractor" interface="com.github.bumblebee202111.intellijcontextbridge.context.ep.LanguageGraphExtractor" dynamic="true"/>
     </extensionPoints>
 
     <extensions defaultExtensionNs="com.intellij">

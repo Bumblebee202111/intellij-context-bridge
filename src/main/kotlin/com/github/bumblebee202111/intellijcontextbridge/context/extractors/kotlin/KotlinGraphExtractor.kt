@@ -1,5 +1,6 @@
-package com.github.bumblebee202111.intellijcontextbridge.context
+package com.github.bumblebee202111.intellijcontextbridge.context.extractors.kotlin
 
+import com.github.bumblebee202111.intellijcontextbridge.context.ep.LanguageGraphExtractor
 import com.intellij.psi.PsiElement
 import com.intellij.psi.PsiFile
 import org.jetbrains.kotlin.lexer.KtTokens

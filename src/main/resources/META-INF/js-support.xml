@@ -1,8 +1,8 @@
 <idea-plugin>
     <extensions defaultExtensionNs="com.github.bumblebee202111.intellijcontextbridge">
-        <skeletonExtractor implementation="com.github.bumblebee202111.intellijcontextbridge.context.JavaScriptSkeletonExtractor"/>
-        <skeletonExtractor implementation="com.github.bumblebee202111.intellijcontextbridge.context.VueSkeletonExtractor"/>
-        <graphExtractor implementation="com.github.bumblebee202111.intellijcontextbridge.context.JavaScriptGraphExtractor"/>
-        <graphExtractor implementation="com.github.bumblebee202111.intellijcontextbridge.context.VueGraphExtractor"/>
+        <skeletonExtractor implementation="com.github.bumblebee202111.intellijcontextbridge.context.extractors.js.JavaScriptSkeletonExtractor"/>
+        <skeletonExtractor implementation="com.github.bumblebee202111.intellijcontextbridge.context.extractors.js.VueSkeletonExtractor"/>
+        <graphExtractor implementation="com.github.bumblebee202111.intellijcontextbridge.context.extractors.js.JavaScriptGraphExtractor"/>
+        <graphExtractor implementation="com.github.bumblebee202111.intellijcontextbridge.context.extractors.js.VueGraphExtractor"/>
     </extensions>
 </idea-plugin>

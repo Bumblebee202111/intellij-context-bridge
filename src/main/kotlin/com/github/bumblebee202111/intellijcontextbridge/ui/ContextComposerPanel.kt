@@ -3,9 +3,9 @@ package com.github.bumblebee202111.intellijcontextbridge.ui
 import com.github.bumblebee202111.intellijcontextbridge.commands.CommandContextAction
 import com.github.bumblebee202111.intellijcontextbridge.commands.CommandRegistryService
 import com.github.bumblebee202111.intellijcontextbridge.commands.SlashCommand
-import com.github.bumblebee202111.intellijcontextbridge.context.ContextSuggestionEngine
-import com.github.bumblebee202111.intellijcontextbridge.context.PayloadGenerationResult
-import com.github.bumblebee202111.intellijcontextbridge.context.PayloadGenerator
+import com.github.bumblebee202111.intellijcontextbridge.context.core.ContextSuggestionEngine
+import com.github.bumblebee202111.intellijcontextbridge.context.core.PayloadGenerationResult
+import com.github.bumblebee202111.intellijcontextbridge.context.core.PayloadGenerator
 import com.github.bumblebee202111.intellijcontextbridge.server.BrowserTab
 import com.github.bumblebee202111.intellijcontextbridge.server.ContextBridgeServer
 import com.github.bumblebee202111.intellijcontextbridge.server.SyncCommand
@@ -28,7 +28,6 @@ import com.intellij.openapi.application.ApplicationManager
 import com.intellij.openapi.application.ModalityState
 import com.intellij.openapi.application.ReadAction
 import com.intellij.openapi.application.readAction
-import com.intellij.openapi.command.WriteCommandAction
 import com.intellij.openapi.components.service
 import com.intellij.openapi.editor.event.DocumentEvent
 import com.intellij.openapi.editor.event.DocumentListener
@@ -57,7 +56,6 @@ import com.intellij.util.ui.JBUI
 import com.intellij.util.ui.tree.TreeUtil
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.launch
-import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
 import java.awt.BorderLayout
 import java.awt.Dimension

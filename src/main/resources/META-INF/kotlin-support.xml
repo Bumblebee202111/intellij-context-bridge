@@ -1,6 +1,6 @@
 <idea-plugin>
     <extensions defaultExtensionNs="com.github.bumblebee202111.intellijcontextbridge">
-        <skeletonExtractor implementation="com.github.bumblebee202111.intellijcontextbridge.context.KotlinSkeletonExtractor"/>
-        <graphExtractor implementation="com.github.bumblebee202111.intellijcontextbridge.context.KotlinGraphExtractor"/>
+        <skeletonExtractor implementation="com.github.bumblebee202111.intellijcontextbridge.context.extractors.kotlin.KotlinSkeletonExtractor"/>
+        <graphExtractor implementation="com.github.bumblebee202111.intellijcontextbridge.context.extractors.kotlin.KotlinGraphExtractor"/>
     </extensions>
 </idea-plugin>

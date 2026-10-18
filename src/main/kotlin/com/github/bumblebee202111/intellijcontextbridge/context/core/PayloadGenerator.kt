@@ -1,7 +1,8 @@
-package com.github.bumblebee202111.intellijcontextbridge.context
+package com.github.bumblebee202111.intellijcontextbridge.context.core
 
 import com.github.bumblebee202111.intellijcontextbridge.commands.CommandRegistryService
 import com.github.bumblebee202111.intellijcontextbridge.commands.SlashCommand
+import com.github.bumblebee202111.intellijcontextbridge.context.core.PsiSkeletonExtractor
 import com.github.bumblebee202111.intellijcontextbridge.state.ContextLevel
 import com.github.bumblebee202111.intellijcontextbridge.state.ContextState
 import com.github.bumblebee202111.intellijcontextbridge.state.FileStateRecord

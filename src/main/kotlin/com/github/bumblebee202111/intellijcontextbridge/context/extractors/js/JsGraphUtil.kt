@@ -1,4 +1,4 @@
-package com.github.bumblebee202111.intellijcontextbridge.context
+package com.github.bumblebee202111.intellijcontextbridge.context.extractors.js
 
 import com.intellij.lang.ecmascript6.psi.ES6ExportDeclaration
 import com.intellij.lang.ecmascript6.psi.ES6ImportDeclaration

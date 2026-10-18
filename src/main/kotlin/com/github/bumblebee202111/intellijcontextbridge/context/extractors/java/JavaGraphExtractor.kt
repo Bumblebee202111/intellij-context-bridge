@@ -1,5 +1,6 @@
-package com.github.bumblebee202111.intellijcontextbridge.context
+package com.github.bumblebee202111.intellijcontextbridge.context.extractors.java
 
+import com.github.bumblebee202111.intellijcontextbridge.context.ep.LanguageGraphExtractor
 import com.intellij.psi.PsiElement
 import com.intellij.psi.PsiFile
 import com.intellij.psi.PsiJavaFile

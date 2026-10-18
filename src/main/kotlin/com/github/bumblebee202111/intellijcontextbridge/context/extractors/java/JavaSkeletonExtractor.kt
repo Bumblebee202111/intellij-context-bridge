@@ -1,5 +1,6 @@
-package com.github.bumblebee202111.intellijcontextbridge.context
+package com.github.bumblebee202111.intellijcontextbridge.context.extractors.java
 
+import com.github.bumblebee202111.intellijcontextbridge.context.ep.LanguageSkeletonExtractor
 import com.intellij.psi.JavaTokenType
 import com.intellij.psi.PsiClass
 import com.intellij.psi.PsiFile

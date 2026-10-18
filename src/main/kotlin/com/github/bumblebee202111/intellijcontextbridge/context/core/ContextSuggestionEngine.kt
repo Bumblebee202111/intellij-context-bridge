@@ -1,5 +1,6 @@
-package com.github.bumblebee202111.intellijcontextbridge.context
+package com.github.bumblebee202111.intellijcontextbridge.context.core
 
+import com.github.bumblebee202111.intellijcontextbridge.context.ep.LanguageGraphExtractor
 import com.github.bumblebee202111.intellijcontextbridge.state.ContextLevel
 import com.github.bumblebee202111.intellijcontextbridge.state.ContextState
 import com.github.bumblebee202111.intellijcontextbridge.utils.ContextCapabilityUtil
@@ -89,7 +90,8 @@ object ContextSuggestionEngine {
                 ProgressManager.checkCanceled()
                 val psiFile = psiManager.findFile(seed) ?: continue
 
-                val extractor = LanguageGraphExtractor.EP_NAME.extensionList.firstOrNull { it.isSupported(psiFile) }
+                val extractor =
+                    LanguageGraphExtractor.Companion.EP_NAME.extensionList.firstOrNull { it.isSupported(psiFile) }
                 val importedNames = extractor?.getImportedNames(psiFile) ?: emptySet()
 
                 if (importedNames.isNotEmpty()) {
@@ -114,7 +116,8 @@ object ContextSuggestionEngine {
                 if (!seed.isValid) return@readAction emptyList<PsiElement>()
 
                 val psiFile = psiManager.findFile(seed) ?: return@readAction emptyList<PsiElement>()
-                val extractor = LanguageGraphExtractor.EP_NAME.extensionList.firstOrNull { it.isSupported(psiFile) }
+                val extractor =
+                    LanguageGraphExtractor.Companion.EP_NAME.extensionList.firstOrNull { it.isSupported(psiFile) }
                 extractor?.getPrimaryDeclarations(psiFile) ?: emptyList()
             }
 
@@ -171,7 +174,8 @@ object ContextSuggestionEngine {
 
                 if (cachedRecord != null && cachedRecord.level == maxLevel) {
                     try {
-                        val currentHash = readAction { PayloadGenerator.getFileHash(project, contextState, file, maxLevel) }
+                        val currentHash =
+                            readAction { PayloadGenerator.getFileHash(project, contextState, file, maxLevel) }
                         if (currentHash == cachedRecord.hash) {
                             isMaxLevelCached = true
                         }
