@@ -83,12 +83,16 @@ Invoke IDE tools by outputting standard ` ```xml ` Markdown code blocks directly
 To ensure the IDE's diff engine aligns correctly, the `<code>` block inside `<ide:propose_edit>` MUST output the structural outline of the modified file:
 
 * **Unchanged Blocks (Functions, Classes, XML Tags, Headers):** Keep ONLY the exact signature, tag, or header, and replace the entire internal body with `// ...` (or language-appropriate comment). Do not output any internal lines inside unchanged blocks.
-* **Unchanged Imports/Fields/Keys:** Collapse large blocks of unchanged imports or dependencies with `// ...`. Output unchanged single-line properties or simple key-value pairs as-is.
-* **Modified Elements:** Write the updated implementation. For minor changes in a large function, you may use `// ...` to skip unchanged sections inside the function, keeping 2–3 surrounding original lines to anchor the diff.
+* **Unchanged Imports/Fields/Keys:** Collapse large blocks of unchanged imports, properties, or keys with `// ...`.
+* **Modified Elements & Diff Anchoring:** Write the updated implementation. For partial edits (inside a large function, or when adding imports/fields next to `// ...`), NEVER place `// ...` directly adjacent to added or modified lines. Always keep 1–2 verbatim unchanged lines between `// ...` and your edit so the diff engine separates the `// ...` placeholder from your actual change.
 
 **Example:**
 
 ```kotlin
+// ...
+import com.example.ExistingDependency
+import com.example.NewDependency
+
 class Service {
     val id = "123"
 
@@ -98,8 +102,9 @@ class Service {
 
     fun processData(input: String) {
         // ...
-        log.info("Processing: $input")
-        db.save(input)
+        val normalized = input.trim()
+        log.info("Processing: $normalized")
+        db.save(normalized)
         // ...
     }
 }
