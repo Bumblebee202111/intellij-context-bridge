@@ -251,12 +251,14 @@ class ContextComposerPanel(private val project: Project) : Disposable {
     private val copyButton = JButton("Copy", AllIcons.Actions.Copy)
     private val tabComboBox = ComboBox<BrowserTab>().apply {
         toolTipText = "Select the target AI Studio tab"
-        preferredSize = Dimension(220, preferredSize.height)
+        minimumSize = Dimension(100, minimumSize.height)
+        preferredSize = Dimension(180, preferredSize.height)
     }
     private val sendWsButton = JButton("Select Tab to Send").apply {
         isEnabled = false
         toolTipText = "Send context directly to the selected AI Studio tab"
         putClientProperty("JButton.buttonType", "defaultButton")
+        preferredSize = Dimension(preferredSize.width, preferredSize.height)
     }
     private val loadingIcon = AsyncProcessIcon("PayloadGenerator").apply { isVisible = false }
 
@@ -546,6 +548,7 @@ class ContextComposerPanel(private val project: Project) : Disposable {
             }
 
         topToolbar.add(nativeToolbar.component, BorderLayout.WEST)
+        topToolbar.add(tabComboBox, BorderLayout.CENTER)
         return topToolbar
     }
 
@@ -680,7 +683,6 @@ class ContextComposerPanel(private val project: Project) : Disposable {
             add(bottomToolbar.component, BorderLayout.WEST)
 
             val rightButtons = JPanel(FlowLayout(FlowLayout.RIGHT, 5, 0)).apply {
-                add(tabComboBox)
                 add(copyButton)
                 add(sendWsButton)
                 add(loadingIcon)
