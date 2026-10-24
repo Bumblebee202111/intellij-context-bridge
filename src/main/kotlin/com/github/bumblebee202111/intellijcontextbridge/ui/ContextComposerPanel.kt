@@ -105,6 +105,7 @@ class ContextComposerPanel(private val project: Project) : Disposable {
 
     private var historyIndex = -1
     private var draftPrompt = ""
+    private var lastAppliedCommands = emptyList<String>()
 
     @Volatile
     private var lastDedupedFiles = emptySet<VirtualFile>()
@@ -246,8 +247,8 @@ class ContextComposerPanel(private val project: Project) : Disposable {
         }
     }
 
-    private val editRadio = JBRadioButton("⚡ Edit", true)
-    private val askRadio = JBRadioButton("💬 Ask")
+    private val askRadio = JBRadioButton("💬 Ask", true)
+    private val editRadio = JBRadioButton("⚡ Edit")
     private val copyButton = JButton("Copy", AllIcons.Actions.Copy)
     private val tabComboBox = ComboBox<BrowserTab>().apply {
         toolTipText = "Select the target AI Studio tab"
@@ -562,9 +563,9 @@ class ContextComposerPanel(private val project: Project) : Disposable {
                 }
 
                 val text = promptArea.text.trimStart()
-                val commandRegex = Regex("^/([a-zA-Z0-9_-]+)")
+                val commandRegex = Regex("^/([a-zA-Z0-9_-]+)(?=\\s|$)")
                 var tempText = text
-                var needsEdit = false
+                val currentCommands = mutableListOf<SlashCommand>()
                 val commandRegistry = project.service<CommandRegistryService>()
 
                 while (true) {
@@ -572,18 +573,23 @@ class ContextComposerPanel(private val project: Project) : Disposable {
                     val cmdName = match.groupValues[1]
                     val cmd = commandRegistry.getCommand(cmdName)
                     if (cmd != null) {
-                        if (cmd.mode == IntentMode.EDIT) {
-                            needsEdit = true
-                            break
-                        }
+                        currentCommands.add(cmd)
                         tempText = tempText.substring(match.range.last + 1).trimStart()
                     } else {
                         break
                     }
                 }
 
-                if (needsEdit) {
-                    editRadio.isSelected = true
+                val currentCommandNames = currentCommands.map { it.name }
+                if (currentCommandNames != lastAppliedCommands) {
+                    lastAppliedCommands = currentCommandNames
+                    if (currentCommands.isNotEmpty()) {
+                        if (currentCommands.any { it.mode == IntentMode.EDIT }) {
+                            editRadio.isSelected = true
+                        } else {
+                            askRadio.isSelected = true
+                        }
+                    }
                 }
 
                 val newText = event.newFragment.toString()
@@ -604,14 +610,14 @@ class ContextComposerPanel(private val project: Project) : Disposable {
         setupPromptHistoryShortcuts()
 
         ButtonGroup().apply {
-            add(editRadio)
             add(askRadio)
+            add(editRadio)
         }
         val intentPanel = JPanel(FlowLayout(FlowLayout.LEFT, 5, 0)).apply {
             border = JBUI.Borders.emptyBottom(5)
             add(JLabel("Mode:"))
-            add(editRadio)
             add(askRadio)
+            add(editRadio)
         }
 
         val promptContainer = JPanel(BorderLayout()).apply {
