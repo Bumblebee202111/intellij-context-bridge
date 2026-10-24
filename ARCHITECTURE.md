@@ -1,25 +1,22 @@
 # System Architecture
 
-The plugin consists of four decoupled layers. Implementation details for each layer are left to the developer, provided the underlying inputs and outputs remain consistent.
+The plugin consists of five decoupled layers. Implementation details for each layer are left to the developer, provided the underlying inputs and outputs remain consistent.
 
 ## 1. UI Layer (Tool Window)
 * **Native Interface:** Built using standard IntelliJ platform components (`EditorTextField` for prompts, `ActionToolbar` for actions, `AsyncProcessIcon` for background tasks) to ensure a seamless, first-class IDE experience.
 * **Tabbed Interface:** Organizes the workflow into distinct functional panels (Context Composer, Response Viewer, and Session History).
-* **Multi-Tree File View:** Managed by a dedicated `ContextTreeManager`. Renders a primary project tree, a dynamic "Suggested Context" staging area, and a temporary "Pending AI Requests" group for manual tool-call approval. Pre-resolves VFS metadata off the EDT, repaints in-place unless structural VFS topology changes, and strictly preserves both user expansion and selection state.
+* **Multi-Tree File View:** Renders a primary project tree, a dynamic "Suggested Context" staging area, and a temporary "Pending AI Requests" group for manual tool-call approval. Resolves VFS metadata off the EDT, repaints in-place unless VFS topology changes, and preserves user expansion and selection state.
 * **Dual-Prefix Composer (`/` & `@`):** Supports inline auto-completion for both `/` slash commands and `@` file/directory mentions, automatically promoting `@`-mentioned paths to `Complete` context.
 * **Intent Selection:** Segmented controls allow users to quickly specify the desired AI behavior (e.g., Ask vs. Edit) to tailor the underlying system instructions and constraints.
 
 ## 2. Context Extraction & Suggestion Engine
-* **PSI Parser (Program Structure Interface):**
-  * *Input:* `PsiFile`
-  * *Logic:* Walks the syntax tree. For `Skeleton` mode, it extracts the structural overview of the file (public signatures, properties, class structures) while stripping out internal logic and unused imports. Utilizes dynamic Extension Points (`skeletonExtractor` and `graphExtractor`) to safely support Kotlin, Java, JS, TS, and Vue without breaking classloader compatibility across different JetBrains IDEs (e.g., WebStorm, IntelliJ Community).
-  * *Fallback:* For non-code files, `Skeleton` mode safely indicates the file's presence while omitting its raw contents.
+* **PSI Parser (Program Structure Interface):** Walks the syntax tree to extract structural APIs (public signatures, properties, class structures) for `Skeleton` mode while stripping internal logic and unused imports. Uses dynamic Extension Points (`skeletonExtractor` and `graphExtractor`) with optional plugin dependencies to support Kotlin, Java, JS, TS, and Vue across different JetBrains IDEs. Non-code files safely indicate presence while omitting raw contents.
 * **Context Suggestion Engine:**
   * *Heuristic Seeds:* Monitors active editors, background tabs, Git modifications, and `Complete` context files (including `@`-mentioned files) to identify the user's current working set.
-  * *Graph Traversal & Caching:* Performs unbounded background searches for outgoing dependencies and incoming usages based on the seed files, caching per-seed graph results by `modificationStamp` to avoid redundant PSI traversals.
-  * *Mathematical Scoring:* Utilizes Inverse Document Frequency (IDF) scoring to mathematically penalize ubiquitous utility classes (e.g., `Logger`) from polluting the suggestions.
-    * *Smart Omission:* Actively suppresses suggestions if the file has already reached its maximum context capability or if its maximum state is already safely stored in the deduplication cache.
-  * *Power Efficiency:* Strictly executes inside IDE-managed Coroutines using granular per-file/per-element `readAction` blocks, `ProgressManager.checkCanceled()`, and suspension delays to ensure the IDE never stutters, typing is never blocked, and battery life is preserved.
+  * *Graph Traversal & Caching:* Searches outgoing dependencies and incoming usages from seed files in the background, caching per-seed graph results to avoid redundant PSI traversals.
+  * *Mathematical Scoring:* Utilizes Inverse Document Frequency (IDF) scoring to penalize ubiquitous utility classes from polluting suggestions.
+  * *Smart Omission:* Suppresses suggestions if a file has already reached its maximum context capability or its maximum state is already in the deduplication cache.
+  * *Concurrency:* Executes asynchronously within IDE-managed Coroutines and yielding `readAction` blocks so the UI and editor never stutter.
 * **Capability Checker:** Evaluates file extensions and MIME types to prevent encoding errors from opaque binaries, while identifying supported media files to encode as Base64 attachments.
 
 ## 3. State & Memory Manager
@@ -27,19 +24,18 @@ The plugin consists of four decoupled layers. Implementation details for each la
 * **Project Configurator:** Parses local configuration files (e.g., `.aicontext`) on load to automatically route specific files and directories to their preferred context states. Defaults to restoring the exact context from the last session turn if one exists.
 * **State Engine:** Tracks context states dynamically via a fast, thread-safe in-memory cache, aggregating directory states bottom-up based on their children. Strictly ties event listeners to UI-bound disposables to prevent memory leaks.
 * **Universal Deduplication Engine:**
-  * Hashes the extracted text or metadata of a file, utilizing native modification stamps for instantaneous cache retrieval.
-  * If a file is requested again at the exact same context state and its hash is unchanged, it is typically omitted from the payload to prevent context bloat.
-  * The deduplication cache is dynamically folded from the session history, ensuring perfect synchronization even if past turns are deleted.
+  * Hashes the extracted text or metadata of a file, utilizing native modification stamps for fast cache retrieval.
+  * If a file is requested again at the exact same context state and its hash is unchanged, it is omitted from the payload to prevent context bloat.
+  * The deduplication cache is dynamically folded from the session history, ensuring synchronization even if past turns are deleted.
 
 ## 4. Transport & Application Layer
-* **Payload Generator:** Compiles extracted context, unified system instructions, and user prompts into a structured JSON object. Files are included in their entirety by default, while files reduced to their AST signatures are explicitly marked with a `(Skeleton)` tag in the markdown headers. The user's intent (Ask vs. Edit) is explicitly anchored at the end of the context using a `<user_prompt mode="...">` wrapper to maximize LLM adherence.
+* **Payload Generator:** Compiles extracted context, unified system instructions, and user prompts into a structured JSON object. Files are included in their entirety by default, while files reduced to their AST signatures are marked with a `(Skeleton)` tag. The user's intent (Ask vs. Edit) is anchored at the end of the context using a `<user_prompt mode="...">` wrapper.
 * **Bridge Mechanism:**
-  * *Server:* A local WebSocket server embedded in the IDE, utilizing dynamic port binding to support multiple concurrent IDE instances (Mesh Networking). Utilizes a hybrid bi-directional binding system (trusting chat titles persistently, pathnames transiently) to route payloads accurately across multiple projects. Includes a specialized two-way diagnostic pipeline to execute background-resilient DOM tests and report telemetry back to the IDE.
-  * *Client:* A browser userscript that maintains connections to active IDEs. It automates the modern AI Studio web UI (handling system instruction cards, model selectors, and drag-and-drop attachments), safely intercepts Capture-Phase shortcuts, and handles transient state machines for ephemeral tasks via precise state snapshots. It politely coexists with normal AI Studio usage by implicitly detecting Bridge Chats via the active System Instructions, maintaining its own per-model persistent memory for parameter tuning.
-* **Tool Call & Action Orchestrator:** Relies on automated native UI actions (e.g., "Copy as Markdown") to reliably extract sanitized AI responses. Unifies all tool calls under a sealed `AgentTool` hierarchy (read requests, mutations, and commit message filling). Routes actions through a dedicated Response Viewer panel with side-by-side diffing, refactoring execution, or direct commit message injection backed by downward Swing component resolution.
+  * *Server:* A local WebSocket server embedded in the IDE, utilizing dynamic port binding to support multiple concurrent IDE instances. Uses a hybrid bi-directional binding system (trusting chat titles persistently, pathnames transiently) to route payloads accurately across multiple projects, alongside a two-way diagnostic pipeline to test web UI automation health.
+  * *Client:* A browser userscript that maintains connections to active IDEs. Automates the AI Studio web UI (system instruction cards, model selectors, drag-and-drop attachments), intercepts shortcuts, and manages transient state machines via state snapshots. Politely coexists with normal AI Studio usage by implicitly detecting Bridge Chats via active System Instructions, and maintains per-model persistent parameter memory.
+* **Tool Call & Action Orchestrator:** Relies on automated native UI actions (e.g., "Copy as Markdown") to extract sanitized AI responses. Parses tool calls into a unified `AgentTool` hierarchy (read requests, file mutations, and commit message filling) and routes them through the Response Viewer panel for side-by-side diffing, IDE refactoring, or commit message injection.
 
 ## 5. Command Engine
-* **Slash Commands:** A user-invoked macro system for workflow state transitions (e.g., `/plan`, `/commit`, `/review-bugs`). Commands can be stacked. The UI inserts tokens (e.g., `/plan`), and the backend dynamically extracts and interpolates them, wrapping multiple directives in distinct XML semantic boundaries (`<applied_commands>`) before appending the user's specific manual request.
+* **Slash Commands:** A user-invoked macro system for workflow state transitions (e.g., `/plan`, `/commit`, `/review-bugs`, `/cmd`). Commands can be stacked via UI tokens and are dynamically interpolated into `<applied_commands>` XML blocks before the user's manual request.
 * **Dynamic Context Interpolation:** Supports template variables (e.g., `{{vcs_diff}}`) inside command definitions, enabling macros to pull active IDE runtime state on demand.
 * **Shadow Registry:** Commands are defined via Markdown files with YAML frontmatter. A background service loads built-in defaults and allows project-specific overrides via a local `.contextbridge/commands/` directory.
-* **Meta-Commands:** Built-in and local commands (e.g., `/cmd`) that utilize the AI's tool-calling capabilities to dynamically design, review, and write new slash command definitions directly to the workspace.

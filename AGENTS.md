@@ -9,7 +9,6 @@ Originally inspired by CodeWebChat, we are building a user-directed context brid
 Assume the 2026 ecosystem. Always use the latest available versions for Kotlin 2.x, Ktor 3.x, and the IntelliJ Platform Gradle Plugin 2.x.
 - **Coroutines:** All background work MUST use platform-managed Coroutine scopes and yield via suspending `readAction`.
 - **Memory:** Bind event listeners (e.g., `MessageBus`) to a UI-bound `Disposable` (like Tool Window Content), never the `Project`.
-- **Swing Resolution:** `DataContext` resolves *upward*. To find nested child components, MUST use downward traversal (e.g., `UIUtil.findComponentOfType`).
 - Always trigger a Google Search to fetch the latest JetBrains documentation before generating code for IntelliJ Platform APIs or UI components.
 
 ## 3. Web UI Automation

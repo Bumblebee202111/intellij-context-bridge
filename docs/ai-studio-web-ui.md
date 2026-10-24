@@ -23,4 +23,3 @@ This document contains dense, factual observations regarding the native Google A
   - *Function Calls:* Native tool invocations render interactive `<ms-function-call-chunk>` blocks within the generation stream.
 - **Attachments:**
   - Media and file uploads bypass standard `<input type="file">` elements, relying entirely on global drag-and-drop event listeners.
-]]

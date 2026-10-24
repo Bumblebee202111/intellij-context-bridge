@@ -3,50 +3,25 @@
 *Note: This project evolves organically through active dogfooding. This document serves as an idea backlog rather than a strict sequential plan.*
 
 ## Completed Milestones
-- Inline `@` File/Folder Mentions & Auto-Promotion to Complete Context
-- Per-Seed PSI Graph Caching, Granular Yielding Read Actions, & Off-EDT Tree Rendering
-- Cross-IDE Compatibility (WebStorm, PyCharm, etc.) via Optional Dependencies
-- Vue & TypeScript AST Graph Traversal (Imports & Usages)
-- JavaScript, TypeScript, and Vue Skeleton Extraction
-- Kotlin Skeleton Extraction Refinements (Data classes, implicit returns, constructor defaults)
-- Core Context Extraction & UI
-- Session History, True Undo, & Deduplication
-- Diff-Based Code Application
-- Multi-IDE Automation Bridge (WebSocket Mesh & Userscript)
-- Native UI Overhaul & Proactive Context Suggestions
-- Intent Architecture (Unified Prompt & XML Micro-anchoring)
-- Prompt Adherence (Strict Ask vs. Edit boundaries & refined Skeleton Patch Protocol)
-- Slash Commands & Shadow Registry
-- Multi-Project Binding & Memory Safety (Observer Pattern & UI-bound Disposables)
-- Zero-Click Sync & Automated Native UI Extraction
-- Ephemeral Workflows (Native AI Commit Generation & State Machines)
-- Agentic File CRUD Tools (Create, Edit, Rename, Delete) & Native Refactoring Integration
-- Command Engine Refinement (Stacked invocations, Token insertion, Mode elevation, `<applied_commands>` boundaries)
-- Tool-Specific XML Tags (Bypassing RLHF triggers & strict XML parsing)
-- Code Block Jailbreak & XML Namespacing (Bypassing native function-calling UI interception)
-- CDATA Code Payloads (Preventing XML escaping and indentation drift)
-- Userscript DOM Resilience Updates
-- Prompt Tuning for RPD Efficiency (Continuous output & read scope limits)
-- Unified Tool Hierarchy & Response Viewer Panel
-- Dynamic Command Context Engine (`{{variable}}` interpolation)
-- Meta-Commands (AI self-extending macros)
-- Targeted Review Command Suite (Bugs, Simplify, Arch)
-- Diagnostic Bridge & Userscript Modularization
-- Userscript Per-Model Memory & Snapshot Restoration
-- Implicit Chat Detection (Polite AI Studio Guest Mode)
+- Core Context Tree UI, `.aicontext` Routing, & Session Deduplication
+- Multi-Language AST Skeleton & Graph Extractors (Kotlin, Java, JS, TS, Vue) with Cross-IDE Support
+- Proactive Context Suggestion Engine (Editor/Git/Mention Seeds, IDF Scoring, Per-Seed Caching)
+- Inline `@` File/Folder Mentions & Stackable `/` Slash Commands with Dynamic Variables
+- Unified Intent Architecture (`ASK` vs `EDIT`) & Resilient `ide:` XML/CDATA Tool Protocol
+- Unified `AgentTool` Hierarchy, Response Viewer, Side-by-Side Diffs, & Native Refactoring
+- Multi-Project WebSocket Bridge, Polite AI Studio Coexistence, Per-Model Memory, & Diagnostic Bridge
+- Ephemeral AI Commit Generation Workflow with Snapshot Restoration
 
 ## Upcoming Focus
 
 **Engineering Context (Git & Diagnostics)**
-* [ ] Add UI toggle to include active editor compiler errors/warnings in the payload.
-* [ ] Add action to auto-select uncommitted/modified files based on `git status`.
-* [ ] Optimize payload by sending Git diffs for modified files already in memory.
+* [ ] UI toggle to include active editor compiler errors/warnings in payloads.
+* [ ] Action to auto-select uncommitted/modified files from `git status`.
+* [ ] Option to send Git diffs for modified files already cached in session history.
 
 **Prompt & Extraction Resilience**
-* [ ] Monitor AI Studio frontend updates to ensure "de-weaponized" XML tool tags continue to bypass native function-calling interception.
+* [ ] Monitor AI Studio frontend updates to keep XML tool tags and DOM automation resilient.
 
 ## Future Explorations
 **Read-Only Tool Calling**
-* [ ] Define XML-based tool call schema for system directives.
-* [ ] Implement IDE-side execution for safe, read-only queries (e.g., global search, find usages).
-* [ ] Automate tool result transmission back to the web UI.
+* [ ] IDE-side execution and result transmission for safe read-only queries (e.g., search, find usages).
