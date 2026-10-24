@@ -65,11 +65,18 @@ class ContextBridgeToolWindow(private val project: Project) : Disposable {
                         project.getService(CommitBridgeService::class.java).injectCommitMessage(it.message)
                     }
 
-                    // 2. Pass markdown and ALL tools to the Response Panel
-                    receiverPanel.handleIncomingMarkdown(markdownText, tools)
+                    val nonCommitTools = tools.filterNot { it is FillCommitMessageTool }
+                    if (commitTools.isNotEmpty() && nonCommitTools.isEmpty()) {
+                        return@invokeLater
+                    }
 
-                    // 3. Always switch to the response viewer when a new message arrives
-                    tabbedPane.selectedIndex = 1
+                    // 2. Pass markdown and ALL tools to the Response Panel
+                    val hasActions = receiverPanel.handleIncomingMarkdown(markdownText, tools)
+
+                    // 3. Switch to the response viewer only when actionable tools arrive
+                    if (hasActions) {
+                        tabbedPane.selectedIndex = 1
+                    }
                 }
             }
 

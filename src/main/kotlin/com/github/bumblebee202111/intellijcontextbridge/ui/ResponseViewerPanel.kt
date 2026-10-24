@@ -155,7 +155,7 @@ class ResponseViewerPanel(
                     project.getService(CommitBridgeService::class.java).injectCommitMessage(it.message)
                 }
 
-                handleIncomingMarkdown(responseArea.text, tools)
+                handleIncomingMarkdown(responseArea.text, tools, showEmptyWarning = true)
             }
         }
 
@@ -176,11 +176,15 @@ class ResponseViewerPanel(
         content.add(splitPane, BorderLayout.CENTER)
     }
 
-    fun handleIncomingMarkdown(markdownText: String, tools: List<AgentTool>): Boolean {
+    fun handleIncomingMarkdown(
+        markdownText: String,
+        tools: List<AgentTool>,
+        showEmptyWarning: Boolean = false
+    ): Boolean {
         responseArea.text = markdownText
         listModel.clear()
         tools.forEach { listModel.addElement(it) }
-        if (tools.isEmpty() && markdownText.isNotBlank()) {
+        if (showEmptyWarning && tools.isEmpty() && markdownText.isNotBlank()) {
             Messages.showInfoMessage("No actions found in the response.", "Parse Result")
             return false
         }
