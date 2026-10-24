@@ -14,6 +14,9 @@ import com.github.bumblebee202111.intellijcontextbridge.state.ContextState
 import com.github.bumblebee202111.intellijcontextbridge.state.IntentMode
 import com.github.bumblebee202111.intellijcontextbridge.utils.FileFilterUtil
 import com.intellij.codeInsight.AutoPopupController
+import com.intellij.codeInsight.completion.CompletionParameters
+import com.intellij.codeInsight.completion.PrefixMatcher
+import com.intellij.codeInsight.lookup.CharFilter
 import com.intellij.codeInsight.lookup.LookupElementBuilder
 import com.intellij.icons.AllIcons
 import com.intellij.openapi.Disposable
@@ -98,6 +101,43 @@ private sealed interface PromptCompletionItem : Comparable<PromptCompletionItem>
     }
 }
 
+
+private class PromptPrefixMatcher(prefix: String) : PrefixMatcher(prefix) {
+    override fun prefixMatches(name: String): Boolean {
+        return when {
+            myPrefix.startsWith("@") -> {
+                if (!name.startsWith("@")) return false
+                val query = myPrefix.removePrefix("@")
+                val target = name.removePrefix("@")
+                query.isEmpty() || target.contains(query, ignoreCase = true)
+            }
+            myPrefix.startsWith("/") -> {
+                name.startsWith("/") && name.startsWith(myPrefix, ignoreCase = true)
+            }
+            else -> false
+        }
+    }
+
+    override fun isStartMatch(name: String): Boolean {
+        return when {
+            myPrefix.startsWith("@") -> {
+                if (!name.startsWith("@")) return false
+                val query = myPrefix.removePrefix("@")
+                val target = name.removePrefix("@")
+                query.isEmpty() || target.startsWith(query, ignoreCase = true)
+            }
+            myPrefix.startsWith("/") -> {
+                name.startsWith("/") && name.startsWith(myPrefix, ignoreCase = true)
+            }
+            else -> false
+        }
+    }
+
+    override fun cloneWithPrefix(prefix: String): PrefixMatcher {
+        return PromptPrefixMatcher(prefix)
+    }
+}
+
 class ContextComposerPanel(private val project: Project) : Disposable {
     private val contextState = project.service<ContextState>()
     private val server = ApplicationManager.getApplication().getService(ContextBridgeServer::class.java)
@@ -171,6 +211,48 @@ class ContextComposerPanel(private val project: Project) : Disposable {
 
     private val promptCompletionProvider =
         object : TextFieldWithAutoCompletionListProvider<PromptCompletionItem>(emptyList()) {
+            override fun acceptChar(c: Char): CharFilter.Result? {
+                return if (c.isLetterOrDigit() || c == '/' || c == '.' || c == '-' || c == '_' || c == '@') {
+                    CharFilter.Result.ADD_TO_PREFIX
+                } else {
+                    CharFilter.Result.HIDE_LOOKUP
+                }
+            }
+
+            override fun createPrefixMatcher(prefix: String): PrefixMatcher {
+                return PromptPrefixMatcher(prefix)
+            }
+
+            override fun getItems(
+                prefix: String?,
+                cached: Boolean,
+                parameters: CompletionParameters?
+            ): Collection<PromptCompletionItem> {
+                if (prefix == null) return emptyList()
+                return when {
+                    prefix.startsWith("@") -> {
+                        super.getItems(prefix, cached, parameters)
+                            .filterIsInstance<PromptCompletionItem.FileMention>()
+                    }
+                    prefix.startsWith("/") -> {
+                        val isValidPos = if (parameters != null) {
+                            val docText = parameters.originalFile.text
+                            val tokenStart = (parameters.offset - prefix.length).coerceAtLeast(0)
+                            isAtCommandPosition(docText.substring(0, tokenStart))
+                        } else {
+                            true
+                        }
+                        if (isValidPos) {
+                            super.getItems(prefix, cached, parameters)
+                                .filterIsInstance<PromptCompletionItem.Command>()
+                        } else {
+                            emptyList()
+                        }
+                    }
+                    else -> emptyList()
+                }
+            }
+
             override fun getLookupString(item: PromptCompletionItem): String = when (item) {
                 is PromptCompletionItem.Command -> "/${item.slashCommand.name}"
                 is PromptCompletionItem.FileMention -> "@${item.fileName}"
@@ -497,6 +579,20 @@ class ContextComposerPanel(private val project: Project) : Disposable {
             .submit(AppExecutorUtil.getAppExecutorService())
     }
 
+    private fun isAtCommandPosition(textBefore: String): Boolean {
+        var remaining = textBefore.trimStart()
+        if (remaining.isEmpty()) return true
+        val commandRegex = Regex("^/([a-zA-Z0-9_-]+)\\s+")
+        val commandRegistry = project.service<CommandRegistryService>()
+        while (remaining.isNotEmpty()) {
+            val match = commandRegex.find(remaining) ?: return false
+            val cmdName = match.groupValues[1]
+            if (commandRegistry.getCommand(cmdName) == null) return false
+            remaining = remaining.substring(match.range.last + 1).trimStart()
+        }
+        return true
+    }
+
     private fun setupTopToolbar(): JPanel {
         val topToolbar = JPanel(BorderLayout(5, 0)).apply { border = JBUI.Borders.empty(5) }
 
@@ -596,7 +692,14 @@ class ContextComposerPanel(private val project: Project) : Disposable {
                 if (newText == "/" || newText == "@") {
                     val offset = event.offset
                     val docText = event.document.text
-                    if (offset == 0 || docText.getOrNull(offset - 1) == '\n' || docText.getOrNull(offset - 1) == ' ') {
+                    val isWordStart =
+                        offset == 0 || docText.getOrNull(offset - 1) == '\n' || docText.getOrNull(offset - 1) == ' '
+                    val shouldPopup = if (newText == "@") {
+                        isWordStart
+                    } else {
+                        isWordStart && isAtCommandPosition(docText.substring(0, offset))
+                    }
+                    if (shouldPopup) {
                         ApplicationManager.getApplication().invokeLater {
                             promptArea.editor?.let { editor ->
                                 AutoPopupController.getInstance(project).scheduleAutoPopup(editor)
