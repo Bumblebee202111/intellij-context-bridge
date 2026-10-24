@@ -316,6 +316,11 @@
                 }
             },
             Input: {
+                isGenerating() {
+                    const btn = document.querySelector('ms-run-button button');
+                    if (!btn) return false;
+                    return btn.querySelector('.spin') !== null || btn.textContent.includes('Stop');
+                },
                 getPromptArea() {
                     return document.querySelector('textarea[formcontrolname="promptText"]') || document.querySelector('textarea[aria-label="Enter a prompt"]');
                 },
@@ -1058,7 +1063,7 @@
             if (!win.__cbIsBridgeChat) return;
 
             const btn = e.target.closest('ms-run-button button');
-            if (btn) {
+            if (btn && !AIStudioDOM.Input.isGenerating()) {
                 const textarea = AIStudioDOM.Input.getPromptArea();
                 if (textarea) AIStudioDOM.Input.interceptAndWrap(textarea);
             }
@@ -1081,6 +1086,7 @@
 
             const textarea = AIStudioDOM.Input.getPromptArea();
             if (!textarea) {
+                await AIStudioDOM.Preferences.restoreSnapshot();
                 isProcessing = false;
                 return;
             }
@@ -1090,87 +1096,130 @@
             setTimeout(async () => {
                 const runBtn = await AIStudioDOM.Utils.waitForElement('ms-run-button button');
                 if (runBtn) {
+                    const initialModelTurns = document.querySelectorAll('.chat-turn-container.model').length;
+                    const initialTotalTurns = document.querySelectorAll('.chat-turn-container').length;
                     runBtn.click();
-                    monitorCommitGeneration();
+                    monitorCommitGeneration(initialModelTurns, initialTotalTurns);
                 } else {
+                    await AIStudioDOM.Preferences.restoreSnapshot();
                     isProcessing = false;
                 }
             }, 300);
         }
 
-        function monitorCommitGeneration() {
+        function monitorCommitGeneration(initialModelTurns, initialTotalTurns) {
             showToast('⏳ Generating Commit Message...', '#FF9800', 0);
-            setTimeout(() => {
-                const checkInterval = setInterval(async () => {
+            let hasSeenGenerating = false;
+            let startupTicks = 0;
+
+            const checkInterval = setInterval(async () => {
+                if (AIStudioDOM.Input.isGenerating()) {
+                    hasSeenGenerating = true;
+                    return;
+                }
+
+                const allModelTurns = document.querySelectorAll('.chat-turn-container.model');
+                startupTicks++;
+                if (!hasSeenGenerating && allModelTurns.length <= initialModelTurns && startupTicks < 6) {
+                    return;
+                }
+
+                clearInterval(checkInterval);
+
+                try {
+                    await new Promise(r => setTimeout(r, 300));
                     const scrollBtn = document.querySelector('.scroll-to-bottom');
                     if (scrollBtn) scrollBtn.click();
 
-                    const allTurns = document.querySelectorAll('.chat-turn-container.model');
-                    if (allTurns.length === 0) return;
+                    const finalModelTurns = document.querySelectorAll('.chat-turn-container.model');
+                    if (finalModelTurns.length > initialModelTurns) {
+                        const lastTurn = finalModelTurns[finalModelTurns.length - 1];
+                        lastTurn.scrollIntoView({behavior: 'auto', block: 'end'});
+                        await new Promise(r => setTimeout(r, 200));
 
-                    const lastTurn = allTurns[allTurns.length - 1];
-                    lastTurn.scrollIntoView({behavior: 'auto', block: 'end'});
+                        const hasThumbUp = lastTurn.querySelector('button[aria-label="Good response"]') !== null;
+                        if (hasThumbUp) {
+                            showToast('⏳ Extracting Commit Message...', '#FF9800', 0);
+                            const text = await AIStudioDOM.Chat.extractViaNativeCopy(lastTurn);
 
-                    const hasThumbUp = lastTurn.querySelector('button[aria-label="Good response"]') !== null;
-                    const isLoading = lastTurn.querySelector('ms-chat-loading-indicator') !== null;
-
-                    if (hasThumbUp && !isLoading) {
-                        clearInterval(checkInterval);
-
-                        showToast('⏳ Extracting Commit Message...', '#FF9800', 0);
-                        const text = await AIStudioDOM.Chat.extractViaNativeCopy(lastTurn);
-
-                        if (text) {
-                            sendToIde(text);
-                            showToast('✅ Sent Commit Message to IDE', '#4CAF50', 3000);
+                            if (text) {
+                                sendToIde(text);
+                                showToast('✅ Sent Commit Message to IDE', '#4CAF50', 3000);
+                            } else {
+                                showToast('❌ Failed to copy model response', '#F44336', 3000);
+                            }
                         } else {
-                            showToast('❌ Failed to copy model response', '#F44336', 3000);
+                            showToast('⏹️ Commit Generation Stopped', '#FF9800', 3000);
                         }
-
-                        showToast('🧹 Cleaning up session...', '#FF9800', 0);
-                        await AIStudioDOM.Chat.deleteLastTwoTurns();
-
-                        showToast('⚙️ Restoring Settings...', '#FF9800', 0);
-                        await AIStudioDOM.Preferences.restoreSnapshot();
-
-                        isProcessing = false;
-                        showToast('✅ Ready', '#4CAF50', 3000);
+                    } else {
+                        showToast('⏹️ Commit Generation Stopped', '#FF9800', 3000);
                     }
-                }, 1000);
-            }, 2000);
+
+                    const addedTurns = document.querySelectorAll('.chat-turn-container').length - initialTotalTurns;
+                    if (addedTurns > 0) {
+                        showToast('🧹 Cleaning up session...', '#FF9800', 0);
+                        await AIStudioDOM.Chat.deleteLastTwoTurns(addedTurns);
+                    }
+
+                    showToast('⚙️ Restoring Settings...', '#FF9800', 0);
+                    await AIStudioDOM.Preferences.restoreSnapshot();
+                    showToast('✅ Ready', '#4CAF50', 3000);
+                } finally {
+                    isProcessing = false;
+                }
+            }, 500);
         }
 
-        function monitorStandardGeneration() {
+        function monitorStandardGeneration(initialModelTurns) {
             showToast('⏳ AI is Generating...', '#FF9800', 0);
-            setTimeout(() => {
-                const checkInterval = setInterval(async () => {
+            let hasSeenGenerating = false;
+            let startupTicks = 0;
+
+            const checkInterval = setInterval(async () => {
+                if (AIStudioDOM.Input.isGenerating()) {
+                    hasSeenGenerating = true;
+                    return;
+                }
+
+                const allModelTurns = document.querySelectorAll('.chat-turn-container.model');
+                startupTicks++;
+                if (!hasSeenGenerating && allModelTurns.length <= initialModelTurns && startupTicks < 6) {
+                    return;
+                }
+
+                clearInterval(checkInterval);
+
+                try {
+                    await new Promise(r => setTimeout(r, 300));
                     const scrollBtn = document.querySelector('.scroll-to-bottom');
                     if (scrollBtn) scrollBtn.click();
 
-                    const allTurns = document.querySelectorAll('.chat-turn-container.model');
-                    if (allTurns.length === 0) return;
+                    const finalModelTurns = document.querySelectorAll('.chat-turn-container.model');
+                    if (finalModelTurns.length > initialModelTurns) {
+                        const lastTurn = finalModelTurns[finalModelTurns.length - 1];
+                        lastTurn.scrollIntoView({behavior: 'auto', block: 'end'});
+                        await new Promise(r => setTimeout(r, 200));
 
-                    const lastTurn = allTurns[allTurns.length - 1];
-                    lastTurn.scrollIntoView({behavior: 'auto', block: 'end'});
-
-                    const hasThumbUp = lastTurn.querySelector('button[aria-label="Good response"]') !== null;
-                    const isLoading = lastTurn.querySelector('ms-chat-loading-indicator') !== null;
-
-                    if (hasThumbUp && !isLoading) {
-                        clearInterval(checkInterval);
-                        showToast('⏳ Syncing to IDE...', '#FF9800', 0);
-
-                        const text = await AIStudioDOM.Chat.extractViaNativeCopy(lastTurn);
-                        if (text) {
-                            sendToIde(text);
-                            showToast('✅ Generation Complete & Synced', '#4CAF50', 3000);
+                        const hasThumbUp = lastTurn.querySelector('button[aria-label="Good response"]') !== null;
+                        if (hasThumbUp) {
+                            showToast('⏳ Syncing to IDE...', '#FF9800', 0);
+                            const text = await AIStudioDOM.Chat.extractViaNativeCopy(lastTurn);
+                            if (text) {
+                                sendToIde(text);
+                                showToast('✅ Generation Complete & Synced', '#4CAF50', 3000);
+                            } else {
+                                showToast('⚠️ Generation Complete (Auto-sync failed)', '#FF9800', 3000);
+                            }
                         } else {
-                            showToast('⚠️ Generation Complete (Auto-sync failed)', '#FF9800', 3000);
+                            showToast('⏹️ Generation Stopped', '#FF9800', 3000);
                         }
-                        isProcessing = false;
+                    } else {
+                        showToast('⏹️ Generation Stopped', '#FF9800', 3000);
                     }
-                }, 1000);
-            }, 2000);
+                } finally {
+                    isProcessing = false;
+                }
+            }, 500);
         }
 
         // --- IDE PAYLOAD HANDLER ---
@@ -1223,8 +1272,9 @@
             setTimeout(async () => {
                 const runBtn = await AIStudioDOM.Utils.waitForElement('ms-run-button button');
                 if (runBtn) {
+                    const initialModelTurns = document.querySelectorAll('.chat-turn-container.model').length;
                     runBtn.click();
-                    monitorStandardGeneration();
+                    monitorStandardGeneration(initialModelTurns);
                 } else {
                     isProcessing = false;
                 }
