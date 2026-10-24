@@ -101,7 +101,6 @@ private sealed interface PromptCompletionItem : Comparable<PromptCompletionItem>
     }
 }
 
-
 private class PromptPrefixMatcher(prefix: String) : PrefixMatcher(prefix) {
     override fun prefixMatches(name: String): Boolean {
         return when {
@@ -1076,19 +1075,7 @@ class ContextComposerPanel(private val project: Project) : Disposable {
                     val isDeduped = readAction {
                         ProgressManager.checkCanceled()
                         if (!file.isValid) return@readAction false
-                        val relativePath = VfsUtilCore.getRelativePath(file, projectDir) ?: file.path
-                        val cachedRecord = cache[relativePath]
-
-                        if (cachedRecord != null && cachedRecord.level == currentLevel) {
-                            try {
-                                val currentHash = PayloadGenerator.getFileHash(project, contextState, file, currentLevel)
-                                currentHash == cachedRecord.hash
-                            } catch (e: Exception) {
-                                false
-                            }
-                        } else {
-                            false
-                        }
+                        PayloadGenerator.isFileDeduped(project, projectDir, contextState, file, currentLevel, cache)
                     }
 
                     if (isDeduped) {

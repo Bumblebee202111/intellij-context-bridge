@@ -9,6 +9,11 @@ object ContextCapabilityUtil {
         "sh", "py", "js", "ts", "vue", "html", "htm", "css", "txt", "csv", "properties", "pro"
     )
 
+    fun isTextFile(file: VirtualFile): Boolean {
+        val extension = file.extension?.lowercase() ?: ""
+        return textExtensions.contains(extension) || !file.fileType.isBinary
+    }
+
     fun isSupportedMedia(extension: String): Boolean {
         return when (extension.lowercase()) {
             "png", "jpg", "jpeg", "webp", "heic", "pdf", "mp4", "mp3", "wav" -> true
@@ -23,9 +28,7 @@ object ContextCapabilityUtil {
         if (file.isDirectory) return ContextLevel.SKELETON
 
         val extension = file.extension?.lowercase() ?: ""
-        val isTextFile = textExtensions.contains(extension) || !file.fileType.isBinary
-
-        if (isTextFile) return ContextLevel.COMPLETE
+        if (isTextFile(file)) return ContextLevel.COMPLETE
         if (isSupportedMedia(extension)) return ContextLevel.COMPLETE
 
         return ContextLevel.SKELETON // Opaque binaries

@@ -1,7 +1,6 @@
 package com.github.bumblebee202111.intellijcontextbridge.context.core
 
 import com.github.bumblebee202111.intellijcontextbridge.state.UserTurn
-import com.intellij.openapi.vfs.VirtualFile
 import kotlinx.serialization.Serializable
 
 @Serializable
@@ -21,6 +20,5 @@ data class AiPayload(
 
 data class PayloadGenerationResult(
     val payload: AiPayload,
-    val turn: UserTurn,
-    val dedupedFiles: Set<VirtualFile> = emptySet()
+    val turn: UserTurn
 )

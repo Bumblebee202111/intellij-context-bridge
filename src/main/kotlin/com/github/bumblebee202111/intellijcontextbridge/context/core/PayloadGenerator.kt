@@ -30,25 +30,49 @@ object PayloadGenerator {
             ?: throw IllegalStateException("Missing required prompt resource: $filename")
     }
 
+    private fun getRelativePath(file: VirtualFile, projectDir: VirtualFile?): String {
+        return if (projectDir != null) {
+            VfsUtilCore.getRelativePath(file, projectDir) ?: file.path
+        } else {
+            file.path
+        }
+    }
+
     fun getFileHash(project: Project, contextState: ContextState, file: VirtualFile, level: ContextLevel): String {
         ProgressManager.checkCanceled()
+        if (file.isDirectory) return "EMPTY_DIR"
         contextState.getCachedHash(file, level)?.let { return it }
 
-        val extension = file.extension?.lowercase() ?: ""
-        val isTextFile = ContextCapabilityUtil.textExtensions.contains(extension) || !file.fileType.isBinary
-
-        val hash = if (isTextFile) {
+        val hash = if (ContextCapabilityUtil.isTextFile(file)) {
             val extractedText = extractTextContent(project, file, level) ?: "OMITTED_NON_CODE_SKELETON"
             contextState.calculateHash(extractedText)
+        } else if (level == ContextLevel.COMPLETE) {
+            contextState.calculateHash("${file.modificationStamp}_${file.length}")
         } else {
-            if (level == ContextLevel.COMPLETE) {
-                contextState.calculateHash("${file.modificationStamp}_${file.length}")
-            } else {
-                "OMITTED_BINARY_SKELETON"
-            }
+            "OMITTED_BINARY_SKELETON"
         }
 
         return contextState.cacheHash(file, level, hash)
+    }
+
+    fun isFileDeduped(
+        project: Project,
+        projectDir: VirtualFile?,
+        contextState: ContextState,
+        file: VirtualFile,
+        level: ContextLevel,
+        dedupCache: Map<String, FileStateRecord>
+    ): Boolean {
+        if (projectDir == null) return false
+        val relativePath = getRelativePath(file, projectDir)
+        val cachedRecord = dedupCache[relativePath] ?: return false
+        if (cachedRecord.level != level) return false
+
+        return try {
+            getFileHash(project, contextState, file, level) == cachedRecord.hash
+        } catch (e: Exception) {
+            false
+        }
     }
 
     private fun extractTextContent(project: Project, file: VirtualFile, level: ContextLevel): String? {
@@ -69,8 +93,6 @@ object PayloadGenerator {
     ): PayloadGenerationResult {
         val projectDir = project.guessProjectDir()
         val attachments = mutableListOf<AiAttachment>()
-
-        val dedupedFilesTracker = mutableSetOf<VirtualFile>()
 
         val currentCache = contextState.getDedupCache()
         val newTurn = UserTurn(prompt = userPrompt)
@@ -127,45 +149,37 @@ object PayloadGenerator {
             val section = readAction {
                 ProgressManager.checkCanceled()
                 if (!file.isValid) return@readAction null
+                if (file.isDirectory && file.children.isNotEmpty()) return@readAction null
 
-                val relativePath = if (projectDir != null) {
-                    VfsUtilCore.getRelativePath(file, projectDir) ?: file.path
+                val relativePath = getRelativePath(file, projectDir)
+                val previousRecord = currentCache[relativePath]
+                val isText = !file.isDirectory && ContextCapabilityUtil.isTextFile(file)
+
+                val fastHash = if (isText) {
+                    contextState.getCachedHash(file, level)
                 } else {
-                    file.path
+                    getFileHash(project, contextState, file, level)
+                }
+
+                if (fastHash != null && previousRecord?.level == level && previousRecord.hash == fastHash) {
+                    newTurn.sentFiles[relativePath] = FileStateRecord(level, fastHash)
+                    return@readAction null
                 }
 
                 if (file.isDirectory) {
-                    if (file.children.isNotEmpty()) return@readAction null
-
-                    val currentHash = "EMPTY_DIR"
-                    val previousRecord = currentCache[relativePath]
-
-                    if (previousRecord != null && previousRecord.level == level && previousRecord.hash == currentHash) {
-                        dedupedFilesTracker.add(file)
-                        newTurn.sentFiles[relativePath] = FileStateRecord(level, currentHash)
-                        return@readAction null
-                    }
-                    newTurn.sentFiles[relativePath] = FileStateRecord(level, currentHash)
-
+                    val dirHash = fastHash ?: "EMPTY_DIR"
+                    newTurn.sentFiles[relativePath] = FileStateRecord(level, dirHash)
                     return@readAction "### \uD83D\uDCC1 `$relativePath/` (Empty Directory)\n*(This directory is empty)*\n"
                 }
 
                 val extension = file.extension?.lowercase() ?: ""
-                val isTextFile = ContextCapabilityUtil.textExtensions.contains(extension) || !file.fileType.isBinary
 
-                if (!isTextFile) {
+                if (!isText) {
+                    val binaryHash = fastHash ?: getFileHash(project, contextState, file, level)
+                    newTurn.sentFiles[relativePath] = FileStateRecord(level, binaryHash)
                     val mime = getMimeType(extension)
-                    val currentHash = getFileHash(project, contextState, file, level)
-                    val previousRecord = currentCache[relativePath]
 
-                    if (previousRecord != null && previousRecord.level == level && previousRecord.hash == currentHash) {
-                        dedupedFilesTracker.add(file)
-                        newTurn.sentFiles[relativePath] = FileStateRecord(level, currentHash)
-                        return@readAction null
-                    }
-                    newTurn.sentFiles[relativePath] = FileStateRecord(level, currentHash)
-
-                    if (level == ContextLevel.COMPLETE) {
+                    return@readAction if (level == ContextLevel.COMPLETE) {
                         try {
                             if (mime != "application/octet-stream") {
                                 val bytes = file.contentsToByteArray()
@@ -185,50 +199,32 @@ object PayloadGenerator {
                             "### 📦 `$relativePath` (Binary File)\n"
                         }
                     }
-                } else {
-                    var contentToAppend: String?
-                    var isNonCodeSkeleton = false
-                    try {
-                        val cachedHash = contextState.getCachedHash(file, level)
-                        val previousRecord = currentCache[relativePath]
+                }
 
-                        if (cachedHash != null && previousRecord != null && previousRecord.level == level && previousRecord.hash == cachedHash) {
-                            dedupedFilesTracker.add(file)
-                            newTurn.sentFiles[relativePath] = FileStateRecord(level, cachedHash)
-                            return@readAction null
-                        }
+                try {
+                    val extractedText = extractTextContent(project, file, level)
+                    val currentHash = fastHash ?: contextState.cacheHash(
+                        file,
+                        level,
+                        contextState.calculateHash(extractedText ?: "OMITTED_NON_CODE_SKELETON")
+                    )
+                    newTurn.sentFiles[relativePath] = FileStateRecord(level, currentHash)
 
-                        val extractedText = extractTextContent(project, file, level)
-                        if (level != ContextLevel.COMPLETE && extractedText == null) {
-                            isNonCodeSkeleton = true
-                        }
-
-                        val currentHash = cachedHash ?: contextState.cacheHash(
-                            file,
-                            level,
-                            contextState.calculateHash(extractedText ?: "OMITTED_NON_CODE_SKELETON")
-                        )
-
-                        if (previousRecord != null && previousRecord.level == level && previousRecord.hash == currentHash) {
-                            dedupedFilesTracker.add(file)
-                            newTurn.sentFiles[relativePath] = FileStateRecord(level, currentHash)
-                            return@readAction null
-                        } else {
-                            newTurn.sentFiles[relativePath] = FileStateRecord(level, currentHash)
-                            contentToAppend = extractedText
-                        }
-                    } catch (e: Exception) {
-                        contentToAppend = "// Error reading file: ${e.message}"
+                    if (previousRecord?.level == level && previousRecord.hash == currentHash) {
+                        return@readAction null
                     }
 
-                    if (isNonCodeSkeleton) {
+                    if (level != ContextLevel.COMPLETE && extractedText == null) {
                         "### \uD83D\uDCC4 `$relativePath` (Skeleton)\n*(File exists, contents omitted in Skeleton mode)*\n"
-                    } else if (contentToAppend != null) {
+                    } else if (extractedText != null) {
                         val levelTag = if (level == ContextLevel.COMPLETE) "" else " (Skeleton)"
-                        "### \uD83D\uDCC4 `$relativePath`$levelTag\n```${getMarkdownLang(extension)}\n$contentToAppend\n```\n"
+                        "### \uD83D\uDCC4 `$relativePath`$levelTag\n```${getMarkdownLang(extension)}\n$extractedText\n```\n"
                     } else {
                         null
                     }
+                } catch (e: Exception) {
+                    val levelTag = if (level == ContextLevel.COMPLETE) "" else " (Skeleton)"
+                    "### \uD83D\uDCC4 `$relativePath`$levelTag\n```${getMarkdownLang(extension)}\n// Error reading file: ${e.message}\n```\n"
                 }
             }
 
@@ -277,8 +273,7 @@ object PayloadGenerator {
         )
         return PayloadGenerationResult(
             payload = payload,
-            turn = newTurn,
-            dedupedFiles = dedupedFilesTracker
+            turn = newTurn
         )
     }
 

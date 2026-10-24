@@ -11,7 +11,6 @@ import com.intellij.openapi.progress.ProgressManager
 import com.intellij.openapi.project.Project
 import com.intellij.openapi.project.guessProjectDir
 import com.intellij.openapi.vcs.changes.ChangeListManager
-import com.intellij.openapi.vfs.VfsUtilCore
 import com.intellij.openapi.vfs.VirtualFile
 import com.intellij.psi.PsiElement
 import com.intellij.psi.PsiManager
@@ -186,24 +185,7 @@ object ContextSuggestionEngine {
                 if (currentLevel == maxLevel) return@readAction false
 
                 // SMART OMISSION: Check if the AI already has the max level in its memory
-                var isMaxLevelCached = false
-                if (projectDir != null) {
-                    val relativePath = VfsUtilCore.getRelativePath(file, projectDir) ?: file.path
-                    val cachedRecord = dedupCache[relativePath]
-
-                    if (cachedRecord != null && cachedRecord.level == maxLevel) {
-                        try {
-                            val currentHash = PayloadGenerator.getFileHash(project, contextState, file, maxLevel)
-                            if (currentHash == cachedRecord.hash) {
-                                isMaxLevelCached = true
-                            }
-                        } catch (e: Exception) {
-                            // Safely ignore
-                        }
-                    }
-                }
-
-                !isMaxLevelCached
+                !PayloadGenerator.isFileDeduped(project, projectDir, contextState, file, maxLevel, dedupCache)
             }
 
             if (shouldInclude) {
