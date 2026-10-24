@@ -18,6 +18,7 @@ This document contains dense, factual observations regarding the native Google A
   - *Conditional UI:* Controls such as the "Thinking Level" dropdown mount and unmount asynchronously based on the active model's reasoning capabilities.
   - *System Instructions:* Managed via dialog overlays (`[data-test-system-instructions-card]`), which persist named instruction profiles directly in client storage.
 - **Generation & Artifacts:**
+  - *Run / Stop Lifecycle:* The primary submission button (`ms-run-button button`) mutates in-place during active generation to display a `.spin` (`progress_activity`) indicator and a `Stop` label, reverting once streaming finishes, errors, or is aborted.
   - *Thinking:* Submissions display an active progress state. If the model engages in non-trivial dynamic deliberation, an expandable "Thoughts" accordion is mounted; otherwise, the final text renders directly without a thought container.
   - *Extraction:* Full-turn extraction is housed inside the turn's overflow menu (`ms-chat-turn-options`), which provides distinct "Copy as text" (`.copy-rendered-button`) and "Copy as markdown" (`.copy-markdown-button`) actions.
   - *Function Calls:* Native tool invocations render interactive `<ms-function-call-chunk>` blocks within the generation stream.
