@@ -9,8 +9,10 @@ import com.intellij.openapi.progress.ProgressManager
 import com.intellij.openapi.project.Project
 import com.intellij.openapi.vfs.VirtualFile
 import com.intellij.ui.treeStructure.Tree
+import com.intellij.util.ui.tree.TreeUtil
 import java.util.concurrent.ConcurrentHashMap
 import javax.swing.tree.DefaultMutableTreeNode
+import javax.swing.tree.DefaultTreeModel
 import javax.swing.tree.TreePath
 
 class ContextTreeManager(private val project: Project, private val contextState: ContextState) {
@@ -120,6 +122,10 @@ class ContextTreeManager(private val project: Project, private val contextState:
         ProgressManager.checkCanceled()
         if (FileFilterUtil.isIgnored(project, dir)) return null
 
+        fun passesSelection(file: VirtualFile): Boolean {
+            return !showSelectedOnly || contextState.getLevel(file) != ContextLevel.NONE || allowedLeaves != null
+        }
+
         val children = dir.children
             .filterNot { FileFilterUtil.isIgnored(project, it) }
             .sortedWith(compareBy({ !it.isDirectory }, { it.name }))
@@ -136,12 +142,7 @@ class ContextTreeManager(private val project: Project, private val contextState:
             } else {
                 if (allowedLeaves != null && !allowedLeaves.contains(child)) continue
 
-                val level = contextState.getLevel(child)
-                val isSelected = level != ContextLevel.NONE
-
-                val passesSelection = !showSelectedOnly || isSelected || allowedLeaves != null
-
-                if (passesSelection) {
+                if (passesSelection(child)) {
                     val maxLevel = ContextCapabilityUtil.getMaxLevel(child)
                     val icon = child.fileType.icon ?: AllIcons.FileTypes.Any_type
                     validChildNodes.add(
@@ -161,12 +162,7 @@ class ContextTreeManager(private val project: Project, private val contextState:
         }
 
         if (validChildNodes.isEmpty()) {
-            val dirLevel = contextState.getLevel(dir)
-            val isSelected = dirLevel != ContextLevel.NONE
-            val passesSelection = !showSelectedOnly || isSelected || allowedLeaves != null
-
-            if (!passesSelection) return null
-            if (children.isNotEmpty()) return null
+            if (!passesSelection(dir) || children.isNotEmpty()) return null
         }
 
         // Bottom-up compaction: Merge directories if they contain exactly 1 valid directory child
@@ -197,10 +193,53 @@ class ContextTreeManager(private val project: Project, private val contextState:
         return node
     }
 
-    /**
-     * Captures the absolute paths of all currently expanded folders in the tree.
-     */
-    fun getExpandedFilePaths(tree: Tree): Set<String> {
+    fun updateTreeModel(
+        tree: Tree,
+        newRoot: DefaultMutableTreeNode,
+        expandAllByDefault: Boolean = false
+    ) {
+        val expandedPaths = getExpandedFilePaths(tree)
+        val selectedPaths = getSelectedFilePaths(tree)
+
+        tree.model = DefaultTreeModel(newRoot)
+
+        val pathsToSelect = mutableListOf<TreePath>()
+
+        fun traverse(node: DefaultMutableTreeNode, path: TreePath) {
+            val nodeData = node.userObject as? NodeData
+            if (nodeData != null) {
+                val pathStr = nodeData.file?.path ?: nodeData.displayName
+                if (expandedPaths.contains(pathStr)) {
+                    tree.expandPath(path)
+                }
+                if (selectedPaths.contains(pathStr)) {
+                    pathsToSelect.add(path)
+                }
+            }
+            for (i in 0 until node.childCount) {
+                val child = node.getChildAt(i) as? DefaultMutableTreeNode ?: continue
+                traverse(child, path.pathByAddingChild(child))
+            }
+        }
+
+        if (expandedPaths.isNotEmpty() || selectedPaths.isNotEmpty()) {
+            traverse(newRoot, TreePath(newRoot))
+        }
+
+        if (expandedPaths.isEmpty()) {
+            if (expandAllByDefault) {
+                TreeUtil.expandAll(tree)
+            } else if (tree.rowCount > 0) {
+                tree.expandRow(0)
+            }
+        }
+
+        if (pathsToSelect.isNotEmpty()) {
+            tree.selectionPaths = pathsToSelect.toTypedArray()
+        }
+    }
+
+    private fun getExpandedFilePaths(tree: Tree): Set<String> {
         val expanded = mutableSetOf<String>()
         for (i in 0 until tree.rowCount) {
             if (tree.isExpanded(i)) {
@@ -208,77 +247,21 @@ class ContextTreeManager(private val project: Project, private val contextState:
                 val node = path.lastPathComponent as? DefaultMutableTreeNode
                 val nodeData = node?.userObject as? NodeData
                 if (nodeData != null) {
-                    val pathStr = nodeData.file?.path ?: nodeData.displayName
-                    expanded.add(pathStr)
+                    expanded.add(nodeData.file?.path ?: nodeData.displayName)
                 }
             }
         }
         return expanded
     }
 
-    /**
-     * Re-expands folders in the new model based on the captured paths.
-     */
-    fun restoreExpandedFilePaths(tree: Tree, expandedFiles: Set<String>) {
-        val root = tree.model.root as? DefaultMutableTreeNode ?: return
-
-        fun traverseAndExpand(node: DefaultMutableTreeNode, path: TreePath) {
-            val nodeData = node.userObject as? NodeData
-            if (nodeData != null) {
-                val pathStr = nodeData.file?.path ?: nodeData.displayName
-                if (expandedFiles.contains(pathStr)) {
-                    tree.expandPath(path)
-                }
-            }
-            for (i in 0 until node.childCount) {
-                val child = node.getChildAt(i) as? DefaultMutableTreeNode ?: continue
-                traverseAndExpand(child, path.pathByAddingChild(child))
-            }
-        }
-
-        traverseAndExpand(root, TreePath(root))
-    }
-
-    /**
-     * Captures the paths of all currently selected nodes in the tree.
-     */
-    fun getSelectedFilePaths(tree: Tree): Set<String> {
+    private fun getSelectedFilePaths(tree: Tree): Set<String> {
         val selected = mutableSetOf<String>()
         val paths = tree.selectionPaths ?: return selected
         for (path in paths) {
             val node = path.lastPathComponent as? DefaultMutableTreeNode ?: continue
             val nodeData = node.userObject as? NodeData ?: continue
-            val pathStr = nodeData.file?.path ?: nodeData.displayName
-            selected.add(pathStr)
+            selected.add(nodeData.file?.path ?: nodeData.displayName)
         }
         return selected
-    }
-
-    /**
-     * Restores node selection in the new model based on the captured paths.
-     */
-    fun restoreSelectedFilePaths(tree: Tree, selectedFiles: Set<String>) {
-        if (selectedFiles.isEmpty()) return
-        val root = tree.model.root as? DefaultMutableTreeNode ?: return
-        val pathsToSelect = mutableListOf<TreePath>()
-
-        fun traverseAndCollect(node: DefaultMutableTreeNode, path: TreePath) {
-            val nodeData = node.userObject as? NodeData
-            if (nodeData != null) {
-                val pathStr = nodeData.file?.path ?: nodeData.displayName
-                if (selectedFiles.contains(pathStr)) {
-                    pathsToSelect.add(path)
-                }
-            }
-            for (i in 0 until node.childCount) {
-                val child = node.getChildAt(i) as? DefaultMutableTreeNode ?: continue
-                traverseAndCollect(child, path.pathByAddingChild(child))
-            }
-        }
-
-        traverseAndCollect(root, TreePath(root))
-        if (pathsToSelect.isNotEmpty()) {
-            tree.selectionPaths = pathsToSelect.toTypedArray()
-        }
     }
 }

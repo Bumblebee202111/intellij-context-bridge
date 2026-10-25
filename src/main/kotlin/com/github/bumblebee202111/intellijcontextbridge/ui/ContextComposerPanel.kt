@@ -5,19 +5,13 @@ import com.github.bumblebee202111.intellijcontextbridge.commands.CommandRegistry
 import com.github.bumblebee202111.intellijcontextbridge.commands.SlashCommand
 import com.github.bumblebee202111.intellijcontextbridge.commands.SyncCommand
 import com.github.bumblebee202111.intellijcontextbridge.context.core.ContextSuggestionEngine
-import com.github.bumblebee202111.intellijcontextbridge.context.core.PayloadGenerationResult
 import com.github.bumblebee202111.intellijcontextbridge.context.core.PayloadGenerator
 import com.github.bumblebee202111.intellijcontextbridge.server.BrowserTab
 import com.github.bumblebee202111.intellijcontextbridge.server.ContextBridgeServer
 import com.github.bumblebee202111.intellijcontextbridge.state.ContextLevel
 import com.github.bumblebee202111.intellijcontextbridge.state.ContextState
 import com.github.bumblebee202111.intellijcontextbridge.state.IntentMode
-import com.github.bumblebee202111.intellijcontextbridge.utils.FileFilterUtil
 import com.intellij.codeInsight.AutoPopupController
-import com.intellij.codeInsight.completion.CompletionParameters
-import com.intellij.codeInsight.completion.PrefixMatcher
-import com.intellij.codeInsight.lookup.CharFilter
-import com.intellij.codeInsight.lookup.LookupElementBuilder
 import com.intellij.icons.AllIcons
 import com.intellij.openapi.Disposable
 import com.intellij.openapi.actionSystem.ActionManager
@@ -43,13 +37,11 @@ import com.intellij.openapi.project.Project
 import com.intellij.openapi.project.guessProjectDir
 import com.intellij.openapi.ui.ComboBox
 import com.intellij.openapi.ui.Messages
-import com.intellij.openapi.vfs.VfsUtilCore
 import com.intellij.openapi.vfs.VirtualFile
 import com.intellij.ui.IdeBorderFactory
 import com.intellij.ui.JBSplitter
 import com.intellij.ui.SimpleTextAttributes
 import com.intellij.ui.TextFieldWithAutoCompletion
-import com.intellij.ui.TextFieldWithAutoCompletionListProvider
 import com.intellij.ui.TreeSpeedSearch
 import com.intellij.ui.components.JBRadioButton
 import com.intellij.ui.components.JBScrollPane
@@ -57,7 +49,6 @@ import com.intellij.ui.treeStructure.Tree
 import com.intellij.util.concurrency.AppExecutorUtil
 import com.intellij.util.ui.AsyncProcessIcon
 import com.intellij.util.ui.JBUI
-import com.intellij.util.ui.tree.TreeUtil
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.launch
 import kotlinx.serialization.encodeToString
@@ -66,8 +57,8 @@ import java.awt.BorderLayout
 import java.awt.Dimension
 import java.awt.FlowLayout
 import java.awt.datatransfer.StringSelection
-import java.awt.event.ItemEvent
 import java.awt.event.InputEvent
+import java.awt.event.ItemEvent
 import java.awt.event.KeyAdapter
 import java.awt.event.KeyEvent
 import java.awt.event.MouseAdapter
@@ -77,65 +68,6 @@ import java.util.Date
 import javax.swing.*
 import javax.swing.tree.DefaultMutableTreeNode
 import javax.swing.tree.DefaultTreeModel
-import kotlin.plus
-
-private sealed interface PromptCompletionItem : Comparable<PromptCompletionItem> {
-    data class Command(val slashCommand: SlashCommand) : PromptCompletionItem {
-        override fun compareTo(other: PromptCompletionItem): Int = when (other) {
-            is Command -> slashCommand.name.compareTo(other.slashCommand.name)
-            is FileMention -> -1
-        }
-    }
-
-    data class FileMention(
-        val file: VirtualFile,
-        val relativePath: String,
-        val fileName: String,
-        val isDirectory: Boolean,
-        val icon: Icon
-    ) : PromptCompletionItem {
-        override fun compareTo(other: PromptCompletionItem): Int = when (other) {
-            is Command -> 1
-            is FileMention -> relativePath.compareTo(other.relativePath)
-        }
-    }
-}
-
-private class PromptPrefixMatcher(prefix: String) : PrefixMatcher(prefix) {
-    override fun prefixMatches(name: String): Boolean {
-        return when {
-            myPrefix.startsWith("@") -> {
-                if (!name.startsWith("@")) return false
-                val query = myPrefix.removePrefix("@")
-                val target = name.removePrefix("@")
-                query.isEmpty() || target.contains(query, ignoreCase = true)
-            }
-            myPrefix.startsWith("/") -> {
-                name.startsWith("/") && name.startsWith(myPrefix, ignoreCase = true)
-            }
-            else -> false
-        }
-    }
-
-    override fun isStartMatch(name: String): Boolean {
-        return when {
-            myPrefix.startsWith("@") -> {
-                if (!name.startsWith("@")) return false
-                val query = myPrefix.removePrefix("@")
-                val target = name.removePrefix("@")
-                query.isEmpty() || target.startsWith(query, ignoreCase = true)
-            }
-            myPrefix.startsWith("/") -> {
-                name.startsWith("/") && name.startsWith(myPrefix, ignoreCase = true)
-            }
-            else -> false
-        }
-    }
-
-    override fun cloneWithPrefix(prefix: String): PrefixMatcher {
-        return PromptPrefixMatcher(prefix)
-    }
-}
 
 class ContextComposerPanel(private val project: Project) : Disposable {
     private val contextState = project.service<ContextState>()
@@ -151,9 +83,6 @@ class ContextComposerPanel(private val project: Project) : Disposable {
     private var isConfigLoaded = false
 
     private var pendingAiRequests = emptySet<VirtualFile>()
-
-    @Volatile
-    private var cachedFileMentionItems: List<PromptCompletionItem.FileMention> = emptyList()
 
     @Volatile
     private var vfsStructureDirty = true
@@ -208,112 +137,11 @@ class ContextComposerPanel(private val project: Project) : Disposable {
         isVisible = false
     }
 
-    private val promptCompletionProvider =
-        object : TextFieldWithAutoCompletionListProvider<PromptCompletionItem>(emptyList()) {
-            override fun acceptChar(c: Char): CharFilter.Result? {
-                return if (c.isLetterOrDigit() || c == '/' || c == '.' || c == '-' || c == '_' || c == '@') {
-                    CharFilter.Result.ADD_TO_PREFIX
-                } else {
-                    CharFilter.Result.HIDE_LOOKUP
-                }
-            }
-
-            override fun createPrefixMatcher(prefix: String): PrefixMatcher {
-                return PromptPrefixMatcher(prefix)
-            }
-
-            override fun getItems(
-                prefix: String?,
-                cached: Boolean,
-                parameters: CompletionParameters?
-            ): Collection<PromptCompletionItem> {
-                if (prefix == null) return emptyList()
-                return when {
-                    prefix.startsWith("@") -> {
-                        super.getItems(prefix, cached, parameters)
-                            .filterIsInstance<PromptCompletionItem.FileMention>()
-                    }
-                    prefix.startsWith("/") -> {
-                        val isValidPos = if (parameters != null) {
-                            val docText = parameters.originalFile.text
-                            val tokenStart = (parameters.offset - prefix.length).coerceAtLeast(0)
-                            project.service<CommandRegistryService>()
-                                .isAtCommandPosition(docText.substring(0, tokenStart))
-                        } else {
-                            true
-                        }
-                        if (isValidPos) {
-                            super.getItems(prefix, cached, parameters)
-                                .filterIsInstance<PromptCompletionItem.Command>()
-                        } else {
-                            emptyList()
-                        }
-                    }
-                    else -> emptyList()
-                }
-            }
-
-            override fun getLookupString(item: PromptCompletionItem): String = when (item) {
-                is PromptCompletionItem.Command -> "/${item.slashCommand.name}"
-                is PromptCompletionItem.FileMention -> "@${item.fileName}"
-            }
-
-            override fun getTailText(item: PromptCompletionItem): String = when (item) {
-                is PromptCompletionItem.Command -> " - ${item.slashCommand.description}"
-                is PromptCompletionItem.FileMention -> {
-                    if (item.relativePath.contains('/')) {
-                        " (${item.relativePath.substringBeforeLast('/')})"
-                    } else {
-                        ""
-                    }
-                }
-            }
-
-            override fun getTypeText(item: PromptCompletionItem): String = when (item) {
-                is PromptCompletionItem.Command -> item.slashCommand.mode.name
-                is PromptCompletionItem.FileMention -> if (item.isDirectory) "Folder" else ""
-            }
-
-            override fun compare(item1: PromptCompletionItem, item2: PromptCompletionItem): Int =
-                item1.compareTo(item2)
-
-            override fun createLookupBuilder(item: PromptCompletionItem): LookupElementBuilder {
-                return when (item) {
-                    is PromptCompletionItem.Command -> {
-                        super.createLookupBuilder(item)
-                            .withIcon(AllIcons.Nodes.Function)
-                            .withInsertHandler { context, _ ->
-                                val start = context.startOffset
-                                val end = context.tailOffset
-                                val replacement = "/${item.slashCommand.name} "
-                                context.document.replaceString(start, end, replacement)
-                                context.editor.caretModel.moveToOffset(start + replacement.length)
-
-                                ApplicationManager.getApplication().invokeLater {
-                                    applyCommandContext(item.slashCommand)
-                                }
-                            }
-                    }
-
-                    is PromptCompletionItem.FileMention -> {
-                        super.createLookupBuilder(item)
-                            .withLookupString("@${item.relativePath}")
-                            .withIcon(item.icon)
-                            .withInsertHandler { context, _ ->
-                                val start = context.startOffset
-                                val end = context.tailOffset
-                                val replacement = "@${item.relativePath} "
-                                context.document.replaceString(start, end, replacement)
-                                context.editor.caretModel.moveToOffset(start + replacement.length)
-
-                                ApplicationManager.getApplication().invokeLater {
-                                    applyFileMentionContext(item.file)
-                                }
-                            }
-                    }
-                }
-            }
-        }
+    private val promptCompletionProvider = PromptCompletionProvider(
+        project = project,
+        onCommandSelected = ::applyCommandContext,
+        onFileMentionSelected = ::applyFileMentionContext
+    )
 
     private val promptArea = TextFieldWithAutoCompletion(
         project,
@@ -358,23 +186,9 @@ class ContextComposerPanel(private val project: Project) : Disposable {
             refreshUi()
         }
 
-        tree.cellRenderer =
-            ContextTreeCellRenderer(treeManager::getComputedLevel) { file -> lastDedupedFiles.contains(file) }
-        suggestionTree.cellRenderer = ContextTreeCellRenderer(treeManager::getComputedLevel) { false }
-        requestedTree.cellRenderer = ContextTreeCellRenderer(treeManager::getComputedLevel) { false }
-
-        tree.addMouseListener(createTreeMouseListener(tree))
-        tree.addKeyListener(createTreeKeyListener(tree))
-
-        suggestionTree.addMouseListener(createTreeMouseListener(suggestionTree))
-        suggestionTree.addKeyListener(createTreeKeyListener(suggestionTree))
-
-        requestedTree.addMouseListener(createTreeMouseListener(requestedTree))
-        requestedTree.addKeyListener(createTreeKeyListener(requestedTree))
-
-        TreeSpeedSearch(tree)
-        TreeSpeedSearch(suggestionTree)
-        TreeSpeedSearch(requestedTree)
+        configureTree(tree) { file -> lastDedupedFiles.contains(file) }
+        configureTree(suggestionTree) { false }
+        configureTree(requestedTree) { false }
 
         val mainTreeContainer = JPanel(BorderLayout())
         mainTreeContainer.add(setupTopToolbar(), BorderLayout.NORTH)
@@ -401,88 +215,96 @@ class ContextComposerPanel(private val project: Project) : Disposable {
         content.add(splitPane, BorderLayout.CENTER)
 
         tabComboBox.addItemListener { event ->
-            if (isUpdatingTabs) return@addItemListener
-            if (event.stateChange == ItemEvent.SELECTED) {
+            if (!isUpdatingTabs && event.stateChange == ItemEvent.SELECTED) {
                 val selected = event.item as? BrowserTab ?: return@addItemListener
                 changeBinding(selected.id, selected.pathname, selected.title)
             }
         }
 
-        val updateTabsUI = { tabs: List<BrowserTab> ->
-            SwingUtilities.invokeLater {
-                isUpdatingTabs = true
-                try {
-                    val previousSelectionId = contextState.activeTabId
-                    tabComboBox.removeAllItems()
-                    tabComboBox.addItem(NONE_TAB)
-
-                    var matchedItem: BrowserTab? = null
-                    tabs.forEach { tab ->
-                        tabComboBox.addItem(tab)
-                        if (tab.id == previousSelectionId) {
-                            matchedItem = tab
-                        }
-                    }
-
-                    if (matchedItem != null) {
-                        tabComboBox.selectedItem = matchedItem
-                    } else if (contextState.activeTabId != null) {
-                        val state = contextState.getState()
-                        val disconnectedItem = BrowserTab(contextState.activeTabId!!, contextState.activeTabPathname ?: "", "${state.boundTabTitle} (Disconnected)")
-                        tabComboBox.addItem(disconnectedItem)
-                        tabComboBox.selectedItem = disconnectedItem
-                    } else {
-                        tabComboBox.selectedItem = NONE_TAB
-                    }
-                    updateSendButtonState()
-                } finally {
-                    isUpdatingTabs = false
-                }
-            }
-        }
-
-        server.addTabsListener(this) { tabs ->
-            val state = contextState.getState()
-            // Rule 3: Browser Refresh Recovery
-            if (contextState.activeTabId != null && tabs.none { it.id == contextState.activeTabId }) {
-                val match = tabs.find { it.title == state.boundTabTitle }
-                if (match != null) {
-                    changeBinding(match.id, match.pathname, match.title)
-                }
-            }
-            updateTabsUI(tabs)
-        }
-
+        server.addTabsListener(this, ::handleTabsChanged)
         updateTabsUI(server.getActiveTabs())
-
-        server.addHandshakeListener(this) { tab ->
-            val state = contextState.getState()
-
-            if (tab.title == state.boundTabTitle) {
-                // Rule 1: Trust the title. Silently update transient ID/Pathname if they changed.
-                if (tab.id != contextState.activeTabId || tab.pathname != contextState.activeTabPathname) {
-                    changeBinding(tab.id, tab.pathname, tab.title)
-                    SwingUtilities.invokeLater { updateTabsUI(server.getActiveTabs()) }
-                }
-            } else if (tab.id == contextState.activeTabId) {
-                if (tab.pathname == contextState.activeTabPathname) {
-                    // Rule 2: Rename / First Gen (Pathname match, title changed)
-                    changeBinding(tab.id, tab.pathname, tab.title)
-                    SwingUtilities.invokeLater { updateTabsUI(server.getActiveTabs()) }
-                } else {
-                    // Rule 3: Navigation away (Pathname changed, title changed)
-                    changeBinding(null, "", "")
-                    SwingUtilities.invokeLater { updateTabsUI(server.getActiveTabs()) }
-                }
-            }
-
-            val commands = project.service<CommandRegistryService>().getCommands()
-            val dtos = commands.map { SyncCommand(it.name, it.mode.name, it.promptBody) }
-            val json = Json.encodeToString(dtos)
-            server.sendToTab(tab.id, "[COMMANDS]$json")
-        }
+        server.addHandshakeListener(this, ::handleTabHandshake)
 
         refreshUi()
+    }
+
+    private fun configureTree(targetTree: Tree, isCached: (VirtualFile) -> Boolean) {
+        targetTree.cellRenderer = ContextTreeCellRenderer(treeManager::getComputedLevel, isCached)
+        targetTree.addMouseListener(createTreeMouseListener(targetTree))
+        targetTree.addKeyListener(createTreeKeyListener(targetTree))
+        TreeSpeedSearch(targetTree)
+    }
+
+    private fun updateTabsUI(tabs: List<BrowserTab>) {
+        SwingUtilities.invokeLater {
+            isUpdatingTabs = true
+            try {
+                val previousSelectionId = contextState.activeTabId
+                tabComboBox.removeAllItems()
+                tabComboBox.addItem(NONE_TAB)
+
+                var matchedItem: BrowserTab? = null
+                tabs.forEach { tab ->
+                    tabComboBox.addItem(tab)
+                    if (tab.id == previousSelectionId) {
+                        matchedItem = tab
+                    }
+                }
+
+                if (matchedItem != null) {
+                    tabComboBox.selectedItem = matchedItem
+                } else if (contextState.activeTabId != null) {
+                    val state = contextState.getState()
+                    val disconnectedItem = BrowserTab(
+                        contextState.activeTabId!!,
+                        contextState.activeTabPathname ?: "",
+                        "${state.boundTabTitle} (Disconnected)"
+                    )
+                    tabComboBox.addItem(disconnectedItem)
+                    tabComboBox.selectedItem = disconnectedItem
+                } else {
+                    tabComboBox.selectedItem = NONE_TAB
+                }
+                updateSendButtonState()
+            } finally {
+                isUpdatingTabs = false
+            }
+        }
+    }
+
+    private fun handleTabsChanged(tabs: List<BrowserTab>) {
+        val state = contextState.getState()
+        if (contextState.activeTabId != null && tabs.none { it.id == contextState.activeTabId }) {
+            val match = tabs.find { state.boundTabTitle.isNotEmpty() && it.title == state.boundTabTitle }
+            if (match != null) {
+                changeBinding(match.id, match.pathname, match.title)
+            }
+        }
+        updateTabsUI(tabs)
+    }
+
+    private fun handleTabHandshake(tab: BrowserTab) {
+        val state = contextState.getState()
+
+        if (state.boundTabTitle.isNotEmpty() && tab.title == state.boundTabTitle) {
+            if (tab.id != contextState.activeTabId || tab.pathname != contextState.activeTabPathname) {
+                changeBinding(tab.id, tab.pathname, tab.title)
+                updateTabsUI(server.getActiveTabs())
+            }
+        } else if (tab.id == contextState.activeTabId) {
+            if (tab.pathname == contextState.activeTabPathname) {
+                changeBinding(tab.id, tab.pathname, tab.title)
+                updateTabsUI(server.getActiveTabs())
+            } else {
+                changeBinding(null, "", "")
+                updateTabsUI(server.getActiveTabs())
+            }
+        }
+
+        val commands = project.service<CommandRegistryService>().getCommands()
+        val dtos = commands.map { SyncCommand(it.name, it.mode.name, it.promptBody) }
+        val json = Json.encodeToString(dtos)
+        server.sendToTab(tab.id, "[COMMANDS]$json")
     }
 
     private fun changeBinding(newId: String?, newPathname: String, newTitle: String) {
@@ -972,51 +794,29 @@ class ContextComposerPanel(private val project: Project) : Disposable {
         }
     }
 
-    private fun updateCompletionItems() {
-        val commandItems = project.service<CommandRegistryService>()
-            .getCommands()
-            .map { PromptCompletionItem.Command(it) }
-        promptCompletionProvider.setItems(commandItems + cachedFileMentionItems)
-    }
-
-    @Suppress("UnsafeVfsRecursion")
-    private fun collectFileMentionItems(projectDir: VirtualFile): List<PromptCompletionItem.FileMention> {
-        val result = mutableListOf<PromptCompletionItem.FileMention>()
-
-        fun visit(dir: VirtualFile) {
-            ProgressManager.checkCanceled()
-            for (child in dir.children) {
-                ProgressManager.checkCanceled()
-                if (FileFilterUtil.isIgnored(project, child)) continue
-                val relativePath = VfsUtilCore.getRelativePath(child, projectDir) ?: continue
-                val isDir = child.isDirectory
-                val icon = if (isDir) {
-                    AllIcons.Nodes.Folder
-                } else {
-                    child.fileType.icon ?: AllIcons.FileTypes.Any_type
-                }
-                result.add(
-                    PromptCompletionItem.FileMention(
-                        file = child,
-                        relativePath = relativePath,
-                        fileName = child.name,
-                        isDirectory = isDir,
-                        icon = icon
-                    )
-                )
-                if (isDir) {
-                    visit(child)
-                }
-            }
-        }
-
-        visit(projectDir)
-        return result
-    }
-
     fun refreshUi() {
-        updateCompletionItems()
+        promptCompletionProvider.refreshItems()
         uiRefreshTimer.restart()
+    }
+
+    private fun updateStagingTree(
+        targetTree: Tree,
+        container: JPanel,
+        rebuilt: Boolean,
+        rootNode: DefaultMutableTreeNode?,
+        emptyPlaceholder: String
+    ) {
+        if (!rebuilt) {
+            targetTree.repaint()
+            return
+        }
+        if (rootNode != null) {
+            container.isVisible = true
+            treeManager.updateTreeModel(targetTree, rootNode, expandAllByDefault = true)
+        } else {
+            targetTree.model = DefaultTreeModel(DefaultMutableTreeNode(emptyPlaceholder))
+            container.isVisible = false
+        }
     }
 
     private fun refreshTree() {
@@ -1060,7 +860,7 @@ class ContextComposerPanel(private val project: Project) : Disposable {
             val fileMentionItems = if (shouldRefreshVfs) {
                 readAction {
                     if (projectDir != null) {
-                        collectFileMentionItems(projectDir)
+                        promptCompletionProvider.collectFileMentionItems(projectDir)
                     } else {
                         emptyList()
                     }
@@ -1091,9 +891,9 @@ class ContextComposerPanel(private val project: Project) : Disposable {
                 readAction {
                     if (projectDir != null && suggestions.isNotEmpty()) {
                         treeManager.buildFileTree(projectDir, false, allowedLeaves = suggestions, isRoot = true)
-                            ?: DefaultMutableTreeNode("No Suggestions")
+                            ?.takeIf { it.childCount > 0 }
                     } else {
-                        DefaultMutableTreeNode("No Suggestions")
+                        null
                     }
                 }
             } else {
@@ -1105,26 +905,25 @@ class ContextComposerPanel(private val project: Project) : Disposable {
             val requestedRootNode = if (shouldRebuildRequestedTree) {
                 readAction {
                     if (projectDir != null && currentRequests.isNotEmpty()) {
-                        val node =
-                            treeManager.buildFileTree(projectDir, false, allowedLeaves = currentRequests, isRoot = true)
-                        if (node != null) {
-                            node.userObject = NodeData(
-                                file = null,
-                                displayName = "[AI Requested Files]",
-                                isDirectory = true,
-                                isEmptyDirectory = false,
-                                maxLevel = ContextLevel.COMPLETE,
-                                icon = AllIcons.Nodes.ConfigFolder
-                            )
-                            node
-                        } else null
-                    } else null
+                        treeManager.buildFileTree(projectDir, false, allowedLeaves = currentRequests, isRoot = true)
+                            ?.apply {
+                                userObject = NodeData(
+                                    file = null,
+                                    displayName = "[AI Requested Files]",
+                                    isDirectory = true,
+                                    isEmptyDirectory = false,
+                                    maxLevel = ContextLevel.COMPLETE,
+                                    icon = AllIcons.Nodes.ConfigFolder
+                                )
+                            }
+                    } else {
+                        null
+                    }
                 }
             } else {
                 null
             }
 
-            // Switch to the EDT for UI updates safely
             ApplicationManager.getApplication().invokeLater({
                 if (shouldRefreshVfs) {
                     vfsStructureDirty = false
@@ -1135,56 +934,36 @@ class ContextComposerPanel(private val project: Project) : Disposable {
 
                 lastDedupedFiles = newDedupedFiles
                 if (fileMentionItems != null) {
-                    cachedFileMentionItems = fileMentionItems
-                    updateCompletionItems()
+                    promptCompletionProvider.updateFileMentionItems(fileMentionItems)
                 }
 
                 if (mainRootNode != null) {
-                    val expandedMain = treeManager.getExpandedFilePaths(tree)
-                    val selectedMain = treeManager.getSelectedFilePaths(tree)
-                    tree.model = DefaultTreeModel(mainRootNode)
-                    treeManager.restoreExpandedFilePaths(tree, expandedMain)
-                    if (expandedMain.isEmpty() && tree.rowCount > 0) {
-                        tree.expandRow(0)
-                    }
-                    treeManager.restoreSelectedFilePaths(tree, selectedMain)
+                    treeManager.updateTreeModel(tree, mainRootNode, expandAllByDefault = false)
                 } else {
                     tree.repaint()
                 }
 
-                if (shouldRebuildSuggestionTree && suggestionRootNode != null) {
+                if (shouldRebuildSuggestionTree) {
                     lastSuggestions = suggestions
-                    val expandedSugg = treeManager.getExpandedFilePaths(suggestionTree)
-                    val selectedSugg = treeManager.getSelectedFilePaths(suggestionTree)
-                    suggestionTree.model = DefaultTreeModel(suggestionRootNode)
-                    val hasSuggestions = suggestionRootNode.childCount > 0
-                    suggestionTreeContainer.isVisible = hasSuggestions
-                    if (hasSuggestions) {
-                        treeManager.restoreExpandedFilePaths(suggestionTree, expandedSugg)
-                        if (expandedSugg.isEmpty()) TreeUtil.expandAll(suggestionTree)
-                        treeManager.restoreSelectedFilePaths(suggestionTree, selectedSugg)
-                    }
-                } else {
-                    suggestionTree.repaint()
                 }
+                updateStagingTree(
+                    suggestionTree,
+                    suggestionTreeContainer,
+                    shouldRebuildSuggestionTree,
+                    suggestionRootNode,
+                    "No Suggestions"
+                )
 
                 if (shouldRebuildRequestedTree) {
                     lastRequestedFiles = currentRequests
-                    if (requestedRootNode != null) {
-                        val expandedReq = treeManager.getExpandedFilePaths(requestedTree)
-                        val selectedReq = treeManager.getSelectedFilePaths(requestedTree)
-                        requestedTree.model = DefaultTreeModel(requestedRootNode)
-                        requestedTreeContainer.isVisible = true
-                        treeManager.restoreExpandedFilePaths(requestedTree, expandedReq)
-                        if (expandedReq.isEmpty()) TreeUtil.expandAll(requestedTree)
-                        treeManager.restoreSelectedFilePaths(requestedTree, selectedReq)
-                    } else {
-                        requestedTree.model = DefaultTreeModel(DefaultMutableTreeNode("No pending requests."))
-                        requestedTreeContainer.isVisible = false
-                    }
-                } else {
-                    requestedTree.repaint()
                 }
+                updateStagingTree(
+                    requestedTree,
+                    requestedTreeContainer,
+                    shouldRebuildRequestedTree,
+                    requestedRootNode,
+                    "No pending requests."
+                )
 
             }, ModalityState.nonModal())
         }
