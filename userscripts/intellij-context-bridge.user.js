@@ -96,23 +96,24 @@
         }
     }
 
+    function applyBoundStateToButton(btn) {
+        if (win.__cbIsBound) {
+            btn.textContent = `✨ Send to ${win.__cbProjectName}`;
+            btn.style.color = '#4CAF50';
+            btn.style.borderColor = '#4CAF50';
+            btn.style.opacity = '1';
+            btn.style.pointerEvents = 'auto';
+        } else {
+            btn.textContent = '🚫 IDE Not Bound';
+            btn.style.color = '#757575';
+            btn.style.borderColor = '#757575';
+            btn.style.opacity = '0.7';
+            btn.style.pointerEvents = 'none';
+        }
+    }
+
     function updateUiElements() {
-        const turns = document.querySelectorAll('.cb-send-to-ide-btn');
-        turns.forEach(btn => {
-            if (win.__cbIsBound) {
-                btn.textContent = `✨ Send to ${win.__cbProjectName}`;
-                btn.style.color = '#4CAF50';
-                btn.style.borderColor = '#4CAF50';
-                btn.style.opacity = '1';
-                btn.style.pointerEvents = 'auto';
-            } else {
-                btn.textContent = '🚫 IDE Not Bound';
-                btn.style.color = '#757575';
-                btn.style.borderColor = '#757575';
-                btn.style.opacity = '0.7';
-                btn.style.pointerEvents = 'none';
-            }
-        });
+        document.querySelectorAll('.cb-send-to-ide-btn').forEach(applyBoundStateToButton);
     }
 
     function sendToIde(text) {
@@ -194,8 +195,8 @@
                     if (h1 && h1.textContent.trim()) return h1.textContent.trim();
                     return document.title.replace(' - Google AI Studio', '').trim() || 'New Chat';
                 },
-                async deleteLastTwoTurns() {
-                    for (let i = 0; i < 2; i++) {
+                async deleteLastTwoTurns(count = 2) {
+                    for (let i = 0; i < count; i++) {
                         const turns = document.querySelectorAll('.chat-turn-container');
                         if (turns.length === 0) break;
                         const lastTurn = turns[turns.length - 1];
@@ -265,6 +266,21 @@
                         await new Promise(r => setTimeout(r, 500));
                     }
                 },
+                async setModelByName(modelName) {
+                    if (!modelName || this.getActiveModelName() === modelName) return;
+                    const selectorBtn = document.querySelector('.model-selector-card');
+                    if (!selectorBtn) return;
+
+                    selectorBtn.click();
+                    const panel = await AIStudioDOM.Utils.waitForElement('mat-dialog-container, .mat-mdc-menu-panel, .model-selector-menu', 3000);
+                    if (panel) {
+                        const options = Array.from(document.querySelectorAll('button, mat-option, .mat-mdc-option, [role="menuitem"]'));
+                        const target = options.find(opt => opt.textContent.replace(/\s+/g, ' ').trim().includes(modelName));
+                        if (target) target.click();
+                        else document.body.click();
+                    }
+                    await new Promise(r => setTimeout(r, 800));
+                },
                 async setThinkingLevel(level) {
                     let select = document.querySelector('mat-select[aria-label="Thinking Level"]');
                     let attempts = 0;
@@ -312,6 +328,18 @@
                             toggleBtn.click();
                             await new Promise(r => setTimeout(r, 500));
                         }
+                    }
+                },
+                async applyParameters(settings) {
+                    if (!settings) return;
+                    if (settings.temperature !== undefined && settings.temperature !== null) {
+                        await this.setTemperature(settings.temperature);
+                    }
+                    if (settings.thinkingLevel !== undefined && settings.thinkingLevel !== null) {
+                        await this.setThinkingLevel(settings.thinkingLevel);
+                    }
+                    if (settings.urlContext !== undefined && settings.urlContext !== null) {
+                        await this.setUrlContext(settings.urlContext);
                     }
                 }
             },
@@ -507,15 +535,7 @@
                     this.isProgrammaticUpdate = true;
                     try {
                         await new Promise(r => setTimeout(r, 500));
-                        if (saved.temperature !== undefined && saved.temperature !== null) {
-                            await AIStudioDOM.Controls.setTemperature(saved.temperature);
-                        }
-                        if (saved.thinkingLevel !== undefined && saved.thinkingLevel !== null) {
-                            await AIStudioDOM.Controls.setThinkingLevel(saved.thinkingLevel);
-                        }
-                        if (saved.urlContext !== undefined && saved.urlContext !== null) {
-                            await AIStudioDOM.Controls.setUrlContext(saved.urlContext);
-                        }
+                        await AIStudioDOM.Controls.applyParameters(saved);
                     } finally {
                         this.isProgrammaticUpdate = false;
                     }
@@ -529,32 +549,8 @@
                     if (!this.snapshot) return;
                     this.isProgrammaticUpdate = true;
                     try {
-                        if (this.snapshot.modelName) {
-                            const current = AIStudioDOM.Controls.getActiveModelName();
-                            if (current !== this.snapshot.modelName) {
-                                const selectorBtn = document.querySelector('.model-selector-card');
-                                if (selectorBtn) {
-                                    selectorBtn.click();
-                                    const panel = await AIStudioDOM.Utils.waitForElement('mat-dialog-container, .mat-mdc-menu-panel, .model-selector-menu', 3000);
-                                    if (panel) {
-                                        const options = Array.from(document.querySelectorAll('button, mat-option, .mat-mdc-option, [role="menuitem"]'));
-                                        const target = options.find(opt => opt.textContent.replace(/\s+/g, ' ').trim().includes(this.snapshot.modelName));
-                                        if (target) target.click();
-                                        else document.body.click();
-                                    }
-                                    await new Promise(r => setTimeout(r, 800));
-                                }
-                            }
-                        }
-                        if (this.snapshot.temperature !== undefined && this.snapshot.temperature !== null) {
-                            await AIStudioDOM.Controls.setTemperature(this.snapshot.temperature);
-                        }
-                        if (this.snapshot.thinkingLevel !== undefined && this.snapshot.thinkingLevel !== null) {
-                            await AIStudioDOM.Controls.setThinkingLevel(this.snapshot.thinkingLevel);
-                        }
-                        if (this.snapshot.urlContext !== undefined && this.snapshot.urlContext !== null) {
-                            await AIStudioDOM.Controls.setUrlContext(this.snapshot.urlContext);
-                        }
+                        await AIStudioDOM.Controls.setModelByName(this.snapshot.modelName);
+                        await AIStudioDOM.Controls.applyParameters(this.snapshot);
                     } finally {
                         this.isProgrammaticUpdate = false;
                         this.snapshot = null;
@@ -692,17 +688,14 @@
 
                         const sendBtn = document.createElement('button');
                         sendBtn.className = 'cb-send-to-ide-btn';
-                        sendBtn.textContent = win.__cbIsBound ? `✨ Send to ${win.__cbProjectName}` : '🚫 IDE Not Bound';
                         sendBtn.style.cssText = `
                             background: transparent; border-radius: 16px;
                             padding: 0 12px; margin-left: 8px; font-size: 13px; font-weight: 500; font-family: inherit;
                             cursor: pointer; display: inline-flex; align-items: center; justify-content: center;
                             height: 32px; transition: all 0.2s ease; white-space: nowrap; box-sizing: border-box;
-                            color: ${win.__cbIsBound ? '#4CAF50' : '#757575'};
-                            border: 1px solid ${win.__cbIsBound ? '#4CAF50' : '#757575'};
-                            opacity: ${win.__cbIsBound ? '1' : '0.7'};
-                            pointer-events: ${win.__cbIsBound ? 'auto' : 'none'};
+                            border: 1px solid #757575;
                         `;
+                        applyBoundStateToButton(sendBtn);
 
                         sendBtn.onmouseover = () => {
                             if (win.__cbIsBound) sendBtn.style.background = 'rgba(76, 175, 80, 0.1)';
@@ -716,7 +709,6 @@
                             e.stopPropagation();
                             if (sendBtn.textContent.includes('...')) return;
 
-                            const originalText = sendBtn.textContent;
                             sendBtn.textContent = '⏳ Copying...';
                             sendBtn.style.color = '#FF9800';
                             sendBtn.style.borderColor = '#FF9800';
@@ -734,55 +726,56 @@
                             }
 
                             setTimeout(() => {
-                                sendBtn.textContent = originalText;
-                                sendBtn.style.color = '#4CAF50';
-                                sendBtn.style.borderColor = '#4CAF50';
+                                applyBoundStateToButton(sendBtn);
                             }, 3000);
                         });
 
                         actionBar.appendChild(sendBtn);
                     });
                 },
-                startObservers() {
-                    setInterval(() => this.injectTurnButtons(), 1000);
-                    setInterval(() => this.injectModeToggle(), 1000);
+                startObservers(onNavigationChanged) {
+                    let lastModelName = null;
+                    let initialLoad = true;
+                    let lastTitle = "";
+                    let lastPathname = "";
 
                     setInterval(() => {
                         const sysCard = document.querySelector('[data-test-system-instructions-card]');
-                        let isBridge = false;
-                        if (sysCard) {
-                            const subtitle = sysCard.querySelector('.subtitle');
-                            if (subtitle && subtitle.textContent.includes('expert AI coding assistant')) {
-                                isBridge = true;
-                            }
-                        }
+                        const subtitle = sysCard?.querySelector('.subtitle');
+                        const isBridge = Boolean(subtitle && subtitle.textContent.includes('expert AI coding assistant'));
+
                         if (win.__cbIsBridgeChat !== isBridge) {
                             win.__cbIsBridgeChat = isBridge;
                             this.updateToggleStyles();
-                            this.injectTurnButtons();
                             updateStatusPill();
                         }
-                    }, 1000);
 
-                    let lastModelName = null;
-                    let initialLoad = true;
+                        this.injectModeToggle();
+                        this.injectTurnButtons();
 
-                    setInterval(() => {
                         const currentModel = AIStudioDOM.Controls.getActiveModelName();
                         if (currentModel && currentModel !== lastModelName) {
                             lastModelName = currentModel;
 
-                            if (AIStudioDOM.Preferences.isProgrammaticUpdate) return;
-
-                            if (initialLoad) {
-                                initialLoad = false;
-                                const title = AIStudioDOM.Chat.getTitle();
-                                if (title === "Playground" || title === "New Chat") {
+                            if (!AIStudioDOM.Preferences.isProgrammaticUpdate) {
+                                if (initialLoad) {
+                                    initialLoad = false;
+                                    const title = AIStudioDOM.Chat.getTitle();
+                                    if (title === "Playground" || title === "New Chat") {
+                                        AIStudioDOM.Preferences.applySavedSettings(currentModel);
+                                    }
+                                } else {
                                     AIStudioDOM.Preferences.applySavedSettings(currentModel);
                                 }
-                            } else {
-                                AIStudioDOM.Preferences.applySavedSettings(currentModel);
                             }
+                        }
+
+                        const currentTitle = AIStudioDOM.Chat.getTitle();
+                        const currentPathname = window.location.pathname;
+                        if (currentTitle !== lastTitle || currentPathname !== lastPathname) {
+                            lastTitle = currentTitle;
+                            lastPathname = currentPathname;
+                            onNavigationChanged(currentPathname, currentTitle);
                         }
                     }, 1000);
 
@@ -900,7 +893,13 @@
         };
 
         AIStudioDOM.Injections.initSuggestionBox();
-        AIStudioDOM.Injections.startObservers();
+        AIStudioDOM.Injections.startObservers((currentPathname, currentTitle) => {
+            activeSockets.forEach(ws => {
+                if (ws.readyState === WebSocket.OPEN) {
+                    ws.send(`[HANDSHAKE]${tabId}|${currentPathname}|${currentTitle}`);
+                }
+            });
+        });
 
         function maintainConnections() {
             const currentTitle = AIStudioDOM.Chat.getTitle();
@@ -966,22 +965,6 @@
 
         setInterval(maintainConnections, 3000);
         maintainConnections();
-
-        let lastTitle = "";
-        let lastPathname = "";
-        setInterval(() => {
-            const currentTitle = AIStudioDOM.Chat.getTitle();
-            const currentPathname = window.location.pathname;
-            if (currentTitle !== lastTitle || currentPathname !== lastPathname) {
-                lastTitle = currentTitle;
-                lastPathname = currentPathname;
-                activeSockets.forEach(ws => {
-                    if (ws.readyState === WebSocket.OPEN) {
-                        ws.send(`[HANDSHAKE]${tabId}|${currentPathname}|${currentTitle}`);
-                    }
-                });
-            }
-        }, 2000);
 
         // --- WEB UI: EVENT LISTENERS ---
 
@@ -1077,6 +1060,85 @@
 
         // --- AUTOMATED GENERATION PIPELINES ---
 
+        async function submitAndMonitorGeneration(promptText, options) {
+            const textarea = AIStudioDOM.Input.getPromptArea();
+            if (!textarea) {
+                if (options.onAbort) await options.onAbort();
+                isProcessing = false;
+                return;
+            }
+
+            AIStudioDOM.Input.setPromptText(promptText);
+
+            setTimeout(async () => {
+                const runBtn = await AIStudioDOM.Utils.waitForElement('ms-run-button button');
+                if (!runBtn) {
+                    if (options.onAbort) await options.onAbort();
+                    isProcessing = false;
+                    return;
+                }
+
+                const initialModelTurns = document.querySelectorAll('.chat-turn-container.model').length;
+                const initialTotalTurns = document.querySelectorAll('.chat-turn-container').length;
+                runBtn.click();
+
+                showToast(options.generatingToast, '#FF9800', 0);
+                let hasSeenGenerating = false;
+                let startupTicks = 0;
+
+                const checkInterval = setInterval(async () => {
+                    if (AIStudioDOM.Input.isGenerating()) {
+                        hasSeenGenerating = true;
+                        return;
+                    }
+
+                    const allModelTurns = document.querySelectorAll('.chat-turn-container.model');
+                    startupTicks++;
+                    if (!hasSeenGenerating && allModelTurns.length <= initialModelTurns && startupTicks < 6) {
+                        return;
+                    }
+
+                    clearInterval(checkInterval);
+
+                    try {
+                        await new Promise(r => setTimeout(r, 300));
+                        const scrollBtn = document.querySelector('.scroll-to-bottom');
+                        if (scrollBtn) scrollBtn.click();
+
+                        const finalModelTurns = document.querySelectorAll('.chat-turn-container.model');
+                        if (finalModelTurns.length > initialModelTurns) {
+                            const lastTurn = finalModelTurns[finalModelTurns.length - 1];
+                            lastTurn.scrollIntoView({behavior: 'auto', block: 'end'});
+                            await new Promise(r => setTimeout(r, 200));
+
+                            const hasThumbUp = lastTurn.querySelector('button[aria-label="Good response"]') !== null;
+                            if (hasThumbUp) {
+                                showToast(options.extractingToast, '#FF9800', 0);
+                                const text = await AIStudioDOM.Chat.extractViaNativeCopy(lastTurn);
+                                if (text) {
+                                    sendToIde(text);
+                                    showToast(options.successToast, '#4CAF50', 3000);
+                                } else {
+                                    showToast(options.extractFailedToast, options.extractFailedColor || '#FF9800', 3000);
+                                }
+                            } else {
+                                showToast(options.stoppedToast, '#FF9800', 3000);
+                            }
+                        } else {
+                            showToast(options.stoppedToast, '#FF9800', 3000);
+                        }
+
+                        if (options.onCleanup) {
+                            const addedTurns = document.querySelectorAll('.chat-turn-container').length - initialTotalTurns;
+                            await options.onCleanup(addedTurns);
+                        }
+                    } finally {
+                        isProcessing = false;
+                    }
+                }, 500);
+            }, 300);
+        }
+
         async function handleCommitGeneration(payloadObj) {
             showToast('⚙️ Configuring for Commit Generation...', '#FF9800', 0);
 
@@ -1090,142 +1152,26 @@
                 AIStudioDOM.Preferences.isProgrammaticUpdate = false;
             }
 
-            const textarea = AIStudioDOM.Input.getPromptArea();
-            if (!textarea) {
-                await AIStudioDOM.Preferences.restoreSnapshot();
-                isProcessing = false;
-                return;
-            }
-
-            AIStudioDOM.Input.setPromptText(payloadObj.text);
-
-            setTimeout(async () => {
-                const runBtn = await AIStudioDOM.Utils.waitForElement('ms-run-button button');
-                if (runBtn) {
-                    const initialModelTurns = document.querySelectorAll('.chat-turn-container.model').length;
-                    const initialTotalTurns = document.querySelectorAll('.chat-turn-container').length;
-                    runBtn.click();
-                    monitorCommitGeneration(initialModelTurns, initialTotalTurns);
-                } else {
+            await submitAndMonitorGeneration(payloadObj.text, {
+                generatingToast: '⏳ Generating Commit Message...',
+                extractingToast: '⏳ Extracting Commit Message...',
+                successToast: '✅ Sent Commit Message to IDE',
+                extractFailedToast: '❌ Failed to copy model response',
+                extractFailedColor: '#F44336',
+                stoppedToast: '⏹️ Commit Generation Stopped',
+                onAbort: async () => {
                     await AIStudioDOM.Preferences.restoreSnapshot();
-                    isProcessing = false;
-                }
-            }, 300);
-        }
-
-        function monitorCommitGeneration(initialModelTurns, initialTotalTurns) {
-            showToast('⏳ Generating Commit Message...', '#FF9800', 0);
-            let hasSeenGenerating = false;
-            let startupTicks = 0;
-
-            const checkInterval = setInterval(async () => {
-                if (AIStudioDOM.Input.isGenerating()) {
-                    hasSeenGenerating = true;
-                    return;
-                }
-
-                const allModelTurns = document.querySelectorAll('.chat-turn-container.model');
-                startupTicks++;
-                if (!hasSeenGenerating && allModelTurns.length <= initialModelTurns && startupTicks < 6) {
-                    return;
-                }
-
-                clearInterval(checkInterval);
-
-                try {
-                    await new Promise(r => setTimeout(r, 300));
-                    const scrollBtn = document.querySelector('.scroll-to-bottom');
-                    if (scrollBtn) scrollBtn.click();
-
-                    const finalModelTurns = document.querySelectorAll('.chat-turn-container.model');
-                    if (finalModelTurns.length > initialModelTurns) {
-                        const lastTurn = finalModelTurns[finalModelTurns.length - 1];
-                        lastTurn.scrollIntoView({behavior: 'auto', block: 'end'});
-                        await new Promise(r => setTimeout(r, 200));
-
-                        const hasThumbUp = lastTurn.querySelector('button[aria-label="Good response"]') !== null;
-                        if (hasThumbUp) {
-                            showToast('⏳ Extracting Commit Message...', '#FF9800', 0);
-                            const text = await AIStudioDOM.Chat.extractViaNativeCopy(lastTurn);
-
-                            if (text) {
-                                sendToIde(text);
-                                showToast('✅ Sent Commit Message to IDE', '#4CAF50', 3000);
-                            } else {
-                                showToast('❌ Failed to copy model response', '#F44336', 3000);
-                            }
-                        } else {
-                            showToast('⏹️ Commit Generation Stopped', '#FF9800', 3000);
-                        }
-                    } else {
-                        showToast('⏹️ Commit Generation Stopped', '#FF9800', 3000);
-                    }
-
-                    const addedTurns = document.querySelectorAll('.chat-turn-container').length - initialTotalTurns;
+                },
+                onCleanup: async (addedTurns) => {
                     if (addedTurns > 0) {
                         showToast('🧹 Cleaning up session...', '#FF9800', 0);
                         await AIStudioDOM.Chat.deleteLastTwoTurns(addedTurns);
                     }
-
                     showToast('⚙️ Restoring Settings...', '#FF9800', 0);
                     await AIStudioDOM.Preferences.restoreSnapshot();
                     showToast('✅ Ready', '#4CAF50', 3000);
-                } finally {
-                    isProcessing = false;
                 }
-            }, 500);
-        }
-
-        function monitorStandardGeneration(initialModelTurns) {
-            showToast('⏳ AI is Generating...', '#FF9800', 0);
-            let hasSeenGenerating = false;
-            let startupTicks = 0;
-
-            const checkInterval = setInterval(async () => {
-                if (AIStudioDOM.Input.isGenerating()) {
-                    hasSeenGenerating = true;
-                    return;
-                }
-
-                const allModelTurns = document.querySelectorAll('.chat-turn-container.model');
-                startupTicks++;
-                if (!hasSeenGenerating && allModelTurns.length <= initialModelTurns && startupTicks < 6) {
-                    return;
-                }
-
-                clearInterval(checkInterval);
-
-                try {
-                    await new Promise(r => setTimeout(r, 300));
-                    const scrollBtn = document.querySelector('.scroll-to-bottom');
-                    if (scrollBtn) scrollBtn.click();
-
-                    const finalModelTurns = document.querySelectorAll('.chat-turn-container.model');
-                    if (finalModelTurns.length > initialModelTurns) {
-                        const lastTurn = finalModelTurns[finalModelTurns.length - 1];
-                        lastTurn.scrollIntoView({behavior: 'auto', block: 'end'});
-                        await new Promise(r => setTimeout(r, 200));
-
-                        const hasThumbUp = lastTurn.querySelector('button[aria-label="Good response"]') !== null;
-                        if (hasThumbUp) {
-                            showToast('⏳ Syncing to IDE...', '#FF9800', 0);
-                            const text = await AIStudioDOM.Chat.extractViaNativeCopy(lastTurn);
-                            if (text) {
-                                sendToIde(text);
-                                showToast('✅ Generation Complete & Synced', '#4CAF50', 3000);
-                            } else {
-                                showToast('⚠️ Generation Complete (Auto-sync failed)', '#FF9800', 3000);
-                            }
-                        } else {
-                            showToast('⏹️ Generation Stopped', '#FF9800', 3000);
-                        }
-                    } else {
-                        showToast('⏹️ Generation Stopped', '#FF9800', 3000);
-                    }
-                } finally {
-                    isProcessing = false;
-                }
-            }, 500);
+            });
         }
 
         // --- IDE PAYLOAD HANDLER ---
@@ -1267,24 +1213,14 @@
                 await new Promise(r => setTimeout(r, 2000));
             }
 
-            const textarea = AIStudioDOM.Input.getPromptArea();
-            if (!textarea) {
-                isProcessing = false;
-                return;
-            }
-
-            AIStudioDOM.Input.setPromptText(payloadObj.text);
-
-            setTimeout(async () => {
-                const runBtn = await AIStudioDOM.Utils.waitForElement('ms-run-button button');
-                if (runBtn) {
-                    const initialModelTurns = document.querySelectorAll('.chat-turn-container.model').length;
-                    runBtn.click();
-                    monitorStandardGeneration(initialModelTurns);
-                } else {
-                    isProcessing = false;
-                }
-            }, 300);
+            await submitAndMonitorGeneration(payloadObj.text, {
+                generatingToast: '⏳ AI is Generating...',
+                extractingToast: '⏳ Syncing to IDE...',
+                successToast: '✅ Generation Complete & Synced',
+                extractFailedToast: '⚠️ Generation Complete (Auto-sync failed)',
+                extractFailedColor: '#FF9800',
+                stoppedToast: '⏹️ Generation Stopped'
+            });
         }
     });
 
