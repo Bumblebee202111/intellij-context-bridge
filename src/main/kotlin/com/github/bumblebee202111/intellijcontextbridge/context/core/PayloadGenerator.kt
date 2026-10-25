@@ -1,7 +1,6 @@
 package com.github.bumblebee202111.intellijcontextbridge.context.core
 
 import com.github.bumblebee202111.intellijcontextbridge.commands.CommandRegistryService
-import com.github.bumblebee202111.intellijcontextbridge.commands.SlashCommand
 import com.github.bumblebee202111.intellijcontextbridge.state.ContextLevel
 import com.github.bumblebee202111.intellijcontextbridge.state.ContextState
 import com.github.bumblebee202111.intellijcontextbridge.state.FileStateRecord
@@ -101,26 +100,13 @@ object PayloadGenerator {
         val systemInstructionsText = loadPrompt("system_base.md")
 
         val commandRegistry = project.service<CommandRegistryService>()
-        var remainingPrompt = userPrompt.trimStart()
-        val appliedCommands = mutableListOf<SlashCommand>()
-
-        val commandRegex = Regex("^/([a-zA-Z0-9_-]+)\\s*")
-        while (true) {
-            val match = commandRegex.find(remainingPrompt) ?: break
-            val cmdName = match.groupValues[1]
-            val cmd = commandRegistry.getCommand(cmdName)
-            if (cmd != null) {
-                var body = cmd.promptBody
-
-                if (body.contains("{{vcs_diff}}")) {
-                    val diff = dynamicVariables["vcs_diff"] ?: readAction { VcsUtil.getProjectDiff(project) }
-                    body = body.replace("{{vcs_diff}}", diff)
-                }
-
-                appliedCommands.add(cmd.copy(promptBody = body))
-                remainingPrompt = remainingPrompt.substring(match.range.last + 1).trimStart()
+        val (rawCommands, remainingPrompt) = commandRegistry.parseLeadingCommands(userPrompt)
+        val appliedCommands = rawCommands.map { cmd ->
+            if (cmd.promptBody.contains("{{vcs_diff}}")) {
+                val diff = dynamicVariables["vcs_diff"] ?: readAction { VcsUtil.getProjectDiff(project) }
+                cmd.copy(promptBody = cmd.promptBody.replace("{{vcs_diff}}", diff))
             } else {
-                break
+                cmd
             }
         }
 

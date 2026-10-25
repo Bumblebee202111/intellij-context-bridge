@@ -237,7 +237,8 @@ class ContextComposerPanel(private val project: Project) : Disposable {
                         val isValidPos = if (parameters != null) {
                             val docText = parameters.originalFile.text
                             val tokenStart = (parameters.offset - prefix.length).coerceAtLeast(0)
-                            isAtCommandPosition(docText.substring(0, tokenStart))
+                            project.service<CommandRegistryService>()
+                                .isAtCommandPosition(docText.substring(0, tokenStart))
                         } else {
                             true
                         }
@@ -578,20 +579,6 @@ class ContextComposerPanel(private val project: Project) : Disposable {
             .submit(AppExecutorUtil.getAppExecutorService())
     }
 
-    private fun isAtCommandPosition(textBefore: String): Boolean {
-        var remaining = textBefore.trimStart()
-        if (remaining.isEmpty()) return true
-        val commandRegex = Regex("^/([a-zA-Z0-9_-]+)\\s+")
-        val commandRegistry = project.service<CommandRegistryService>()
-        while (remaining.isNotEmpty()) {
-            val match = commandRegex.find(remaining) ?: return false
-            val cmdName = match.groupValues[1]
-            if (commandRegistry.getCommand(cmdName) == null) return false
-            remaining = remaining.substring(match.range.last + 1).trimStart()
-        }
-        return true
-    }
-
     private fun setupTopToolbar(): JPanel {
         val topToolbar = JPanel(BorderLayout(5, 0)).apply { border = JBUI.Borders.empty(5) }
 
@@ -657,23 +644,8 @@ class ContextComposerPanel(private val project: Project) : Disposable {
                     draftPrompt = promptArea.text
                 }
 
-                val text = promptArea.text.trimStart()
-                val commandRegex = Regex("^/([a-zA-Z0-9_-]+)(?=\\s|$)")
-                var tempText = text
-                val currentCommands = mutableListOf<SlashCommand>()
                 val commandRegistry = project.service<CommandRegistryService>()
-
-                while (true) {
-                    val match = commandRegex.find(tempText) ?: break
-                    val cmdName = match.groupValues[1]
-                    val cmd = commandRegistry.getCommand(cmdName)
-                    if (cmd != null) {
-                        currentCommands.add(cmd)
-                        tempText = tempText.substring(match.range.last + 1).trimStart()
-                    } else {
-                        break
-                    }
-                }
+                val (currentCommands, _) = commandRegistry.parseLeadingCommands(promptArea.text)
 
                 val currentCommandNames = currentCommands.map { it.name }
                 if (currentCommandNames != lastAppliedCommands) {
@@ -696,7 +668,7 @@ class ContextComposerPanel(private val project: Project) : Disposable {
                     val shouldPopup = if (newText == "@") {
                         isWordStart
                     } else {
-                        isWordStart && isAtCommandPosition(docText.substring(0, offset))
+                        commandRegistry.isAtCommandPosition(docText.substring(0, offset))
                     }
                     if (shouldPopup) {
                         ApplicationManager.getApplication().invokeLater {

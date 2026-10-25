@@ -354,31 +354,28 @@
                     AIStudioDOM.Injections.activePrefix = null;
                     AIStudioDOM.Injections.updateSuggestions();
                 },
+                parseLeadingCommands(text) {
+                    let remainingPrompt = text.trimStart();
+                    const appliedCommands = [];
+                    const commandRegex = /^\/([a-zA-Z0-9_-]+)(?:\s+|$)/;
+
+                    while (remainingPrompt.length > 0) {
+                        const match = remainingPrompt.match(commandRegex);
+                        if (!match) break;
+                        const cmd = (win.__cbCommands || []).find(c => c.name === match[1]);
+                        if (!cmd) break;
+                        appliedCommands.push(cmd);
+                        remainingPrompt = remainingPrompt.substring(match[0].length).trimStart();
+                    }
+
+                    return {appliedCommands, remainingPrompt};
+                },
                 interceptAndWrap(textarea) {
                     let val = textarea.value;
                     if (!val.trim()) return;
                     if (val.includes('<user_prompt mode=')) return;
 
-                    let remainingPrompt = val.trimStart();
-                    let appliedCommands = [];
-                    const commandRegex = /^\/([a-zA-Z0-9_-]+)\s*/;
-
-                    while (true) {
-                        const match = remainingPrompt.match(commandRegex);
-                        if (match) {
-                            const cmdName = match[1];
-                            const cmd = win.__cbCommands.find(c => c.name === cmdName);
-                            if (cmd) {
-                                appliedCommands.push(cmd);
-                                remainingPrompt = remainingPrompt.substring(match[0].length).trimStart();
-                            } else {
-                                break;
-                            }
-                        } else {
-                            break;
-                        }
-                    }
-
+                    const {appliedCommands, remainingPrompt} = this.parseLeadingCommands(val);
                     const mode = win.__cbCurrentMode || 'ASK';
 
                     let wrapped = "";
@@ -1005,14 +1002,23 @@
 
                 let cursor = textarea.selectionStart;
                 let textBefore = val.substring(0, cursor);
-                let match = textBefore.match(/(?:^|\n)(\/[a-z]*)$/);
+                let tokenMatch = textBefore.match(/(?:^|\s)(\/[a-zA-Z0-9_-]*)$/);
 
-                if (match && win.__cbCommands && win.__cbCommands.length > 0) {
-                    AIStudioDOM.Injections.activePrefix = match[1];
-                    let search = AIStudioDOM.Injections.activePrefix.substring(1).toLowerCase();
-                    AIStudioDOM.Injections.filteredCmds = win.__cbCommands.filter(c => c.name.toLowerCase().startsWith(search));
-                    if (AIStudioDOM.Injections.selectedIndex >= AIStudioDOM.Injections.filteredCmds.length) AIStudioDOM.Injections.selectedIndex = 0;
-                    AIStudioDOM.Injections.updateSuggestions();
+                if (tokenMatch && win.__cbCommands && win.__cbCommands.length > 0) {
+                    let prefix = tokenMatch[1];
+                    let beforeToken = textBefore.substring(0, textBefore.length - prefix.length);
+                    let {remainingPrompt} = AIStudioDOM.Input.parseLeadingCommands(beforeToken);
+
+                    if (remainingPrompt.length === 0) {
+                        AIStudioDOM.Injections.activePrefix = prefix;
+                        let search = prefix.substring(1).toLowerCase();
+                        AIStudioDOM.Injections.filteredCmds = win.__cbCommands.filter(c => c.name.toLowerCase().startsWith(search));
+                        if (AIStudioDOM.Injections.selectedIndex >= AIStudioDOM.Injections.filteredCmds.length) AIStudioDOM.Injections.selectedIndex = 0;
+                        AIStudioDOM.Injections.updateSuggestions();
+                    } else {
+                        AIStudioDOM.Injections.activePrefix = null;
+                        AIStudioDOM.Injections.updateSuggestions();
+                    }
                 } else {
                     AIStudioDOM.Injections.activePrefix = null;
                     AIStudioDOM.Injections.updateSuggestions();

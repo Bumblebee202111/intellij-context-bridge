@@ -17,6 +17,10 @@ import java.util.concurrent.ConcurrentHashMap
 @Service(Service.Level.PROJECT)
 class CommandRegistryService(private val project: Project, private val scope: CoroutineScope) : Disposable {
 
+    companion object {
+        private val LEADING_COMMAND_REGEX = Regex("^/([a-zA-Z0-9_-]+)(?:\\s+|$)")
+    }
+
     private val commands = ConcurrentHashMap<String, SlashCommand>()
 
     private val builtInManifest = listOf(
@@ -52,6 +56,26 @@ class CommandRegistryService(private val project: Project, private val scope: Co
 
     fun getCommand(name: String): SlashCommand? {
         return commands[name]
+    }
+
+    fun parseLeadingCommands(prompt: String): Pair<List<SlashCommand>, String> {
+        var remaining = prompt.trimStart()
+        val matched = mutableListOf<SlashCommand>()
+
+        while (remaining.isNotEmpty()) {
+            val match = LEADING_COMMAND_REGEX.find(remaining) ?: break
+            val cmd = getCommand(match.groupValues[1]) ?: break
+            matched.add(cmd)
+            remaining = remaining.substring(match.range.last + 1).trimStart()
+        }
+
+        return matched to remaining
+    }
+
+    fun isAtCommandPosition(textBefore: String): Boolean {
+        if (textBefore.isNotEmpty() && !textBefore.last().isWhitespace()) return false
+        val (_, remaining) = parseLeadingCommands(textBefore)
+        return remaining.isEmpty()
     }
 
     private fun refreshCommands() {
