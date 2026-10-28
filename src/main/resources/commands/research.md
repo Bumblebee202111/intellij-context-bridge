@@ -1,7 +1,7 @@
 ---
 name: "research"
-description: "Search the web for current best practices."
+description: "Search the web for relevant, up-to-date information."
 mode: "ASK"
 context-action: "ADDITIVE"
 ---
-Search the web for current best practices regarding the request.
+Search the web for relevant, up-to-date information.
