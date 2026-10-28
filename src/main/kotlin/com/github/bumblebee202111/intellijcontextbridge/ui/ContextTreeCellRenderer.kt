@@ -24,7 +24,8 @@ data class NodeData(
     val isDirectory: Boolean = false,
     val isEmptyDirectory: Boolean = false,
     val maxLevel: ContextLevel = ContextLevel.COMPLETE,
-    val icon: Icon? = null
+    val icon: Icon? = null,
+    val locationHint: String? = null
 )
 
 class StateIcon(private val level: ContextLevel) : Icon {
@@ -123,6 +124,9 @@ class ContextTreeCellRenderer(
                 append(nodeData.displayName, SimpleTextAttributes.REGULAR_BOLD_ATTRIBUTES)
             } else {
                 append(nodeData.displayName)
+            }
+            if (nodeData.locationHint != null) {
+                append("  ${nodeData.locationHint}", SimpleTextAttributes.GRAYED_SMALL_ATTRIBUTES)
             }
         } else if (nodeData != null) {
             // Synthetic Root Node (e.g., [AI Requested Files])

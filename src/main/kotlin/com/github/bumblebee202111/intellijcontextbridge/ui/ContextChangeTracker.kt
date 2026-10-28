@@ -37,23 +37,31 @@ class ContextChangeTracker(
             override fun after(events: MutableList<out VFileEvent>) {
                 var needsRefresh = false
                 var structureChanged = false
-                val projectDir = project.guessProjectDir() ?: return
+                val projectDir = project.guessProjectDir()
 
                 for (event in events) {
                     val file = event.file
-                    if (file != null && VfsUtilCore.isAncestor(projectDir, file, false)) {
+                    val isInProject = file != null && projectDir != null && VfsUtilCore.isAncestor(projectDir, file, false)
+                    val isInExternal = file != null && (
+                        contextState.fileStates.containsKey(file) ||
+                        contextState.externalRoots.any { root -> root.isValid && VfsUtilCore.isAncestor(root, file, false) }
+                    )
+                    val isDeletedInScope = file == null && (
+                        (projectDir != null && event.path.startsWith(projectDir.path)) ||
+                        contextState.externalRoots.any { root -> event.path.startsWith(root.path) }
+                    )
+
+                    if (isInProject || isInExternal || isDeletedInScope) {
                         needsRefresh = true
                         if (event !is VFileContentChangeEvent) {
                             structureChanged = true
                         }
-                    } else if (file == null && event.path.startsWith(projectDir.path)) {
-                        needsRefresh = true
-                        structureChanged = true
                     }
                 }
 
                 if (needsRefresh) {
                     contextState.fileStates.keys.removeIf { !it.isValid }
+                    contextState.externalRoots.removeIf { !it.isValid }
                     onRefreshNeeded(structureChanged)
                 }
             }

@@ -97,37 +97,57 @@ class PromptCompletionProvider(
     }
 
     @Suppress("UnsafeVfsRecursion")
-    fun collectFileMentionItems(projectDir: VirtualFile): List<PromptCompletionItem.FileMention> {
+    fun collectFileMentionItems(
+        projectDir: VirtualFile?,
+        externalRoots: Collection<VirtualFile> = emptyList()
+    ): List<PromptCompletionItem.FileMention> {
         val result = mutableListOf<PromptCompletionItem.FileMention>()
 
-        fun visit(dir: VirtualFile) {
+        fun addItem(file: VirtualFile, relativePath: String) {
+            val isDir = file.isDirectory
+            val icon = if (isDir) {
+                AllIcons.Nodes.Folder
+            } else {
+                file.fileType.icon ?: AllIcons.FileTypes.Any_type
+            }
+            result.add(
+                PromptCompletionItem.FileMention(
+                    file = file,
+                    relativePath = relativePath,
+                    fileName = file.name,
+                    isDirectory = isDir,
+                    icon = icon
+                )
+            )
+        }
+
+        fun visit(dir: VirtualFile, baseDir: VirtualFile, prefix: String = "") {
             ProgressManager.checkCanceled()
             for (child in dir.children) {
                 ProgressManager.checkCanceled()
                 if (FileFilterUtil.isIgnored(project, child)) continue
-                val relativePath = VfsUtilCore.getRelativePath(child, projectDir) ?: continue
-                val isDir = child.isDirectory
-                val icon = if (isDir) {
-                    AllIcons.Nodes.Folder
-                } else {
-                    child.fileType.icon ?: AllIcons.FileTypes.Any_type
-                }
-                result.add(
-                    PromptCompletionItem.FileMention(
-                        file = child,
-                        relativePath = relativePath,
-                        fileName = child.name,
-                        isDirectory = isDir,
-                        icon = icon
-                    )
-                )
-                if (isDir) {
-                    visit(child)
+                val rel = VfsUtilCore.getRelativePath(child, baseDir) ?: continue
+                val fullRel = if (prefix.isEmpty()) rel else "$prefix/$rel"
+                addItem(child, fullRel)
+                if (child.isDirectory) {
+                    visit(child, baseDir, prefix)
                 }
             }
         }
 
-        visit(projectDir)
+        if (projectDir != null && projectDir.isValid) {
+            visit(projectDir, projectDir)
+        }
+
+        for (extRoot in externalRoots) {
+            ProgressManager.checkCanceled()
+            if (!extRoot.isValid) continue
+            addItem(extRoot, extRoot.name)
+            if (extRoot.isDirectory) {
+                visit(extRoot, extRoot, prefix = extRoot.name)
+            }
+        }
+
         return result
     }
 

@@ -110,13 +110,13 @@ object PayloadGenerator {
             }
         }
 
-        if (projectDir != null && remainingPrompt.contains('@')) {
+        if (remainingPrompt.contains('@')) {
             readAction {
                 for (match in FILE_MENTION_REGEX.findAll(remainingPrompt)) {
                     ProgressManager.checkCanceled()
                     val rawPath = match.groupValues[1].trimEnd('.', ',', ':', ';', ')', ']')
                     if (rawPath.isNotEmpty()) {
-                        val mentionedFile = projectDir.findFileByRelativePath(rawPath)
+                        val mentionedFile = contextState.resolveFile(rawPath)
                         if (mentionedFile != null && mentionedFile.exists()) {
                             contextState.applyStateRecursively(mentionedFile, ContextLevel.COMPLETE, checkIgnore = true)
                         }

@@ -28,6 +28,8 @@ import com.intellij.openapi.application.readAction
 import com.intellij.openapi.components.service
 import com.intellij.openapi.editor.event.DocumentEvent
 import com.intellij.openapi.editor.event.DocumentListener
+import com.intellij.openapi.fileChooser.FileChooser
+import com.intellij.openapi.fileChooser.FileChooserDescriptorFactory
 import com.intellij.openapi.fileEditor.FileDocumentManager
 import com.intellij.openapi.fileEditor.FileEditorManager
 import com.intellij.openapi.fileEditor.OpenFileDescriptor
@@ -37,6 +39,7 @@ import com.intellij.openapi.project.Project
 import com.intellij.openapi.project.guessProjectDir
 import com.intellij.openapi.ui.ComboBox
 import com.intellij.openapi.ui.Messages
+import com.intellij.openapi.vfs.LocalFileSystem
 import com.intellij.openapi.vfs.VirtualFile
 import com.intellij.ui.IdeBorderFactory
 import com.intellij.ui.JBSplitter
@@ -56,6 +59,7 @@ import kotlinx.serialization.json.Json
 import java.awt.BorderLayout
 import java.awt.Dimension
 import java.awt.FlowLayout
+import java.awt.datatransfer.DataFlavor
 import java.awt.datatransfer.StringSelection
 import java.awt.event.InputEvent
 import java.awt.event.ItemEvent
@@ -63,6 +67,7 @@ import java.awt.event.KeyAdapter
 import java.awt.event.KeyEvent
 import java.awt.event.MouseAdapter
 import java.awt.event.MouseEvent
+import java.io.File
 import java.text.SimpleDateFormat
 import java.util.Date
 import javax.swing.*
@@ -105,9 +110,11 @@ class ContextComposerPanel(private val project: Project) : Disposable {
 
     private val treeModel = DefaultTreeModel(DefaultMutableTreeNode("Loading..."))
     private val tree = Tree(treeModel).apply {
+        isRootVisible = false
+        showsRootHandles = true
         emptyText.text = "Loading project..."
         emptyText.appendSecondaryText(
-            "Space/Click: Toggle | Enter: Open | Right-Click: Clear",
+            "Space/Click: Toggle | Enter: Open | Right-Click: Clear/Detach",
             SimpleTextAttributes.GRAYED_ATTRIBUTES,
             null
         )
@@ -189,6 +196,7 @@ class ContextComposerPanel(private val project: Project) : Disposable {
         configureTree(tree) { file -> lastDedupedFiles.contains(file) }
         configureTree(suggestionTree) { false }
         configureTree(requestedTree) { false }
+        setupExternalFileDropTarget()
 
         val mainTreeContainer = JPanel(BorderLayout())
         mainTreeContainer.add(setupTopToolbar(), BorderLayout.NORTH)
@@ -233,6 +241,44 @@ class ContextComposerPanel(private val project: Project) : Disposable {
         targetTree.addMouseListener(createTreeMouseListener(targetTree))
         targetTree.addKeyListener(createTreeKeyListener(targetTree))
         TreeSpeedSearch(targetTree)
+    }
+
+    private fun setupExternalFileDropTarget() {
+        tree.transferHandler = object : TransferHandler() {
+            override fun canImport(support: TransferSupport): Boolean {
+                return support.isDataFlavorSupported(DataFlavor.javaFileListFlavor)
+            }
+
+            override fun importData(support: TransferSupport): Boolean {
+                if (!canImport(support)) return false
+                return try {
+                    @Suppress("UNCHECKED_CAST")
+                    val droppedFiles = support.transferable.getTransferData(DataFlavor.javaFileListFlavor) as? List<File>
+                        ?: return false
+                    if (droppedFiles.isEmpty()) return false
+
+                    contextState.scope.launch {
+                        val virtualFiles = readAction {
+                            droppedFiles.mapNotNull { ioFile ->
+                                LocalFileSystem.getInstance().findFileByIoFile(ioFile)
+                            }.also { vfsFiles ->
+                                contextState.addExternalFiles(vfsFiles)
+                            }
+                        }
+                        if (virtualFiles.isNotEmpty()) {
+                            ApplicationManager.getApplication().invokeLater({
+                                vfsStructureDirty = true
+                                mainTreeForceRebuild = true
+                                refreshUi()
+                            }, ModalityState.nonModal())
+                        }
+                    }
+                    true
+                } catch (e: Exception) {
+                    false
+                }
+            }
+        }
     }
 
     private fun updateTabsUI(tabs: List<BrowserTab>) {
@@ -342,11 +388,10 @@ class ContextComposerPanel(private val project: Project) : Disposable {
     fun handleReadFileToolCall(paths: List<String>, reason: String) {
         contextState.scope.launch {
             val requestedFiles = readAction {
-                val projectDir = project.guessProjectDir() ?: return@readAction emptySet<VirtualFile>()
                 val found = mutableSetOf<VirtualFile>()
                 for (path in paths) {
                     ProgressManager.checkCanceled()
-                    val file = projectDir.findFileByRelativePath(path)
+                    val file = contextState.resolveFile(path)
                     if (file != null && file.exists() && !file.isDirectory) {
                         found.add(file)
                     }
@@ -412,12 +457,36 @@ class ContextComposerPanel(private val project: Project) : Disposable {
                     val file = editor?.document?.let { FileDocumentManager.getInstance().getFile(it) }
                     if (file != null) {
                         ReadAction.nonBlocking<Unit> {
-                            contextState.applyStateRecursively(file, ContextLevel.COMPLETE, checkIgnore = true)
+                            contextState.addExternalFiles(listOf(file))
                         }.finishOnUiThread(ModalityState.nonModal()) {
+                            vfsStructureDirty = true
+                            mainTreeForceRebuild = true
                             refreshUi()
                         }.submit(AppExecutorUtil.getAppExecutorService())
                     } else {
                         Messages.showInfoMessage("No active editor found.", "Add Active File")
+                    }
+                }
+            })
+            add(object : AnAction(
+                "Attach External Files or Folders...",
+                "Pick files or directories outside the project to include in context",
+                AllIcons.General.OpenDisk
+            ) {
+                override fun actionPerformed(e: AnActionEvent) {
+                    val descriptor = FileChooserDescriptorFactory.createAllButJarContentsDescriptor().apply {
+                        title = "Attach External Files or Folders"
+                        description = "Select files or folders to include in Context Bridge"
+                    }
+                    FileChooser.chooseFiles(descriptor, project, null) { files ->
+                        if (files.isEmpty()) return@chooseFiles
+                        ReadAction.nonBlocking<Unit> {
+                            contextState.addExternalFiles(files)
+                        }.finishOnUiThread(ModalityState.nonModal()) {
+                            vfsStructureDirty = true
+                            mainTreeForceRebuild = true
+                            refreshUi()
+                        }.submit(AppExecutorUtil.getAppExecutorService())
                     }
                 }
             })
@@ -528,6 +597,8 @@ class ContextComposerPanel(private val project: Project) : Disposable {
                 override fun actionPerformed(e: AnActionEvent) {
                     contextState.clear()
                     isConfigLoaded = false
+                    vfsStructureDirty = true
+                    mainTreeForceRebuild = true
                     promptArea.text = ""
                     historyIndex = -1
                     draftPrompt = ""
@@ -545,6 +616,8 @@ class ContextComposerPanel(private val project: Project) : Disposable {
                                 contextState.restoreFromLastTurn()
                             }
                             ApplicationManager.getApplication().invokeLater({
+                                vfsStructureDirty = true
+                                mainTreeForceRebuild = true
                                 refreshUi()
                             }, ModalityState.nonModal())
                         }
@@ -698,12 +771,16 @@ class ContextComposerPanel(private val project: Project) : Disposable {
         updateSendButtonState()
     }
 
-    private fun applyNodeStateAsync(targetTree: Tree, action: () -> Unit) {
+    private fun applyNodeStateAsync(targetTree: Tree, action: () -> Boolean) {
         contextState.scope.launch {
-            readAction {
+            val structureChanged = readAction {
                 action()
             }
             ApplicationManager.getApplication().invokeLater({
+                if (structureChanged) {
+                    vfsStructureDirty = true
+                    mainTreeForceRebuild = true
+                }
                 targetTree.repaint()
                 refreshUi()
             }, ModalityState.nonModal())
@@ -770,12 +847,13 @@ class ContextComposerPanel(private val project: Project) : Disposable {
                     keyCode == KeyEvent.VK_DELETE
                 ) {
                     applyNodeStateAsync(targetTree) {
+                        var structureChanged = false
                         for (path in paths) {
                             val node = path.lastPathComponent as? DefaultMutableTreeNode ?: continue
                             val nodeData = node.userObject as? NodeData ?: continue
                             val file = nodeData.file
 
-                            when (keyCode) {
+                            val changed = when (keyCode) {
                                 KeyEvent.VK_SPACE -> {
                                     val nextLevel = treeManager.getNextToggleLevel(node, file)
                                     treeManager.applyStateToNode(node, nextLevel)
@@ -785,8 +863,11 @@ class ContextComposerPanel(private val project: Project) : Disposable {
                                 KeyEvent.VK_BACK_SPACE, KeyEvent.VK_DELETE -> {
                                     treeManager.applyStateToNode(node, ContextLevel.NONE)
                                 }
+                                else -> false
                             }
+                            if (changed) structureChanged = true
                         }
+                        structureChanged
                     }
                     e.consume()
                 }
@@ -859,11 +940,7 @@ class ContextComposerPanel(private val project: Project) : Disposable {
             val shouldRefreshVfs = vfsStructureDirty
             val fileMentionItems = if (shouldRefreshVfs) {
                 readAction {
-                    if (projectDir != null) {
-                        promptCompletionProvider.collectFileMentionItems(projectDir)
-                    } else {
-                        emptyList()
-                    }
+                    promptCompletionProvider.collectFileMentionItems(projectDir, contextState.externalRoots)
                 }
             } else {
                 null
@@ -874,13 +951,7 @@ class ContextComposerPanel(private val project: Project) : Disposable {
             val shouldRebuildMainTree = shouldRefreshVfs || mainTreeForceRebuild || showSelectedOnly
             val mainRootNode = if (shouldRebuildMainTree) {
                 readAction {
-                    if (projectDir != null) {
-                        treeManager.buildFileTree(projectDir, showSelectedOnly, isRoot = true) ?: DefaultMutableTreeNode(
-                            NodeData(projectDir, "No Project Root")
-                        )
-                    } else {
-                        DefaultMutableTreeNode("No Project Root")
-                    }
+                    treeManager.buildWorkspaceTree(projectDir, showSelectedOnly)
                 }
             } else {
                 null
@@ -904,21 +975,7 @@ class ContextComposerPanel(private val project: Project) : Disposable {
             val shouldRebuildRequestedTree = shouldRefreshVfs || currentRequests != lastRequestedFiles
             val requestedRootNode = if (shouldRebuildRequestedTree) {
                 readAction {
-                    if (projectDir != null && currentRequests.isNotEmpty()) {
-                        treeManager.buildFileTree(projectDir, false, allowedLeaves = currentRequests, isRoot = true)
-                            ?.apply {
-                                userObject = NodeData(
-                                    file = null,
-                                    displayName = "[AI Requested Files]",
-                                    isDirectory = true,
-                                    isEmptyDirectory = false,
-                                    maxLevel = ContextLevel.COMPLETE,
-                                    icon = AllIcons.Nodes.ConfigFolder
-                                )
-                            }
-                    } else {
-                        null
-                    }
+                    treeManager.buildRequestedFilesTree(projectDir, currentRequests)
                 }
             } else {
                 null

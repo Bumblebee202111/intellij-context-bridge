@@ -5,7 +5,7 @@ The plugin consists of five decoupled layers. Implementation details for each la
 ## 1. UI Layer (Tool Window)
 * **Native Interface:** Built using standard IntelliJ platform components (`EditorTextField` for prompts, `ActionToolbar` for actions, `AsyncProcessIcon` for background tasks) to ensure a seamless, first-class IDE experience.
 * **Tabbed Interface:** Organizes the workflow into distinct functional panels (Context Composer, Response Viewer, and Session History).
-* **Multi-Tree File View:** Renders a primary project tree, a dynamic "Suggested Context" staging area, and a temporary "Pending AI Requests" group for manual tool-call approval. Resolves VFS metadata off the EDT, repaints in-place unless VFS topology changes, and preserves user expansion and selection state.
+* **Multi-Tree File View:** Renders a primary project tree (plus optional `[External Context]` roots attached via file chooser or OS drag-and-drop), a dynamic "Suggested Context" staging area, and a temporary "Pending AI Requests" group for manual tool-call approval. Resolves VFS metadata off the EDT, repaints in-place unless VFS topology changes, and preserves user expansion and selection state.
 * **Dual-Prefix Composer (`/` & `@`):** Supports inline auto-completion for both `/` slash commands and `@` file/directory mentions, automatically promoting `@`-mentioned paths to `Complete` context.
 * **Intent Selection:** Segmented controls allow users to quickly specify the desired AI behavior (e.g., Ask vs. Edit) to tailor the underlying system instructions and constraints.
 
