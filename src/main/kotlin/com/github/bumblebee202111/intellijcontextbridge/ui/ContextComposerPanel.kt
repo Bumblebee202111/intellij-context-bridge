@@ -11,6 +11,7 @@ import com.github.bumblebee202111.intellijcontextbridge.server.ContextBridgeServ
 import com.github.bumblebee202111.intellijcontextbridge.state.ContextLevel
 import com.github.bumblebee202111.intellijcontextbridge.state.ContextState
 import com.github.bumblebee202111.intellijcontextbridge.state.IntentMode
+import com.github.bumblebee202111.intellijcontextbridge.utils.FileFilterUtil
 import com.intellij.codeInsight.AutoPopupController
 import com.intellij.icons.AllIcons
 import com.intellij.openapi.Disposable
@@ -389,11 +390,22 @@ class ContextComposerPanel(private val project: Project) : Disposable {
         contextState.scope.launch {
             val requestedFiles = readAction {
                 val found = mutableSetOf<VirtualFile>()
+
+                fun collectFiles(vf: VirtualFile) {
+                    ProgressManager.checkCanceled()
+                    if (!vf.isValid || FileFilterUtil.isIgnored(project, vf)) return
+                    if (vf.isDirectory) {
+                        vf.children.forEach(::collectFiles)
+                    } else {
+                        found.add(vf)
+                    }
+                }
+
                 for (path in paths) {
                     ProgressManager.checkCanceled()
                     val file = contextState.resolveFile(path)
-                    if (file != null && file.exists() && !file.isDirectory) {
-                        found.add(file)
+                    if (file != null && file.exists()) {
+                        collectFiles(file)
                     }
                 }
                 found
@@ -402,7 +414,11 @@ class ContextComposerPanel(private val project: Project) : Disposable {
             ApplicationManager.getApplication().invokeLater({
                 if (requestedFiles.isNotEmpty()) {
                     pendingAiRequests = requestedFiles
-                    promptArea.text = "AI requested files to: $reason\n\n"
+                    promptArea.text = if (reason.isNotBlank()) {
+                        "AI requested files to: $reason\n\n"
+                    } else {
+                        ""
+                    }
                     refreshUi()
                 } else {
                     Messages.showWarningDialog(
@@ -898,6 +914,9 @@ class ContextComposerPanel(private val project: Project) : Disposable {
             targetTree.model = DefaultTreeModel(DefaultMutableTreeNode(emptyPlaceholder))
             container.isVisible = false
         }
+        container.revalidate()
+        content.revalidate()
+        content.repaint()
     }
 
     private fun refreshTree() {

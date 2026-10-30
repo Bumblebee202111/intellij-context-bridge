@@ -155,7 +155,15 @@ class ResponseViewerPanel(
                     project.getService(CommitBridgeService::class.java).injectCommitMessage(it.message)
                 }
 
-                handleIncomingMarkdown(responseArea.text, tools, showEmptyWarning = true)
+                val hasActions = handleIncomingMarkdown(responseArea.text, tools, showEmptyWarning = true)
+
+                val nonCommitTools = tools.filterNot { it is FillCommitMessageTool }
+                val readTools = nonCommitTools.filterIsInstance<ReadFileTool>()
+                if (hasActions && readTools.isNotEmpty() && nonCommitTools.all { it is ReadFileTool }) {
+                    val allPaths = readTools.flatMap { it.paths }.distinct()
+                    val combinedReason = readTools.mapNotNull { it.explanation.takeIf(String::isNotBlank) }.joinToString("; ")
+                    onReadFileRequested(ReadFileTool(allPaths, combinedReason))
+                }
             }
         }
 

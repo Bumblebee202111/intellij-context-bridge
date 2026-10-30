@@ -1,6 +1,7 @@
 package com.github.bumblebee202111.intellijcontextbridge.toolWindow
 
 import com.github.bumblebee202111.intellijcontextbridge.parser.FillCommitMessageTool
+import com.github.bumblebee202111.intellijcontextbridge.parser.ReadFileTool
 import com.github.bumblebee202111.intellijcontextbridge.parser.ToolParser
 import com.github.bumblebee202111.intellijcontextbridge.server.ContextBridgeServer
 import com.github.bumblebee202111.intellijcontextbridge.state.ContextState
@@ -70,12 +71,20 @@ class ContextBridgeToolWindow(private val project: Project) : Disposable {
                         return@invokeLater
                     }
 
+                    val readTools = nonCommitTools.filterIsInstance<ReadFileTool>()
+                    if (readTools.isNotEmpty()) {
+                        val allPaths = readTools.flatMap { it.paths }.distinct()
+                        val combinedReason = readTools.mapNotNull { it.explanation.takeIf(String::isNotBlank) }.joinToString("; ")
+                        composerPanel.handleReadFileToolCall(allPaths, combinedReason)
+                    }
+
                     // 2. Pass markdown and ALL tools to the Response Panel
                     val hasActions = receiverPanel.handleIncomingMarkdown(markdownText, tools)
 
-                    // 3. Switch to the response viewer only when actionable tools arrive
+                    // 3. Switch to the appropriate tab when actionable tools arrive
                     if (hasActions) {
-                        tabbedPane.selectedIndex = 1
+                        val hasOtherActions = nonCommitTools.any { it !is ReadFileTool }
+                        tabbedPane.selectedIndex = if (readTools.isNotEmpty() && !hasOtherActions) 0 else 1
                     }
                 }
             }

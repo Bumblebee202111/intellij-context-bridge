@@ -234,8 +234,8 @@ class ContextTreeManager(private val project: Project, private val contextState:
         if (projectDir != null) {
             val projectTree = buildFileTree(projectDir, false, allowedLeaves = requestedFiles, isRoot = true)
             if (projectTree != null) {
-                for (i in 0 until projectTree.childCount) {
-                    rootNode.add(projectTree.getChildAt(i) as DefaultMutableTreeNode)
+                while (projectTree.childCount > 0) {
+                    rootNode.add(projectTree.getChildAt(0) as DefaultMutableTreeNode)
                 }
             }
         }
@@ -276,7 +276,8 @@ class ContextTreeManager(private val project: Project, private val contextState:
         if (FileFilterUtil.isIgnored(project, dir)) return null
 
         fun passesSelection(file: VirtualFile): Boolean {
-            return !showSelectedOnly || contextState.getLevel(file) != ContextLevel.NONE || allowedLeaves != null
+            if (allowedLeaves != null) return allowedLeaves.contains(file)
+            return !showSelectedOnly || contextState.getLevel(file) != ContextLevel.NONE
         }
 
         val children = dir.children
@@ -390,12 +391,10 @@ class ContextTreeManager(private val project: Project, private val contextState:
             hadExternalNode = false
         }
 
-        if (expandedPaths.isEmpty()) {
-            if (expandAllByDefault) {
-                TreeUtil.expandAll(tree)
-            } else if (tree.rowCount > 0) {
-                tree.expandRow(0)
-            }
+        if (expandAllByDefault) {
+            TreeUtil.expandAll(tree)
+        } else if (expandedPaths.isEmpty() && tree.rowCount > 0) {
+            tree.expandRow(0)
         }
 
         if (pathsToSelect.isNotEmpty()) {
