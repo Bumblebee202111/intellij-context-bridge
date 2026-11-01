@@ -207,16 +207,12 @@ class ContextComposerPanel(private val project: Project) : Disposable {
         configureTree(requestedTree) { false }
         setupExternalFileDropTarget()
 
-        val mainTreeContainer = JPanel(BorderLayout())
-        mainTreeContainer.add(setupTopToolbar(), BorderLayout.NORTH)
-        mainTreeContainer.add(JBScrollPane(tree), BorderLayout.CENTER)
-
         suggestionTreeContainer.add(JBScrollPane(suggestionTree), BorderLayout.CENTER)
         requestedTreeContainer.add(JBScrollPane(requestedTree), BorderLayout.CENTER)
 
         treeSplitter.apply {
             firstComponent = topTreesSplitter
-            secondComponent = mainTreeContainer
+            secondComponent = JBScrollPane(tree)
             addComponentListener(object : ComponentAdapter() {
                 private var initialized = false
                 override fun componentResized(e: ComponentEvent?) {
@@ -233,6 +229,7 @@ class ContextComposerPanel(private val project: Project) : Disposable {
             secondComponent = setupBottomPanel()
         }
 
+        content.add(setupTopToolbar(), BorderLayout.NORTH)
         content.add(splitPane, BorderLayout.CENTER)
 
         tabComboBox.addItemListener { event ->
