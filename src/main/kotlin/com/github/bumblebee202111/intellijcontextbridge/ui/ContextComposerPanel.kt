@@ -61,6 +61,8 @@ import java.awt.Dimension
 import java.awt.FlowLayout
 import java.awt.datatransfer.DataFlavor
 import java.awt.datatransfer.StringSelection
+import java.awt.event.ComponentAdapter
+import java.awt.event.ComponentEvent
 import java.awt.event.InputEvent
 import java.awt.event.ItemEvent
 import java.awt.event.KeyAdapter
@@ -144,6 +146,13 @@ class ContextComposerPanel(private val project: Project) : Disposable {
         isVisible = false
     }
 
+    private val topTreesSplitter = JBSplitter(true, 0.5f).apply {
+        firstComponent = requestedTreeContainer
+        secondComponent = suggestionTreeContainer
+    }
+
+    private val treeSplitter = JBSplitter(true, 0.3f)
+
     private val promptCompletionProvider = PromptCompletionProvider(
         project = project,
         onCommandSelected = ::applyCommandContext,
@@ -213,6 +222,15 @@ class ContextComposerPanel(private val project: Project) : Disposable {
         val treeSplitter = JBSplitter(true, 0.3f).apply {
             firstComponent = topTreesSplitter
             secondComponent = mainTreeContainer
+            addComponentListener(object : ComponentAdapter() {
+                private var initialized = false
+                override fun componentResized(e: ComponentEvent?) {
+                    if (!initialized && treeSplitter.height > 0) {
+                        initialized = true
+                        updateStagingSplitters()
+                    }
+                }
+            })
         }
 
         val splitPane = JBSplitter(true, 0.7f).apply {
@@ -404,6 +422,7 @@ class ContextComposerPanel(private val project: Project) : Disposable {
                     if (vf.isDirectory) {
                         vf.children.forEach(::collectFiles)
                     } else {
+                        contextState.applyStateRecursively(vf, ContextLevel.COMPLETE, checkIgnore = false)
                         found.add(vf)
                     }
                 }
@@ -421,11 +440,12 @@ class ContextComposerPanel(private val project: Project) : Disposable {
             ApplicationManager.getApplication().invokeLater({
                 if (requestedFiles.isNotEmpty()) {
                     pendingAiRequests = requestedFiles
-                    promptArea.text = if (reason.isNotBlank()) {
-                        "AI requested files to: $reason\n\n"
-                    } else {
-                        ""
-                    }
+                    val existingDraft = promptArea.text
+                        .replace(Regex("^AI requested files to:.*?(?:\\n\\n|$)"), "")
+                        .trim()
+                    val header = if (reason.isNotBlank()) "AI requested files to: $reason\n\n" else ""
+                    promptArea.text = if (existingDraft.isEmpty()) header else "$header$existingDraft"
+                    promptArea.editor?.caretModel?.moveToOffset(promptArea.text.length)
                     refreshUi()
                 } else {
                     Messages.showWarningDialog(
@@ -910,6 +930,40 @@ class ContextComposerPanel(private val project: Project) : Disposable {
             container.isVisible = false
         }
         container.revalidate()
+    }
+
+    private fun updateStagingSplitters() {
+        val reqVisible = requestedTreeContainer.isVisible
+        val sugVisible = suggestionTreeContainer.isVisible
+
+        if (reqVisible || sugVisible) {
+            val maxRowsPerTree = if (reqVisible && sugVisible) 5 else 6
+            val padding = JBUI.scale(6)
+
+            val reqHeight = if (reqVisible) {
+                requestedTree.visibleRowCount = requestedTree.rowCount.coerceIn(1, maxRowsPerTree)
+                requestedTreeContainer.preferredSize.height + padding
+            } else {
+                0
+            }
+
+            val sugHeight = if (sugVisible) {
+                suggestionTree.visibleRowCount = suggestionTree.rowCount.coerceIn(1, maxRowsPerTree)
+                suggestionTreeContainer.preferredSize.height + padding
+            } else {
+                0
+            }
+
+            if (reqVisible && sugVisible && reqHeight + sugHeight > 0) {
+                topTreesSplitter.proportion = (reqHeight.toFloat() / (reqHeight + sugHeight)).coerceIn(0.25f, 0.75f)
+            }
+
+            val desiredTopHeight = reqHeight + sugHeight + if (reqVisible && sugVisible) topTreesSplitter.dividerWidth else 0
+            val availableHeight = (treeSplitter.height - treeSplitter.dividerWidth).takeIf { it > 0 } ?: 500
+            val maxTreeProportion = if (reqVisible && sugVisible) 0.55f else 0.4f
+            treeSplitter.proportion = (desiredTopHeight.toFloat() / availableHeight).coerceIn(0.1f, maxTreeProportion)
+        }
+
         content.revalidate()
         content.repaint()
     }
@@ -1033,6 +1087,9 @@ class ContextComposerPanel(private val project: Project) : Disposable {
                     "No pending requests."
                 )
 
+                if (shouldRebuildSuggestionTree || shouldRebuildRequestedTree) {
+                    updateStagingSplitters()
+                }
             }, ModalityState.nonModal())
         }
     }
