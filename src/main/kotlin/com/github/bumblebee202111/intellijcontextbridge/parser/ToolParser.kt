@@ -8,6 +8,12 @@ object ToolParser {
     )
     private val PATH_REGEX = Regex("<path>(.*?)</path>", RegexOption.DOT_MATCHES_ALL)
 
+    fun stripToolBlocks(markdown: String): String {
+        return TOOL_BLOCK_REGEX.replace(markdown, "")
+            .replace(Regex("\n{3,}"), "\n\n")
+            .trim()
+    }
+
     /**
      * Parses an AI's response to extract unified tool calls.
      */

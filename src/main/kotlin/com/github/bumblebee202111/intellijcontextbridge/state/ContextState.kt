@@ -40,6 +40,7 @@ class ContextState(
 
     class State {
         var turns: MutableList<UserTurn> = CopyOnWriteArrayList()
+        var modelTurns: MutableList<ModelTurn> = CopyOnWriteArrayList()
         var boundTabTitle: String = ""
     }
 
@@ -57,6 +58,9 @@ class ContextState(
         // Ensure thread-safety after deserialization
         if (myState.turns !is CopyOnWriteArrayList) {
             myState.turns = CopyOnWriteArrayList(myState.turns)
+        }
+        if (myState.modelTurns !is CopyOnWriteArrayList) {
+            myState.modelTurns = CopyOnWriteArrayList(myState.modelTurns)
         }
     }
 
@@ -274,6 +278,24 @@ class ContextState(
         myState.turns.add(turn)
     }
 
+    fun addModelTurn(markdown: String): ModelTurn {
+        val now = System.currentTimeMillis()
+        val existing = myState.modelTurns.find { it.markdown == markdown }
+        if (existing != null) {
+            existing.timestamp = now
+            myState.modelTurns.remove(existing)
+            myState.modelTurns.add(existing)
+            return existing
+        }
+        val modelTurn = ModelTurn(timestamp = now, markdown = markdown)
+        myState.modelTurns.add(modelTurn)
+        return modelTurn
+    }
+
+    fun removeModelTurn(turnId: String) {
+        myState.modelTurns.removeAll { it.id == turnId }
+    }
+
     fun removeTurn(turnId: String) {
         myState.turns.removeAll { it.id == turnId }
     }
@@ -306,6 +328,7 @@ class ContextState(
         fileStates.clear()
         externalRoots.clear()
         myState.turns.clear()
+        myState.modelTurns.clear()
         hashCache.clear()
         seedGraphCache.clear()
     }

@@ -91,7 +91,7 @@ object PayloadGenerator {
         val attachments = mutableListOf<AiAttachment>()
 
         val currentCache = contextState.getDedupCache()
-        val newTurn = UserTurn(prompt = userPrompt)
+        val newTurn = UserTurn(prompt = userPrompt, mode = intentMode)
 
         // 1. System Instructions
         val systemInstructionsText = loadPrompt("system_base.md")
@@ -145,13 +145,13 @@ object PayloadGenerator {
                 }
 
                 if (fastHash != null && previousRecord?.level == level && previousRecord.hash == fastHash) {
-                    newTurn.sentFiles[relativePath] = FileStateRecord(level, fastHash)
+                    newTurn.sentFiles[relativePath] = FileStateRecord(level, fastHash, wasDeduped = true)
                     return@readAction null
                 }
 
                 if (file.isDirectory) {
                     val dirHash = fastHash ?: "EMPTY_DIR"
-                    newTurn.sentFiles[relativePath] = FileStateRecord(level, dirHash)
+                    newTurn.sentFiles[relativePath] = FileStateRecord(level, dirHash, wasDeduped = false)
                     return@readAction "### \uD83D\uDCC1 `$relativePath/` (Empty Directory)\n*(This directory is empty)*\n"
                 }
 
@@ -159,7 +159,7 @@ object PayloadGenerator {
 
                 if (!isText) {
                     val binaryHash = fastHash ?: getFileHash(project, contextState, file, level)
-                    newTurn.sentFiles[relativePath] = FileStateRecord(level, binaryHash)
+                    newTurn.sentFiles[relativePath] = FileStateRecord(level, binaryHash, wasDeduped = false)
                     val mime = getMimeType(extension)
 
                     return@readAction if (level == ContextLevel.COMPLETE) {
@@ -191,9 +191,10 @@ object PayloadGenerator {
                         level,
                         contextState.calculateHash(extractedText ?: "OMITTED_NON_CODE_SKELETON")
                     )
-                    newTurn.sentFiles[relativePath] = FileStateRecord(level, currentHash)
+                    val isDeduped = previousRecord?.level == level && previousRecord.hash == currentHash
+                    newTurn.sentFiles[relativePath] = FileStateRecord(level, currentHash, wasDeduped = isDeduped)
 
-                    if (previousRecord?.level == level && previousRecord.hash == currentHash) {
+                    if (isDeduped) {
                         return@readAction null
                     }
 

@@ -3,15 +3,12 @@ package com.github.bumblebee202111.intellijcontextbridge.toolWindow
 import com.github.bumblebee202111.intellijcontextbridge.server.ContextBridgeServer
 import com.github.bumblebee202111.intellijcontextbridge.state.ContextState
 import com.github.bumblebee202111.intellijcontextbridge.ui.ContextComposerPanel
-import com.github.bumblebee202111.intellijcontextbridge.ui.ResponseViewerPanel
-import com.github.bumblebee202111.intellijcontextbridge.ui.SessionHistoryPanel
 import com.intellij.openapi.Disposable
 import com.intellij.openapi.application.ApplicationManager
 import com.intellij.openapi.project.Project
 import com.intellij.openapi.util.Disposer
 import com.intellij.ui.JBColor
 import com.intellij.ui.components.JBScrollPane
-import com.intellij.ui.components.JBTabbedPane
 import java.awt.BorderLayout
 import javax.swing.JComponent
 import javax.swing.JPanel
@@ -26,46 +23,18 @@ class ContextBridgeToolWindow(private val project: Project) : Disposable {
             val contextState = project.getService(ContextState::class.java)
             server.start()
 
-            val tabbedPane = JBTabbedPane()
-
             val composerPanel = ContextComposerPanel(project)
             Disposer.register(this, composerPanel)
-
-            val receiverPanel = ResponseViewerPanel(
-                project = project,
-                onReadFileRequested = { readFileTool, switchToComposer ->
-                    composerPanel.handleReadFileToolCall(readFileTool.paths, readFileTool.explanation)
-                    if (switchToComposer) {
-                        tabbedPane.selectedIndex = 0
-                    }
-                },
-                onFocusResponseTab = {
-                    tabbedPane.selectedIndex = 1
-                }
-            )
-
-            val historyPanel = SessionHistoryPanel(project) {
-                composerPanel.refreshUi()
-            }
-
-            tabbedPane.addTab("1. Send Context", composerPanel.content)
-            tabbedPane.addTab("2. AI Response", receiverPanel.content)
-            tabbedPane.addTab("3. Session History", historyPanel.content)
-
-            tabbedPane.addChangeListener {
-                if (tabbedPane.selectedIndex == 0) composerPanel.refreshUi()
-                if (tabbedPane.selectedIndex == 2) historyPanel.refresh()
-            }
 
             server.addMessageListener(this) { tabId, markdownText ->
                 if (tabId != contextState.activeTabId) return@addMessageListener
 
                 SwingUtilities.invokeLater {
-                    receiverPanel.processMarkdown(markdownText, fromWebSocket = true)
+                    composerPanel.processIncomingMarkdown(markdownText, fromWebSocket = true)
                 }
             }
 
-            return tabbedPane
+            return composerPanel.content
 
         } catch (e: Throwable) {
             val errorPanel = JPanel(BorderLayout())

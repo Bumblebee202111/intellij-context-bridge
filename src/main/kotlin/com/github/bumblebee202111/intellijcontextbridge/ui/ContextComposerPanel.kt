@@ -57,6 +57,7 @@ import kotlinx.coroutines.launch
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
 import java.awt.BorderLayout
+import java.awt.CardLayout
 import java.awt.Dimension
 import java.awt.FlowLayout
 import java.awt.datatransfer.DataFlavor
@@ -75,10 +76,16 @@ import javax.swing.tree.DefaultMutableTreeNode
 import javax.swing.tree.DefaultTreeModel
 
 class ContextComposerPanel(private val project: Project) : Disposable {
+    companion object {
+        private const val VIEW_CONTEXT = "CONTEXT"
+        private const val VIEW_CHAT = "CHAT"
+    }
+
     private val contextState = project.service<ContextState>()
     private val server = ApplicationManager.getApplication().getService(ContextBridgeServer::class.java)
     private val treeManager = ContextTreeManager(project, contextState)
 
+    private var activeView = VIEW_CONTEXT
     private var historyIndex = -1
     private var draftPrompt = ""
     private var lastAppliedCommands = emptyList<String>()
@@ -119,6 +126,27 @@ class ContextComposerPanel(private val project: Project) : Disposable {
             null
         )
     }
+
+    private val mainCardLayout = CardLayout()
+    private val mainViewport = JPanel(mainCardLayout)
+
+    private val chatTimelinePanel = ChatTimelinePanel(
+        project = project,
+        onStageReadFiles = { paths, switchToTree ->
+            stageReadFiles(paths, switchToTree)
+        },
+        onSendRequestedFiles = { paths ->
+            approveAndSendReadFiles(paths)
+        },
+        onHistoryChanged = {
+            vfsStructureDirty = true
+            mainTreeForceRebuild = true
+            refreshUi()
+        },
+        onFocusChat = {
+            switchView(VIEW_CHAT)
+        }
+    )
 
     private val promptCompletionProvider = PromptCompletionProvider(
         project = project,
@@ -172,8 +200,11 @@ class ContextComposerPanel(private val project: Project) : Disposable {
         configureTree(tree) { file -> lastDedupedFiles.contains(file) }
         setupExternalFileDropTarget()
 
+        mainViewport.add(JBScrollPane(tree), VIEW_CONTEXT)
+        mainViewport.add(chatTimelinePanel.content, VIEW_CHAT)
+
         val splitPane = JBSplitter(true, 0.7f).apply {
-            firstComponent = JBScrollPane(tree)
+            firstComponent = mainViewport
             secondComponent = setupBottomPanel()
         }
 
@@ -191,7 +222,24 @@ class ContextComposerPanel(private val project: Project) : Disposable {
         updateTabsUI(server.getActiveTabs())
         server.addHandshakeListener(this, ::handleTabHandshake)
 
+        chatTimelinePanel.refresh()
         refreshUi()
+    }
+
+    private fun switchView(view: String) {
+        if (activeView != view) {
+            activeView = view
+            mainCardLayout.show(mainViewport, view)
+            if (view == VIEW_CHAT) {
+                chatTimelinePanel.refresh(scrollToBottom = false)
+            } else {
+                refreshUi()
+            }
+        }
+    }
+
+    fun processIncomingMarkdown(markdownText: String, fromWebSocket: Boolean) {
+        chatTimelinePanel.processIncomingMarkdown(markdownText, fromWebSocket)
     }
 
     private fun configureTree(targetTree: Tree, isCached: (VirtualFile) -> Boolean) {
@@ -351,48 +399,72 @@ class ContextComposerPanel(private val project: Project) : Disposable {
         }
     }
 
-    fun handleReadFileToolCall(paths: List<String>, reason: String) {
+    private fun collectAndPromoteFiles(paths: List<String>): Set<VirtualFile> {
+        val found = mutableSetOf<VirtualFile>()
+
+        fun collectFiles(vf: VirtualFile) {
+            ProgressManager.checkCanceled()
+            if (!vf.isValid || FileFilterUtil.isIgnored(project, vf)) return
+            if (vf.isDirectory) {
+                vf.children.forEach(::collectFiles)
+            } else {
+                contextState.applyStateRecursively(vf, ContextLevel.COMPLETE, checkIgnore = false)
+                found.add(vf)
+            }
+        }
+
+        for (path in paths) {
+            ProgressManager.checkCanceled()
+            val file = contextState.resolveFile(path)
+            if (file != null && file.exists()) {
+                collectFiles(file)
+            }
+        }
+        return found
+    }
+
+    private fun stageReadFiles(paths: List<String>, switchToTree: Boolean) {
         contextState.scope.launch {
             val requestedFiles = readAction {
-                val found = mutableSetOf<VirtualFile>()
-
-                fun collectFiles(vf: VirtualFile) {
-                    ProgressManager.checkCanceled()
-                    if (!vf.isValid || FileFilterUtil.isIgnored(project, vf)) return
-                    if (vf.isDirectory) {
-                        vf.children.forEach(::collectFiles)
-                    } else {
-                        contextState.applyStateRecursively(vf, ContextLevel.COMPLETE, checkIgnore = false)
-                        found.add(vf)
-                    }
-                }
-
-                for (path in paths) {
-                    ProgressManager.checkCanceled()
-                    val file = contextState.resolveFile(path)
-                    if (file != null && file.exists()) {
-                        collectFiles(file)
-                    }
-                }
-                found
+                collectAndPromoteFiles(paths)
             }
 
             ApplicationManager.getApplication().invokeLater({
                 if (requestedFiles.isNotEmpty()) {
                     pendingAiRequests = requestedFiles
-                    val existingDraft = promptArea.text
-                        .replace(Regex("^AI requested files to:.*?(?:\\n\\n|$)"), "")
-                        .trim()
-                    val header = if (reason.isNotBlank()) "AI requested files to: $reason\n\n" else ""
-                    promptArea.text = if (existingDraft.isEmpty()) header else "$header$existingDraft"
-                    promptArea.editor?.caretModel?.moveToOffset(promptArea.text.length)
+                    if (switchToTree) {
+                        switchView(VIEW_CONTEXT)
+                    }
                     refreshUi()
-                } else {
+                } else if (switchToTree) {
                     Messages.showWarningDialog(
-                        "The AI requested files, but none were found in the project.\n\nReason: $reason\nPaths: ${paths.joinToString()}",
+                        "The AI requested files, but none were found in the project.\n\nPaths: ${paths.joinToString()}",
                         "Tool Call: read_file"
                     )
                 }
+            }, ModalityState.nonModal())
+        }
+    }
+
+    private fun approveAndSendReadFiles(paths: List<String>) {
+        contextState.scope.launch {
+            val requestedFiles = readAction {
+                collectAndPromoteFiles(paths)
+            }
+
+            ApplicationManager.getApplication().invokeLater({
+                if (requestedFiles.isEmpty()) {
+                    Messages.showWarningDialog(
+                        "The AI requested files, but none were found in the project.\n\nPaths: ${paths.joinToString()}",
+                        "Tool Call: read_file"
+                    )
+                    return@invokeLater
+                }
+                val selectedTab = tabComboBox.selectedItem as? BrowserTab
+                val canSendWs = selectedTab != null &&
+                    selectedTab.id.isNotEmpty() &&
+                    !selectedTab.toString().endsWith("(Disconnected)")
+                executePayloadAction(isWsSend = canSendWs, selectedTab = selectedTab)
             }, ModalityState.nonModal())
         }
     }
@@ -430,10 +502,42 @@ class ContextComposerPanel(private val project: Project) : Disposable {
         }
     }
 
+    private fun pasteResponseFromClipboard() {
+        val clipboardText = CopyPasteManager.getInstance().getContents<String>(DataFlavor.stringFlavor)
+        if (clipboardText.isNullOrBlank()) {
+            Messages.showInfoMessage(project, "Clipboard is empty.", "Paste Response")
+            return
+        }
+        processIncomingMarkdown(clipboardText, fromWebSocket = false)
+    }
+
     private fun setupTopToolbar(): JPanel {
         val topToolbar = JPanel(BorderLayout(5, 0)).apply { border = JBUI.Borders.empty(5) }
 
         val actionGroup = DefaultActionGroup().apply {
+            add(object : ToggleAction("Context", "Show project context tree", AllIcons.Nodes.Folder) {
+                override fun isSelected(e: AnActionEvent): Boolean = activeView == VIEW_CONTEXT
+                override fun setSelected(e: AnActionEvent, state: Boolean) {
+                    if (state) switchView(VIEW_CONTEXT)
+                }
+                override fun displayTextInToolbar(): Boolean = true
+                override fun getActionUpdateThread() = ActionUpdateThread.EDT
+            })
+            add(object : ToggleAction("Chat", "Show conversation timeline and AI tool actions", AllIcons.Toolwindows.ToolWindowMessages) {
+                override fun isSelected(e: AnActionEvent): Boolean = activeView == VIEW_CHAT
+                override fun setSelected(e: AnActionEvent, state: Boolean) {
+                    if (state) switchView(VIEW_CHAT)
+                }
+                override fun update(e: AnActionEvent) {
+                    super.update(e)
+                    val state = contextState.getState()
+                    val count = state.turns.size + state.modelTurns.size
+                    e.presentation.text = if (count > 0) "Chat ($count)" else "Chat"
+                }
+                override fun displayTextInToolbar(): Boolean = true
+                override fun getActionUpdateThread() = ActionUpdateThread.EDT
+            })
+            addSeparator()
             add(object :
                 AnAction("Add Active File", "Add currently opened editor file to context", AllIcons.General.Add) {
                 override fun actionPerformed(e: AnActionEvent) {
@@ -461,7 +565,6 @@ class ContextComposerPanel(private val project: Project) : Disposable {
                     }
                 }
             })
-            addSeparator()
             add(object : ToggleAction(
                 "Show Selected Context Only",
                 "Filter to show only selected files",
@@ -471,10 +574,21 @@ class ContextComposerPanel(private val project: Project) : Disposable {
                 override fun setSelected(e: AnActionEvent, state: Boolean) {
                     showSelectedOnly = state
                     mainTreeForceRebuild = true
+                    switchView(VIEW_CONTEXT)
                     refreshUi()
                 }
+                override fun getActionUpdateThread() = ActionUpdateThread.EDT
             })
             addSeparator()
+            add(object : AnAction(
+                "Paste AI Response",
+                "Parse AI Markdown response and tool calls from clipboard",
+                AllIcons.Actions.MenuPaste
+            ) {
+                override fun actionPerformed(e: AnActionEvent) {
+                    pasteResponseFromClipboard()
+                }
+            })
             add(object : AnAction("Run Web UI Diagnostics", "Test stability of background DOM interactions", AllIcons.Actions.StartDebugger) {
                 override fun actionPerformed(e: AnActionEvent) {
                     val tabId = contextState.activeTabId
@@ -489,7 +603,7 @@ class ContextComposerPanel(private val project: Project) : Disposable {
 
         val nativeToolbar =
             ActionManager.getInstance().createActionToolbar("ContextComposerTopToolbar", actionGroup, true).apply {
-                targetComponent = tree
+                targetComponent = content
             }
 
         topToolbar.add(nativeToolbar.component, BorderLayout.WEST)
@@ -574,6 +688,7 @@ class ContextComposerPanel(private val project: Project) : Disposable {
                     historyIndex = -1
                     draftPrompt = ""
                     pendingAiRequests = emptySet()
+                    chatTimelinePanel.refresh()
                     refreshUi()
                 }
             })
@@ -589,6 +704,7 @@ class ContextComposerPanel(private val project: Project) : Disposable {
                             ApplicationManager.getApplication().invokeLater({
                                 vfsStructureDirty = true
                                 mainTreeForceRebuild = true
+                                chatTimelinePanel.refresh()
                                 refreshUi()
                             }, ModalityState.nonModal())
                         }
@@ -703,6 +819,7 @@ class ContextComposerPanel(private val project: Project) : Disposable {
                 ApplicationManager.getApplication().invokeLater({
                     val payloadObj = result.payload
                     contextState.addTurn(result.turn)
+                    chatTimelinePanel.refresh(scrollToBottom = true)
                     refreshUi()
 
                     if (isWsSend && selectedTab != null) {
