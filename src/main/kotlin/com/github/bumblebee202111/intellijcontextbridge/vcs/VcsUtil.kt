@@ -1,8 +1,6 @@
 package com.github.bumblebee202111.intellijcontextbridge.vcs
 
-import com.intellij.openapi.application.ApplicationManager
 import com.intellij.openapi.diagnostic.thisLogger
-import com.intellij.openapi.diff.impl.patch.FilePatch
 import com.intellij.openapi.diff.impl.patch.IdeaTextPatchBuilder
 import com.intellij.openapi.diff.impl.patch.UnifiedDiffWriter
 import com.intellij.openapi.project.Project
@@ -18,9 +16,7 @@ object VcsUtil {
         if (targetChanges.isEmpty()) return "No changes found."
 
         return try {
-            val patches = ApplicationManager.getApplication().runReadAction<List<FilePatch>> {
-                IdeaTextPatchBuilder.buildPatch(project, targetChanges, basePath, false)
-            }
+            val patches = IdeaTextPatchBuilder.buildPatch(project, targetChanges, basePath, false)
 
             val stringWriter = StringWriter()
             UnifiedDiffWriter.write(project, patches, stringWriter, "\n", null)

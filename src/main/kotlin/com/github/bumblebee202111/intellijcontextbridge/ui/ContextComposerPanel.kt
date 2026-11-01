@@ -50,7 +50,6 @@ import com.intellij.ui.TreeSpeedSearch
 import com.intellij.ui.components.JBRadioButton
 import com.intellij.ui.components.JBScrollPane
 import com.intellij.ui.treeStructure.Tree
-import com.intellij.util.concurrency.AppExecutorUtil
 import com.intellij.util.ui.AsyncProcessIcon
 import com.intellij.util.ui.JBUI
 import kotlinx.coroutines.Job
@@ -244,6 +243,27 @@ class ContextComposerPanel(private val project: Project) : Disposable {
         TreeSpeedSearch(targetTree)
     }
 
+    private fun attachExternalFiles(filesProvider: () -> Collection<VirtualFile>) {
+        contextState.scope.launch {
+            val added = readAction {
+                val files = filesProvider()
+                if (files.isNotEmpty()) {
+                    contextState.addExternalFiles(files)
+                    true
+                } else {
+                    false
+                }
+            }
+            if (added) {
+                ApplicationManager.getApplication().invokeLater({
+                    vfsStructureDirty = true
+                    mainTreeForceRebuild = true
+                    refreshUi()
+                }, ModalityState.nonModal())
+            }
+        }
+    }
+
     private fun setupExternalFileDropTarget() {
         tree.transferHandler = object : TransferHandler() {
             override fun canImport(support: TransferSupport): Boolean {
@@ -258,21 +278,8 @@ class ContextComposerPanel(private val project: Project) : Disposable {
                         ?: return false
                     if (droppedFiles.isEmpty()) return false
 
-                    contextState.scope.launch {
-                        val virtualFiles = readAction {
-                            droppedFiles.mapNotNull { ioFile ->
-                                LocalFileSystem.getInstance().findFileByIoFile(ioFile)
-                            }.also { vfsFiles ->
-                                contextState.addExternalFiles(vfsFiles)
-                            }
-                        }
-                        if (virtualFiles.isNotEmpty()) {
-                            ApplicationManager.getApplication().invokeLater({
-                                vfsStructureDirty = true
-                                mainTreeForceRebuild = true
-                                refreshUi()
-                            }, ModalityState.nonModal())
-                        }
+                    attachExternalFiles {
+                        droppedFiles.mapNotNull { LocalFileSystem.getInstance().findFileByIoFile(it) }
                     }
                     true
                 } catch (e: Exception) {
@@ -431,35 +438,37 @@ class ContextComposerPanel(private val project: Project) : Disposable {
     }
 
     fun applyCommandContext(command: SlashCommand) {
-        ReadAction.nonBlocking<Unit> {
-            if (command.contextAction == CommandContextAction.REPLACE) {
-                contextState.clearFileStates()
-            }
+        contextState.scope.launch {
+            readAction {
+                if (command.contextAction == CommandContextAction.REPLACE) {
+                    contextState.clearFileStates()
+                }
 
-            val projectDir = project.guessProjectDir() ?: return@nonBlocking
-            for (path in command.includeFiles) {
-                val file = projectDir.findFileByRelativePath(path)
-                if (file != null && file.exists()) {
-                    contextState.applyStateRecursively(file, ContextLevel.COMPLETE, checkIgnore = true)
+                val projectDir = project.guessProjectDir() ?: return@readAction
+                for (path in command.includeFiles) {
+                    val file = projectDir.findFileByRelativePath(path)
+                    if (file != null && file.exists()) {
+                        contextState.applyStateRecursively(file, ContextLevel.COMPLETE, checkIgnore = true)
+                    }
                 }
             }
-        }
-            .finishOnUiThread(ModalityState.nonModal()) {
+            ApplicationManager.getApplication().invokeLater({
                 refreshUi()
-            }
-            .submit(AppExecutorUtil.getAppExecutorService())
+            }, ModalityState.nonModal())
+        }
     }
 
     private fun applyFileMentionContext(file: VirtualFile) {
-        ReadAction.nonBlocking<Unit> {
-            if (file.isValid) {
-                contextState.applyStateRecursively(file, ContextLevel.COMPLETE, checkIgnore = true)
+        contextState.scope.launch {
+            readAction {
+                if (file.isValid) {
+                    contextState.applyStateRecursively(file, ContextLevel.COMPLETE, checkIgnore = true)
+                }
             }
-        }
-            .finishOnUiThread(ModalityState.nonModal()) {
+            ApplicationManager.getApplication().invokeLater({
                 refreshUi()
-            }
-            .submit(AppExecutorUtil.getAppExecutorService())
+            }, ModalityState.nonModal())
+        }
     }
 
     private fun setupTopToolbar(): JPanel {
@@ -472,13 +481,7 @@ class ContextComposerPanel(private val project: Project) : Disposable {
                     val editor = FileEditorManager.getInstance(project).selectedTextEditor
                     val file = editor?.document?.let { FileDocumentManager.getInstance().getFile(it) }
                     if (file != null) {
-                        ReadAction.nonBlocking<Unit> {
-                            contextState.addExternalFiles(listOf(file))
-                        }.finishOnUiThread(ModalityState.nonModal()) {
-                            vfsStructureDirty = true
-                            mainTreeForceRebuild = true
-                            refreshUi()
-                        }.submit(AppExecutorUtil.getAppExecutorService())
+                        attachExternalFiles { listOf(file) }
                     } else {
                         Messages.showInfoMessage("No active editor found.", "Add Active File")
                     }
@@ -495,14 +498,7 @@ class ContextComposerPanel(private val project: Project) : Disposable {
                         description = "Select files or folders to include in Context Bridge"
                     }
                     FileChooser.chooseFiles(descriptor, project, null) { files ->
-                        if (files.isEmpty()) return@chooseFiles
-                        ReadAction.nonBlocking<Unit> {
-                            contextState.addExternalFiles(files)
-                        }.finishOnUiThread(ModalityState.nonModal()) {
-                            vfsStructureDirty = true
-                            mainTreeForceRebuild = true
-                            refreshUi()
-                        }.submit(AppExecutorUtil.getAppExecutorService())
+                        attachExternalFiles { files }
                     }
                 }
             })
