@@ -9,7 +9,6 @@ import com.intellij.openapi.application.readAction
 import com.intellij.openapi.fileEditor.FileEditorManager
 import com.intellij.openapi.progress.ProgressManager
 import com.intellij.openapi.project.Project
-import com.intellij.openapi.project.guessProjectDir
 import com.intellij.openapi.vcs.changes.ChangeListManager
 import com.intellij.openapi.vfs.VirtualFile
 import com.intellij.psi.PsiElement
@@ -166,7 +165,6 @@ object ContextSuggestionEngine {
         }
 
         // 4. Filter & Sort
-        val projectDir = readAction { project.guessProjectDir() }
         val dedupCache = contextState.getDedupCache()
         val validSuggestions = mutableSetOf<VirtualFile>()
 
@@ -185,7 +183,7 @@ object ContextSuggestionEngine {
                 if (currentLevel == maxLevel) return@readAction false
 
                 // SMART OMISSION: Check if the AI already has the max level in its memory
-                !PayloadGenerator.isFileDeduped(project, projectDir, contextState, file, maxLevel, dedupCache)
+                !PayloadGenerator.isFileDeduped(project, contextState, file, maxLevel, dedupCache)
             }
 
             if (shouldInclude) {

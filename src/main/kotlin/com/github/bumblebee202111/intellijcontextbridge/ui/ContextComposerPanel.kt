@@ -444,9 +444,8 @@ class ContextComposerPanel(private val project: Project) : Disposable {
                     contextState.clearFileStates()
                 }
 
-                val projectDir = project.guessProjectDir() ?: return@readAction
                 for (path in command.includeFiles) {
-                    val file = projectDir.findFileByRelativePath(path)
+                    val file = contextState.resolveFile(path)
                     if (file != null && file.exists()) {
                         contextState.applyStateRecursively(file, ContextLevel.COMPLETE, checkIgnore = true)
                     }
@@ -933,25 +932,22 @@ class ContextComposerPanel(private val project: Project) : Disposable {
             val suggestions = ContextSuggestionEngine.calculateSuggestions(project, contextState)
 
             val newDedupedFiles = mutableSetOf<VirtualFile>()
-            val projectDir = readAction { project.guessProjectDir() }
+            val cache = contextState.getDedupCache()
+            for ((file, currentLevel) in contextState.fileStates) {
+                if (currentLevel == ContextLevel.NONE || currentLevel == ContextLevel.MIXED) continue
 
-            if (projectDir != null) {
-                val cache = contextState.getDedupCache()
-                for ((file, currentLevel) in contextState.fileStates) {
-                    if (currentLevel == ContextLevel.NONE || currentLevel == ContextLevel.MIXED) continue
+                val isDeduped = readAction {
+                    ProgressManager.checkCanceled()
+                    if (!file.isValid) return@readAction false
+                    PayloadGenerator.isFileDeduped(project, contextState, file, currentLevel, cache)
+                }
 
-                    val isDeduped = readAction {
-                        ProgressManager.checkCanceled()
-                        if (!file.isValid) return@readAction false
-                        PayloadGenerator.isFileDeduped(project, projectDir, contextState, file, currentLevel, cache)
-                    }
-
-                    if (isDeduped) {
-                        newDedupedFiles.add(file)
-                    }
+                if (isDeduped) {
+                    newDedupedFiles.add(file)
                 }
             }
 
+            val projectDir = readAction { project.guessProjectDir() }
             val shouldRefreshVfs = vfsStructureDirty
             val fileMentionItems = if (shouldRefreshVfs) {
                 readAction {

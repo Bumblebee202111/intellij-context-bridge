@@ -90,6 +90,15 @@ class ContextState(
         return fileStates[file] ?: ContextLevel.NONE
     }
 
+    fun getRelativePath(file: VirtualFile): String {
+        val projectDir = project.guessProjectDir()
+        return if (projectDir != null) {
+            VfsUtilCore.getRelativePath(file, projectDir) ?: file.path
+        } else {
+            file.path
+        }
+    }
+
     fun resolveFile(path: String): VirtualFile? {
         val normalized = path.replace('\\', '/')
         val projectDir = project.guessProjectDir()

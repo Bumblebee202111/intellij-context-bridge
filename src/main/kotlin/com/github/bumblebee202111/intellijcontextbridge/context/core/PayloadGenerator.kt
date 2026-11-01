@@ -13,7 +13,6 @@ import com.intellij.openapi.components.service
 import com.intellij.openapi.fileEditor.FileDocumentManager
 import com.intellij.openapi.progress.ProgressManager
 import com.intellij.openapi.project.Project
-import com.intellij.openapi.project.guessProjectDir
 import com.intellij.openapi.vfs.VfsUtilCore
 import com.intellij.openapi.vfs.VirtualFile
 import java.util.Base64
@@ -57,14 +56,12 @@ object PayloadGenerator {
 
     fun isFileDeduped(
         project: Project,
-        projectDir: VirtualFile?,
         contextState: ContextState,
         file: VirtualFile,
         level: ContextLevel,
         dedupCache: Map<String, FileStateRecord>
     ): Boolean {
-        if (projectDir == null) return false
-        val relativePath = getRelativePath(file, projectDir)
+        val relativePath = contextState.getRelativePath(file)
         val cachedRecord = dedupCache[relativePath] ?: return false
         if (cachedRecord.level != level) return false
 
@@ -91,7 +88,6 @@ object PayloadGenerator {
         isCommit: Boolean = false,
         dynamicVariables: Map<String, String> = emptyMap()
     ): PayloadGenerationResult {
-        val projectDir = project.guessProjectDir()
         val attachments = mutableListOf<AiAttachment>()
 
         val currentCache = contextState.getDedupCache()
@@ -138,7 +134,7 @@ object PayloadGenerator {
                 if (!file.isValid) return@readAction null
                 if (file.isDirectory && file.children.isNotEmpty()) return@readAction null
 
-                val relativePath = getRelativePath(file, projectDir)
+                val relativePath = contextState.getRelativePath(file)
                 val previousRecord = currentCache[relativePath]
                 val isText = !file.isDirectory && ContextCapabilityUtil.isTextFile(file)
 

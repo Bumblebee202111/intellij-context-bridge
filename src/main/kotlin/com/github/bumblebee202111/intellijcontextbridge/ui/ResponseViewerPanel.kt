@@ -50,7 +50,8 @@ class ResponseViewerPanel(
     private val onReadFileRequested: (ReadFileTool, Boolean) -> Unit,
     private val onFocusResponseTab: () -> Unit
 ) {
-    private val scope = project.service<ContextState>().scope
+    private val contextState = project.service<ContextState>()
+    private val scope = contextState.scope
 
     private val responseArea = JBTextArea().apply {
         lineWrap = true
@@ -111,9 +112,7 @@ class ResponseViewerPanel(
             if (action is EditFileTool) {
                 scope.launch {
                     val virtualFile = readAction {
-                        val projectPath = project.guessProjectDir()?.path ?: return@readAction null
-                        val targetFile = File(projectPath, action.filePath)
-                        LocalFileSystem.getInstance().findFileByIoFile(targetFile)
+                        contextState.resolveFile(action.filePath)
                     }
                     if (virtualFile != null) {
                         ApplicationManager.getApplication().invokeLater({
@@ -233,9 +232,18 @@ class ResponseViewerPanel(
             is EditFileTool -> {
                 scope.launch {
                     val resolved = readAction {
-                        val projectPath = project.guessProjectDir()?.path ?: return@readAction null
-                        val targetFile = File(projectPath, action.filePath)
-                        val vf = LocalFileSystem.getInstance().findFileByIoFile(targetFile)
+                        val vf = contextState.resolveFile(action.filePath)
+                        val targetFile = if (vf != null) {
+                            File(vf.path)
+                        } else {
+                            val rawFile = File(action.filePath)
+                            if (rawFile.isAbsolute) {
+                                rawFile
+                            } else {
+                                val projectPath = project.guessProjectDir()?.path ?: return@readAction null
+                                File(projectPath, action.filePath)
+                            }
+                        }
                         val ft = vf?.fileType ?: FileTypeManager.getInstance().getFileTypeByExtension(action.language)
                         val doc = vf?.let { FileDocumentManager.getInstance().getDocument(it) }
                         Triple(targetFile, vf, ft to doc)
@@ -290,9 +298,7 @@ class ResponseViewerPanel(
             is DeleteFileTool -> {
                 scope.launch {
                     val psiFile = readAction {
-                        val projectPath = project.guessProjectDir()?.path ?: return@readAction null
-                        val virtualFile = LocalFileSystem.getInstance().findFileByIoFile(File(projectPath, action.filePath))
-                        virtualFile?.let { PsiManager.getInstance(project).findFile(it) }
+                        contextState.resolveFile(action.filePath)?.let { PsiManager.getInstance(project).findFile(it) }
                     }
                     ApplicationManager.getApplication().invokeLater({
                         if (psiFile != null && psiFile.isValid) {
@@ -305,17 +311,12 @@ class ResponseViewerPanel(
             }
             is RenameFileTool -> {
                 scope.launch {
-                    val resolved = readAction {
-                        val projectPath = project.guessProjectDir()?.path ?: return@readAction null
-                        val virtualFile = LocalFileSystem.getInstance().findFileByIoFile(File(projectPath, action.sourcePath))
-                        val targetName = File(projectPath, action.targetPath).name
-                        val psiFile = virtualFile?.let { PsiManager.getInstance(project).findFile(it) }
-                        psiFile to targetName
+                    val psiFile = readAction {
+                        contextState.resolveFile(action.sourcePath)?.let { PsiManager.getInstance(project).findFile(it) }
                     }
+                    val targetName = File(action.targetPath).name
                     ApplicationManager.getApplication().invokeLater({
-                        val psiFile = resolved?.first
-                        val targetName = resolved?.second
-                        if (psiFile != null && psiFile.isValid && targetName != null) {
+                        if (psiFile != null && psiFile.isValid) {
                             RenameProcessor(project, psiFile, targetName, false, false).run()
                         } else {
                             Messages.showErrorDialog("Source file not found: ${action.sourcePath}", "Rename Error")
