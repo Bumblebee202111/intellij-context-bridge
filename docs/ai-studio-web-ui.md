@@ -14,8 +14,9 @@ This document contains dense, factual observations regarding the native Google A
   - *Inheritance:* Triggering a new prompt from within an existing chat creates an "Untitled prompt" that natively clones the predecessor's model, system instructions, tools, and temperature.
   - *Persistence:* Chat titles auto-generate after the first generation, updating URL pathnames dynamically.
 - **Parameter & Tool Dynamics:**
+  - *Model Selection:* The active model card (`.model-selector-card`) exposes the model identifier slug via `[data-test-id="model-name"]`. Clicking it mounts a `<ms-model-carousel>` dialog containing category filter chips (`[data-test-category-button]`, which persist the user's last-selected category) and model rows (`button[id="model-carousel-row-models/<slug>"]`).
   - *Model Swaps:* Changing the active model immediately resets all companion parameters (Temperature, Thinking Level, Tools) to that specific model's factory defaults.
-  - *Conditional UI:* Controls such as the "Thinking Level" dropdown mount and unmount asynchronously based on the active model's reasoning capabilities.
+  - *Conditional UI:* Controls such as the "Thinking Level" dropdown and top-level "Temperature" slider mount and unmount asynchronously based on the active model's generation and reasoning capabilities.
   - *System Instructions:* Managed via dialog overlays (`[data-test-system-instructions-card]`), which persist named instruction profiles directly in client storage.
 - **Generation & Artifacts:**
   - *Run / Stop Lifecycle:* The primary submission button (`ms-run-button button`) mutates in-place during active generation to display a `.spin` (`progress_activity`) indicator and a `Stop` label, reverting once streaming finishes, errors, or is aborted.

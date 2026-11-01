@@ -21,6 +21,7 @@ import java.util.Base64
 object PayloadGenerator {
 
     private val FILE_MENTION_REGEX = Regex("(?:^|\\s)@([a-zA-Z0-9_./-]+)")
+    private val VCS_DIFF_TOKEN_REGEX = Regex("(?<!`)\\{\\{vcs_diff\\}\\}(?!`)")
 
     private fun loadPrompt(filename: String): String {
         return PayloadGenerator::class.java.getResourceAsStream("/prompts/$filename")
@@ -102,9 +103,9 @@ object PayloadGenerator {
         val commandRegistry = project.service<CommandRegistryService>()
         val (rawCommands, remainingPrompt) = commandRegistry.parseLeadingCommands(userPrompt)
         val appliedCommands = rawCommands.map { cmd ->
-            if (cmd.promptBody.contains("{{vcs_diff}}")) {
+            if (VCS_DIFF_TOKEN_REGEX.containsMatchIn(cmd.promptBody)) {
                 val diff = dynamicVariables["vcs_diff"] ?: readAction { VcsUtil.getProjectDiff(project) }
-                cmd.copy(promptBody = cmd.promptBody.replace("{{vcs_diff}}", diff))
+                cmd.copy(promptBody = VCS_DIFF_TOKEN_REGEX.replace(cmd.promptBody) { diff })
             } else {
                 cmd
             }
