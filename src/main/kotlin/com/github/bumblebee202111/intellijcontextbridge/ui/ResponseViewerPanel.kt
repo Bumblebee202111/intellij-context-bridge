@@ -47,7 +47,8 @@ import javax.swing.*
 
 class ResponseViewerPanel(
     private val project: Project,
-    private val onReadFileRequested: (ReadFileTool) -> Unit
+    private val onReadFileRequested: (ReadFileTool, Boolean) -> Unit,
+    private val onFocusResponseTab: () -> Unit
 ) {
     private val scope = project.service<ContextState>().scope
 
@@ -147,23 +148,7 @@ class ResponseViewerPanel(
 
         val parseButton = JButton("Parse Markdown").apply {
             addActionListener {
-                val tools = ToolParser.parse(responseArea.text)
-
-                // Automatically inject commit messages on manual parse
-                val commitTools = tools.filterIsInstance<FillCommitMessageTool>()
-                commitTools.forEach {
-                    project.getService(CommitBridgeService::class.java).injectCommitMessage(it.message)
-                }
-
-                val hasActions = handleIncomingMarkdown(responseArea.text, tools, showEmptyWarning = true)
-
-                val nonCommitTools = tools.filterNot { it is FillCommitMessageTool }
-                val readTools = nonCommitTools.filterIsInstance<ReadFileTool>()
-                if (hasActions && readTools.isNotEmpty() && nonCommitTools.all { it is ReadFileTool }) {
-                    val allPaths = readTools.flatMap { it.paths }.distinct()
-                    val combinedReason = readTools.mapNotNull { it.explanation.takeIf(String::isNotBlank) }.joinToString("; ")
-                    onReadFileRequested(ReadFileTool(allPaths, combinedReason))
-                }
+                processMarkdown(responseArea.text, fromWebSocket = false)
             }
         }
 
@@ -199,10 +184,48 @@ class ResponseViewerPanel(
         return tools.isNotEmpty()
     }
 
+    fun processMarkdown(markdownText: String, fromWebSocket: Boolean) {
+        val tools = ToolParser.parse(markdownText)
+
+        val commitTools = tools.filterIsInstance<FillCommitMessageTool>()
+        commitTools.forEach {
+            project.getService(CommitBridgeService::class.java).injectCommitMessage(it.message)
+        }
+
+        val nonCommitTools = tools.filterNot { it is FillCommitMessageTool }
+        if (fromWebSocket && commitTools.isNotEmpty() && nonCommitTools.isEmpty()) {
+            return
+        }
+
+        if (fromWebSocket) {
+            responseArea.text = markdownText
+        }
+        listModel.clear()
+        tools.forEach { listModel.addElement(it) }
+
+        if (!fromWebSocket && tools.isEmpty() && markdownText.isNotBlank()) {
+            Messages.showInfoMessage("No actions found in the response.", "Parse Result")
+            return
+        }
+
+        val readTools = nonCommitTools.filterIsInstance<ReadFileTool>()
+        val hasOtherActions = nonCommitTools.any { it !is ReadFileTool }
+
+        if (readTools.isNotEmpty()) {
+            val allPaths = readTools.flatMap { it.paths }.distinct()
+            val combinedReason = readTools.mapNotNull { it.explanation.takeIf(String::isNotBlank) }.joinToString("; ")
+            onReadFileRequested(ReadFileTool(allPaths, combinedReason), !hasOtherActions)
+        }
+
+        if (fromWebSocket && hasOtherActions) {
+            onFocusResponseTab()
+        }
+    }
+
     private fun executeAction(action: AgentTool) {
         when (action) {
             is ReadFileTool -> {
-                onReadFileRequested(action)
+                onReadFileRequested(action, true)
             }
             is FillCommitMessageTool -> {
                 project.getService(CommitBridgeService::class.java).injectCommitMessage(action.message)

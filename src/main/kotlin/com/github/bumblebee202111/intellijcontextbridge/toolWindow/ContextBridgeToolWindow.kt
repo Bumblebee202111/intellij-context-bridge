@@ -1,14 +1,10 @@
 package com.github.bumblebee202111.intellijcontextbridge.toolWindow
 
-import com.github.bumblebee202111.intellijcontextbridge.parser.FillCommitMessageTool
-import com.github.bumblebee202111.intellijcontextbridge.parser.ReadFileTool
-import com.github.bumblebee202111.intellijcontextbridge.parser.ToolParser
 import com.github.bumblebee202111.intellijcontextbridge.server.ContextBridgeServer
 import com.github.bumblebee202111.intellijcontextbridge.state.ContextState
 import com.github.bumblebee202111.intellijcontextbridge.ui.ContextComposerPanel
 import com.github.bumblebee202111.intellijcontextbridge.ui.ResponseViewerPanel
 import com.github.bumblebee202111.intellijcontextbridge.ui.SessionHistoryPanel
-import com.github.bumblebee202111.intellijcontextbridge.vcs.CommitBridgeService
 import com.intellij.openapi.Disposable
 import com.intellij.openapi.application.ApplicationManager
 import com.intellij.openapi.project.Project
@@ -35,10 +31,18 @@ class ContextBridgeToolWindow(private val project: Project) : Disposable {
             val composerPanel = ContextComposerPanel(project)
             Disposer.register(this, composerPanel)
 
-            val receiverPanel = ResponseViewerPanel(project) { readFileTool ->
-                composerPanel.handleReadFileToolCall(readFileTool.paths, readFileTool.explanation)
-                tabbedPane.selectedIndex = 0
-            }
+            val receiverPanel = ResponseViewerPanel(
+                project = project,
+                onReadFileRequested = { readFileTool, switchToComposer ->
+                    composerPanel.handleReadFileToolCall(readFileTool.paths, readFileTool.explanation)
+                    if (switchToComposer) {
+                        tabbedPane.selectedIndex = 0
+                    }
+                },
+                onFocusResponseTab = {
+                    tabbedPane.selectedIndex = 1
+                }
+            )
 
             val historyPanel = SessionHistoryPanel(project) {
                 composerPanel.refreshUi()
@@ -57,35 +61,7 @@ class ContextBridgeToolWindow(private val project: Project) : Disposable {
                 if (tabId != contextState.activeTabId) return@addMessageListener
 
                 SwingUtilities.invokeLater {
-                    // 1. Parse unified tools
-                    val tools = ToolParser.parse(markdownText)
-
-                    // Automatically inject commit messages
-                    val commitTools = tools.filterIsInstance<FillCommitMessageTool>()
-                    commitTools.forEach {
-                        project.getService(CommitBridgeService::class.java).injectCommitMessage(it.message)
-                    }
-
-                    val nonCommitTools = tools.filterNot { it is FillCommitMessageTool }
-                    if (commitTools.isNotEmpty() && nonCommitTools.isEmpty()) {
-                        return@invokeLater
-                    }
-
-                    val readTools = nonCommitTools.filterIsInstance<ReadFileTool>()
-                    if (readTools.isNotEmpty()) {
-                        val allPaths = readTools.flatMap { it.paths }.distinct()
-                        val combinedReason = readTools.mapNotNull { it.explanation.takeIf(String::isNotBlank) }.joinToString("; ")
-                        composerPanel.handleReadFileToolCall(allPaths, combinedReason)
-                    }
-
-                    // 2. Pass markdown and ALL tools to the Response Panel
-                    val hasActions = receiverPanel.handleIncomingMarkdown(markdownText, tools)
-
-                    // 3. Switch to the appropriate tab when actionable tools arrive
-                    if (hasActions) {
-                        val hasOtherActions = nonCommitTools.any { it !is ReadFileTool }
-                        tabbedPane.selectedIndex = if (readTools.isNotEmpty() && !hasOtherActions) 0 else 1
-                    }
+                    receiverPanel.processMarkdown(markdownText, fromWebSocket = true)
                 }
             }
 
