@@ -23,6 +23,7 @@
     win.__cbIsBridgeChat = false;
     win.__cbProjectName = 'IntelliJ';
 
+    const FLASH_MODEL_ID = 'gemini-3.8-flash';
     const PORTS = Array.from({length: 10}, (_, i) => 37373 + i);
     const activeSockets = new Map();
     const tabId = Math.random().toString(36).substring(2, 10);
@@ -252,34 +253,56 @@
             },
             Controls: {
                 getActiveModelName() {
-                    const card = document.querySelector('.model-selector-card');
-                    return card ? card.textContent.trim().replace(/\s+/g, ' ') : null;
+                    const slugEl = document.querySelector('.model-selector-card [data-test-id="model-name"]');
+                    if (slugEl && slugEl.textContent.trim()) {
+                        return slugEl.textContent.trim();
+                    }
+                    const titleEl = document.querySelector('.model-selector-card .title');
+                    return titleEl ? titleEl.textContent.trim() : null;
                 },
                 async setModel(modelId) {
+                    if (!modelId) return false;
+                    const targetSlug = modelId.replace(/^models\//, '').trim();
+                    if (this.getActiveModelName() === targetSlug) return true;
+
                     const selectorBtn = document.querySelector('.model-selector-card');
-                    if (selectorBtn) {
-                        selectorBtn.click();
-                        const option = await AIStudioDOM.Utils.waitForElement(`button[id="model-carousel-row-${modelId}"]`, 3000);
-                        if (option) {
-                            option.click();
-                        }
-                        await new Promise(r => setTimeout(r, 500));
-                    }
-                },
-                async setModelByName(modelName) {
-                    if (!modelName || this.getActiveModelName() === modelName) return;
-                    const selectorBtn = document.querySelector('.model-selector-card');
-                    if (!selectorBtn) return;
+                    if (!selectorBtn) return false;
 
                     selectorBtn.click();
-                    const panel = await AIStudioDOM.Utils.waitForElement('mat-dialog-container, .mat-mdc-menu-panel, .model-selector-menu', 3000);
-                    if (panel) {
-                        const options = Array.from(document.querySelectorAll('button, mat-option, .mat-mdc-option, [role="menuitem"]'));
-                        const target = options.find(opt => opt.textContent.replace(/\s+/g, ' ').trim().includes(modelName));
-                        if (target) target.click();
-                        else document.body.click();
+                    const carousel = await AIStudioDOM.Utils.waitForElement('ms-model-carousel', 3000);
+                    if (!carousel) return false;
+
+                    const rowSelector = `button[id="model-carousel-row-models/${targetSlug}"]`;
+                    let option = await AIStudioDOM.Utils.waitForElement(rowSelector, 1000);
+
+                    if (!option) {
+                        const categoryBtns = Array.from(carousel.querySelectorAll('button[data-test-category-button]'));
+                        const geminiChip = categoryBtns.find(btn => btn.textContent.trim() === 'Gemini');
+                        if (geminiChip && geminiChip.getAttribute('aria-selected') !== 'true') {
+                            geminiChip.click();
+                            option = await AIStudioDOM.Utils.waitForElement(rowSelector, 2000);
+                        }
                     }
-                    await new Promise(r => setTimeout(r, 800));
+
+                    if (!option) {
+                        const closeBtn = document.querySelector('mat-dialog-container button[data-test-close-button], mat-dialog-container button[aria-label="Close panel"]');
+                        if (closeBtn) closeBtn.click();
+                        else document.querySelector('.cdk-overlay-backdrop')?.click();
+                        await new Promise(r => setTimeout(r, 300));
+                        return false;
+                    }
+
+                    option.click();
+
+                    for (let i = 0; i < 15; i++) {
+                        await new Promise(r => setTimeout(r, 100));
+                        if (this.getActiveModelName() === targetSlug) {
+                            await new Promise(r => setTimeout(r, 300));
+                            return true;
+                        }
+                    }
+
+                    return this.getActiveModelName() === targetSlug;
                 },
                 async setThinkingLevel(level) {
                     let select = document.querySelector('mat-select[aria-label="Thinking Level"]');
@@ -549,7 +572,7 @@
                     if (!this.snapshot) return;
                     this.isProgrammaticUpdate = true;
                     try {
-                        await AIStudioDOM.Controls.setModelByName(this.snapshot.modelName);
+                        await AIStudioDOM.Controls.setModel(this.snapshot.modelName);
                         await AIStudioDOM.Controls.applyParameters(this.snapshot);
                     } finally {
                         this.isProgrammaticUpdate = false;
@@ -832,12 +855,11 @@
                     const totalStart = performance.now();
 
                     try {
-                        steps.push(await this.runWithTimeout('Set Model to 3.7 Flash', async () => {
-                            await AIStudioDOM.Controls.setModel('models/gemini-3.7-flash');
-
+                        steps.push(await this.runWithTimeout(`Set Model to ${FLASH_MODEL_ID}`, async () => {
+                            const swapped = await AIStudioDOM.Controls.setModel(FLASH_MODEL_ID);
                             const currentModel = AIStudioDOM.Controls.getActiveModelName();
-                            if (!currentModel || !currentModel.includes('3.7 Flash')) {
-                                throw new Error(`Model swap failed. Current text: ${currentModel}`);
+                            if (!swapped || currentModel !== FLASH_MODEL_ID) {
+                                throw new Error(`Model swap failed. Expected: ${FLASH_MODEL_ID}, Got: ${currentModel}`);
                             }
                         }));
 
@@ -1071,6 +1093,13 @@
             AIStudioDOM.Input.setPromptText(promptText);
 
             setTimeout(async () => {
+                if (options.expectedModel && AIStudioDOM.Controls.getActiveModelName() !== options.expectedModel) {
+                    showToast(`❌ Active model mismatch (${AIStudioDOM.Controls.getActiveModelName()})! Prompt left unsent.`, '#F44336', 5000);
+                    if (options.onAbort) await options.onAbort();
+                    isProcessing = false;
+                    return;
+                }
+
                 const runBtn = await AIStudioDOM.Utils.waitForElement('ms-run-button button');
                 if (!runBtn) {
                     if (options.onAbort) await options.onAbort();
@@ -1144,15 +1173,27 @@
 
             AIStudioDOM.Preferences.snapshotCurrentState();
             AIStudioDOM.Preferences.isProgrammaticUpdate = true;
+            let swapped = false;
             try {
-                await AIStudioDOM.Controls.setModel('models/gemini-3.7-flash');
-                await AIStudioDOM.Controls.setThinkingLevel('High');
-                await AIStudioDOM.Controls.setUrlContext(true);
+                swapped = await AIStudioDOM.Controls.setModel(FLASH_MODEL_ID);
+                if (swapped) {
+                    await AIStudioDOM.Controls.setThinkingLevel('High');
+                    await AIStudioDOM.Controls.setUrlContext(true);
+                }
             } finally {
                 AIStudioDOM.Preferences.isProgrammaticUpdate = false;
             }
 
+            if (!swapped || AIStudioDOM.Controls.getActiveModelName() !== FLASH_MODEL_ID) {
+                AIStudioDOM.Input.setPromptText(payloadObj.text);
+                AIStudioDOM.Preferences.snapshot = null;
+                isProcessing = false;
+                showToast(`❌ Model swap to ${FLASH_MODEL_ID} failed! Prompt left unsent.`, '#F44336', 5000);
+                return;
+            }
+
             await submitAndMonitorGeneration(payloadObj.text, {
+                expectedModel: FLASH_MODEL_ID,
                 generatingToast: '⏳ Generating Commit Message...',
                 extractingToast: '⏳ Extracting Commit Message...',
                 successToast: '✅ Sent Commit Message to IDE',
