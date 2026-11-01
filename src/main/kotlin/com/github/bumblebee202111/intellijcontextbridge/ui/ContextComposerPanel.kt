@@ -214,12 +214,7 @@ class ContextComposerPanel(private val project: Project) : Disposable {
         suggestionTreeContainer.add(JBScrollPane(suggestionTree), BorderLayout.CENTER)
         requestedTreeContainer.add(JBScrollPane(requestedTree), BorderLayout.CENTER)
 
-        val topTreesSplitter = JBSplitter(true, 0.5f).apply {
-            firstComponent = requestedTreeContainer
-            secondComponent = suggestionTreeContainer
-        }
-
-        val treeSplitter = JBSplitter(true, 0.3f).apply {
+        treeSplitter.apply {
             firstComponent = topTreesSplitter
             secondComponent = mainTreeContainer
             addComponentListener(object : ComponentAdapter() {
