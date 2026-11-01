@@ -1,10 +1,13 @@
 package com.github.bumblebee202111.intellijcontextbridge.context.extractors.js
 
 import com.intellij.lang.ecmascript6.psi.ES6ExportDeclaration
+import com.intellij.lang.ecmascript6.psi.ES6ExportDefaultAssignment
 import com.intellij.lang.ecmascript6.psi.ES6ImportDeclaration
+import com.intellij.lang.javascript.psi.JSBlockStatement
 import com.intellij.lang.javascript.psi.JSFunction
 import com.intellij.lang.javascript.psi.JSVarStatement
 import com.intellij.lang.javascript.psi.ecmal4.JSClass
+import com.intellij.openapi.progress.ProgressManager
 import com.intellij.psi.PsiElement
 import com.intellij.psi.PsiNamedElement
 
@@ -68,5 +71,60 @@ object JsGraphUtil {
                 target.add(element)
             }
         }
+    }
+
+    fun isSharedDeclaration(element: PsiElement): Boolean {
+        if (element is ES6ImportDeclaration) return true
+        if (element is ES6ExportDeclaration) return true
+        if (element is ES6ExportDefaultAssignment) return true
+        if (element is JSClass) return true
+
+        val name = element.javaClass.simpleName
+        return name.contains("TypeAlias") ||
+            name.contains("TypeScriptEnum") ||
+            name.contains("TypeScriptModule")
+    }
+
+    fun stripFunctionBlocks(element: PsiElement): String {
+        val fileText = element.containingFile.text
+        val replacements = mutableListOf<Pair<IntRange, String>>()
+
+        fun visit(el: PsiElement) {
+            ProgressManager.checkCanceled()
+            if (el is JSBlockStatement && el.parent is JSFunction) {
+                replacements.add(el.textRange.startOffset..el.textRange.endOffset to "{ /* ... */ }")
+                return
+            }
+
+            if (el is JSFunction && el.javaClass.simpleName.contains("ArrowFunction")) {
+                val lastChild = el.lastChild
+                if (lastChild != null && lastChild !is JSBlockStatement) {
+                    replacements.add(lastChild.textRange.startOffset..lastChild.textRange.endOffset to "/* ... */")
+                    return
+                }
+            }
+
+            el.children.forEach { visit(it) }
+        }
+
+        visit(element)
+
+        if (replacements.isEmpty()) return element.text
+
+        replacements.sortBy { it.first.first }
+
+        val sb = StringBuilder()
+        var currentOffset = element.textRange.startOffset
+
+        for ((range, replacement) in replacements) {
+            if (range.first >= currentOffset) {
+                sb.append(fileText.substring(currentOffset, range.first))
+                sb.append(replacement)
+                currentOffset = range.last
+            }
+        }
+        sb.append(fileText.substring(currentOffset, element.textRange.endOffset))
+
+        return sb.toString()
     }
 }

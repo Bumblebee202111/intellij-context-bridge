@@ -1,12 +1,10 @@
 package com.github.bumblebee202111.intellijcontextbridge.context.extractors.js
 
 import com.github.bumblebee202111.intellijcontextbridge.context.ep.LanguageSkeletonExtractor
-import com.intellij.lang.ecmascript6.psi.ES6ExportDeclaration
-import com.intellij.lang.ecmascript6.psi.ES6ExportDefaultAssignment
-import com.intellij.lang.ecmascript6.psi.ES6ImportDeclaration
-import com.intellij.lang.javascript.psi.*
-import com.intellij.lang.javascript.psi.ecmal4.JSClass
-import com.intellij.openapi.progress.ProgressManager
+import com.intellij.lang.javascript.psi.JSCallExpression
+import com.intellij.lang.javascript.psi.JSEmbeddedContent
+import com.intellij.lang.javascript.psi.JSExpressionStatement
+import com.intellij.lang.javascript.psi.JSVarStatement
 import com.intellij.psi.PsiElement
 import com.intellij.psi.PsiFile
 import com.intellij.psi.PsiWhiteSpace
@@ -87,7 +85,7 @@ class VueSkeletonExtractor : LanguageSkeletonExtractor {
             if (element is PsiWhiteSpace) continue
 
             if (isWhitelistSetupStatement(element)) {
-                builder.append(element.text.trimEnd()).append("\n")
+                builder.append(JsGraphUtil.stripFunctionBlocks(element).trimEnd()).append("\n")
             } else {
                 hasOmitted = true
             }
@@ -99,13 +97,7 @@ class VueSkeletonExtractor : LanguageSkeletonExtractor {
     }
 
     private fun isWhitelistSetupStatement(element: PsiElement): Boolean {
-        if (element is ES6ImportDeclaration) return true
-        if (element is ES6ExportDeclaration) return true
-        if (element is ES6ExportDefaultAssignment) return true
-        if (element is JSClass) return true
-
-        val name = element.javaClass.simpleName
-        if (name.contains("TypeScriptTypeAlias") || name.contains("TypeAlias")) return true
+        if (JsGraphUtil.isSharedDeclaration(element)) return true
 
         if (element is JSVarStatement) {
             val init = element.declarations.firstOrNull()?.initializer as? JSCallExpression
@@ -123,48 +115,7 @@ class VueSkeletonExtractor : LanguageSkeletonExtractor {
     }
 
     private fun processStandardScript(jsContent: PsiElement, builder: StringBuilder) {
-        val stripped = stripFunctionBlocks(jsContent)
+        val stripped = JsGraphUtil.stripFunctionBlocks(jsContent)
         builder.append(stripped.trim()).append("\n")
-    }
-
-    private fun stripFunctionBlocks(element: PsiElement): String {
-        val fileText = element.containingFile.text
-        val replacements = mutableListOf<Pair<IntRange, String>>()
-
-        fun visit(el: PsiElement) {
-            ProgressManager.checkCanceled()
-            if (el is JSBlockStatement && el.parent is JSFunction) {
-                replacements.add(el.textRange.startOffset..el.textRange.endOffset to "{ /* ... */ }")
-                return
-            }
-            if (el is JSFunction && el.javaClass.simpleName.contains("ArrowFunction")) {
-                val lastChild = el.lastChild
-                if (lastChild != null && lastChild !is JSBlockStatement) {
-                    replacements.add(lastChild.textRange.startOffset..lastChild.textRange.endOffset to "/* ... */")
-                    return
-                }
-            }
-            el.children.forEach { visit(it) }
-        }
-
-        visit(element)
-
-        if (replacements.isEmpty()) return element.text
-
-        replacements.sortBy { it.first.first }
-
-        val sb = StringBuilder()
-        var currentOffset = element.textRange.startOffset
-
-        for ((range, replacement) in replacements) {
-            if (range.first >= currentOffset) {
-                sb.append(fileText.substring(currentOffset, range.first))
-                sb.append(replacement)
-                currentOffset = range.last
-            }
-        }
-        sb.append(fileText.substring(currentOffset, element.textRange.endOffset))
-
-        return sb.toString()
     }
 }
