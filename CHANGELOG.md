@@ -14,7 +14,7 @@
 - **Diagnostic Bridge**: Two-way IDE-to-userscript telemetry to verify background DOM automation health under browser throttling.
 - **Slash Commands & Meta-Commands**: Stackable `/plan`, `/lore`, `/commit`, `/cmd`, and targeted `/review-*` macros with `.contextbridge/commands/` shadowing and `{{vcs_diff}}` interpolation.
 - **Resilient Tool Protocol**: Unified `AgentTool` hierarchy using namespaced `ide:` XML blocks inside Markdown code blocks and `<![CDATA[...]]>` payloads, paired with the Skeleton Patch protocol.
-- **Interactive Response Viewer**: Unified response panel for reviewing and executing `read_file`, `propose_edit` (via native `DiffManager`), `rename_file`, `delete_file`, and `fill_commit_message` tools.
+- **Unified Context & Chat Workspace**: Switchable Project-style context tree and chronological chat timeline with persistent prompt composer and inline tool cards (`read_file`, `propose_edit` via native `DiffManager`, `rename_file`, `delete_file`, and `fill_commit_message`).
 - **Ephemeral Commit Workflow**: One-click AI commit message generation from VCS panels with transient model configuration, chat cleanup, and downward Swing input injection.
 - **Proactive Context Suggestions**: Background suggestion staging tree driven by active tabs, Git changes, `@` mentions, and IDF-weighted PSI usage searches with smart cache omission.
 - **Session History & Deduplication**: Persistent turn timeline with undo support and hash-based payload deduplication.

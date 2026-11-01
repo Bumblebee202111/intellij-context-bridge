@@ -8,7 +8,7 @@
 - Proactive Context Suggestion Engine (Editor/Git/Mention Seeds, IDF Scoring, Per-Seed Caching)
 - Inline `@` File/Folder Mentions & Stackable `/` Slash Commands with Dynamic Variables
 - Unified Intent Architecture (`ASK` vs `EDIT`) & Resilient `ide:` XML/CDATA Tool Protocol
-- Unified `AgentTool` Hierarchy, Response Viewer, Side-by-Side Diffs, & Native Refactoring
+- Unified Context/Chat Workspace, `AgentTool` Cards, Side-by-Side Diffs, & Native Refactoring
 - Multi-Project WebSocket Bridge, Polite AI Studio Coexistence, Per-Model Memory, & Diagnostic Bridge
 - Ephemeral AI Commit Generation Workflow with Snapshot Restoration
 
