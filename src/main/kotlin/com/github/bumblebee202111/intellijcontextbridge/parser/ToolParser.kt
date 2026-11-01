@@ -2,82 +2,95 @@ package com.github.bumblebee202111.intellijcontextbridge.parser
 
 object ToolParser {
 
+    private val TOOL_BLOCK_REGEX = Regex(
+        "```(?:xml)?\\s*<ide:(read_file|propose_edit|delete_file|rename_file|fill_commit_message)>(.*?)</ide:\\1>\\s*```",
+        RegexOption.DOT_MATCHES_ALL
+    )
+    private val PATH_REGEX = Regex("<path>(.*?)</path>", RegexOption.DOT_MATCHES_ALL)
+
     /**
      * Parses an AI's response to extract unified tool calls.
      */
     fun parse(markdown: String): List<AgentTool> {
         val tools = mutableListOf<AgentTool>()
 
-        // 1. Parse ide:read_file
-        val readFileRegex = Regex("```(?:xml)?\\s*<ide:read_file>(.*?)</ide:read_file>\\s*```", RegexOption.DOT_MATCHES_ALL)
-        for (match in readFileRegex.findAll(markdown)) {
-            val content = match.groupValues[1]
-            val reason = Regex("<reason>(.*?)</reason>", RegexOption.DOT_MATCHES_ALL).find(content)?.groupValues?.get(1)?.trim() ?: ""
+        for (match in TOOL_BLOCK_REGEX.findAll(markdown)) {
+            val toolName = match.groupValues[1]
+            val content = match.groupValues[2]
 
-            val paths = mutableListOf<String>()
-            val pathsBlockMatch = Regex("<paths>(.*?)</paths>", RegexOption.DOT_MATCHES_ALL).find(content)
+            when (toolName) {
+                "read_file" -> {
+                    val reason = extractTag(content, "reason") ?: ""
+                    val pathsBlock = extractTag(content, "paths")
+                    val paths = mutableListOf<String>()
 
-            if (pathsBlockMatch != null) {
-                val pathMatches = Regex("<path>(.*?)</path>", RegexOption.DOT_MATCHES_ALL).findAll(pathsBlockMatch.groupValues[1])
-                for (pathMatch in pathMatches) {
-                    paths.add(pathMatch.groupValues[1].trim())
+                    if (pathsBlock != null) {
+                        for (pathMatch in PATH_REGEX.findAll(pathsBlock)) {
+                            paths.add(pathMatch.groupValues[1].trim())
+                        }
+                        if (paths.isEmpty()) {
+                            paths.addAll(
+                                pathsBlock.split("\n", ",")
+                                    .map { it.trim() }
+                                    .filter { it.isNotBlank() }
+                            )
+                        }
+                    }
+
+                    tools.add(ReadFileTool(paths, reason))
                 }
+                "propose_edit" -> {
+                    val path = extractTag(content, "path")
+                    val explanation = extractTag(content, "explanation") ?: ""
+                    var rawCode = extractTag(content, "code", greedy = true)
 
-                if (paths.isEmpty()) {
-                    val rawPaths = pathsBlockMatch.groupValues[1].split("\n", ",").map { it.trim() }.filter { it.isNotBlank() }
-                    paths.addAll(rawPaths)
+                    if (path != null && rawCode != null) {
+                        if (rawCode.startsWith("<![CDATA[")) {
+                            rawCode = rawCode.substringAfter("<![CDATA[").substringBeforeLast("]]>").trim()
+                        }
+                        val lang = path.substringAfterLast('.', "")
+                        tools.add(EditFileTool(path, lang, rawCode, explanation))
+                    }
+                }
+                "delete_file" -> {
+                    val path = extractTag(content, "path")
+                    val explanation = extractTag(content, "explanation") ?: ""
+                    if (path != null) {
+                        tools.add(DeleteFileTool(path, explanation))
+                    }
+                }
+                "rename_file" -> {
+                    val sourcePath = extractTag(content, "source_path")
+                    val targetPath = extractTag(content, "target_path")
+                    val explanation = extractTag(content, "explanation") ?: ""
+                    if (sourcePath != null && targetPath != null) {
+                        tools.add(RenameFileTool(sourcePath, targetPath, explanation))
+                    }
+                }
+                "fill_commit_message" -> {
+                    val message = extractTag(content, "message").orEmpty()
+                    if (message.isNotBlank()) {
+                        tools.add(FillCommitMessageTool(message))
+                    }
                 }
             }
-
-            tools.add(ReadFileTool(paths, reason))
-        }
-
-        // 2. Parse ide:propose_edit
-        val editRegex = Regex("```(?:xml)?\\s*<ide:propose_edit>(.*?)</ide:propose_edit>\\s*```", RegexOption.DOT_MATCHES_ALL)
-        for (match in editRegex.findAll(markdown)) {
-            val content = match.groupValues[1]
-            val path = Regex("<path>(.*?)</path>", RegexOption.DOT_MATCHES_ALL).find(content)?.groupValues?.get(1)?.trim()
-            val explanation = Regex("<explanation>(.*?)</explanation>", RegexOption.DOT_MATCHES_ALL).find(content)?.groupValues?.get(1)?.trim() ?: ""
-            var rawCode = Regex("<code>(.*?)</code>", RegexOption.DOT_MATCHES_ALL).find(content)?.groupValues?.get(1)?.trim()
-
-            if (path != null && rawCode != null) {
-                if (rawCode.startsWith("<![CDATA[")) {
-                    rawCode = rawCode.substringAfter("<![CDATA[").substringBeforeLast("]]>").trim()
-                }
-                val lang = path.substringAfterLast('.', "")
-                tools.add(EditFileTool(path, lang, rawCode, explanation))
-            }
-        }
-
-        // 3. Parse ide:delete_file
-        val deleteRegex = Regex("```(?:xml)?\\s*<ide:delete_file>(.*?)</ide:delete_file>\\s*```", RegexOption.DOT_MATCHES_ALL)
-        for (match in deleteRegex.findAll(markdown)) {
-            val content = match.groupValues[1]
-            val path = Regex("<path>(.*?)</path>", RegexOption.DOT_MATCHES_ALL).find(content)?.groupValues?.get(1)?.trim()
-            val explanation = Regex("<explanation>(.*?)</explanation>", RegexOption.DOT_MATCHES_ALL).find(content)?.groupValues?.get(1)?.trim() ?: ""
-
-            if (path != null) tools.add(DeleteFileTool(path, explanation))
-        }
-
-        // 4. Parse ide:rename_file
-        val renameRegex = Regex("```(?:xml)?\\s*<ide:rename_file>(.*?)</ide:rename_file>\\s*```", RegexOption.DOT_MATCHES_ALL)
-        for (match in renameRegex.findAll(markdown)) {
-            val content = match.groupValues[1]
-            val sourcePath = Regex("<source_path>(.*?)</source_path>", RegexOption.DOT_MATCHES_ALL).find(content)?.groupValues?.get(1)?.trim()
-            val targetPath = Regex("<target_path>(.*?)</target_path>", RegexOption.DOT_MATCHES_ALL).find(content)?.groupValues?.get(1)?.trim()
-            val explanation = Regex("<explanation>(.*?)</explanation>", RegexOption.DOT_MATCHES_ALL).find(content)?.groupValues?.get(1)?.trim() ?: ""
-
-            if (sourcePath != null && targetPath != null) tools.add(RenameFileTool(sourcePath, targetPath, explanation))
-        }
-
-        // 5. Parse ide:fill_commit_message
-        val commitRegex = Regex("```(?:xml)?\\s*<ide:fill_commit_message>(.*?)</ide:fill_commit_message>\\s*```", RegexOption.DOT_MATCHES_ALL)
-        for (match in commitRegex.findAll(markdown)) {
-            val content = match.groupValues[1]
-            val message = Regex("<message>(.*?)</message>", RegexOption.DOT_MATCHES_ALL).find(content)?.groupValues?.get(1)?.trim() ?: ""
-            if (message.isNotBlank()) tools.add(FillCommitMessageTool(message))
         }
 
         return tools
+    }
+
+    private fun extractTag(content: String, tag: String, greedy: Boolean = false): String? {
+        val openTag = "<$tag>"
+        val closeTag = "</$tag>"
+        val startIndex = content.indexOf(openTag)
+        if (startIndex == -1) return null
+        val contentStart = startIndex + openTag.length
+        val endIndex = if (greedy) {
+            content.lastIndexOf(closeTag)
+        } else {
+            content.indexOf(closeTag, contentStart)
+        }
+        if (endIndex < contentStart) return null
+        return content.substring(contentStart, endIndex).trim()
     }
 }
