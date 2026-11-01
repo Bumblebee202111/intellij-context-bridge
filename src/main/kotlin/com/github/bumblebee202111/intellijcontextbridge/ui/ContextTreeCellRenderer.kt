@@ -129,13 +129,15 @@ class ContextTreeCellRenderer(
                 append("  ${nodeData.locationHint}", SimpleTextAttributes.GRAYED_SMALL_ATTRIBUTES)
             }
         } else if (nodeData != null) {
-            // Synthetic Root Node (e.g., [AI Requested Files])
             val rowIcon = RowIcon(2)
             rowIcon.setIcon(StateIcon(level), 0)
             rowIcon.setIcon(nodeData.icon ?: AllIcons.Nodes.ConfigFolder, 1)
             icon = rowIcon
 
             append(nodeData.displayName, SimpleTextAttributes.REGULAR_BOLD_ATTRIBUTES)
+            if (nodeData.locationHint != null) {
+                append("  ${nodeData.locationHint}", SimpleTextAttributes.GRAYED_SMALL_ATTRIBUTES)
+            }
         } else {
             append(value.toString())
         }

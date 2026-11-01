@@ -61,8 +61,6 @@ import java.awt.Dimension
 import java.awt.FlowLayout
 import java.awt.datatransfer.DataFlavor
 import java.awt.datatransfer.StringSelection
-import java.awt.event.ComponentAdapter
-import java.awt.event.ComponentEvent
 import java.awt.event.InputEvent
 import java.awt.event.ItemEvent
 import java.awt.event.KeyAdapter
@@ -122,37 +120,6 @@ class ContextComposerPanel(private val project: Project) : Disposable {
         )
     }
 
-    private val suggestionTreeModel = DefaultTreeModel(DefaultMutableTreeNode("Loading..."))
-    private val suggestionTree = Tree(suggestionTreeModel).apply {
-        emptyText.text = "No suggestions at this time."
-        isRootVisible = false
-        showsRootHandles = true
-    }
-
-    private val requestedTreeModel = DefaultTreeModel(DefaultMutableTreeNode("Loading..."))
-    private val requestedTree = Tree(requestedTreeModel).apply {
-        emptyText.text = "No pending requests."
-        isRootVisible = true
-        showsRootHandles = true
-    }
-
-    private val suggestionTreeContainer = JPanel(BorderLayout()).apply {
-        border = IdeBorderFactory.createTitledBorder("Suggested Context")
-        isVisible = false
-    }
-
-    private val requestedTreeContainer = JPanel(BorderLayout()).apply {
-        border = IdeBorderFactory.createTitledBorder("Pending AI Requests")
-        isVisible = false
-    }
-
-    private val topTreesSplitter = JBSplitter(true, 0.5f).apply {
-        firstComponent = requestedTreeContainer
-        secondComponent = suggestionTreeContainer
-    }
-
-    private val treeSplitter = JBSplitter(true, 0.3f)
-
     private val promptCompletionProvider = PromptCompletionProvider(
         project = project,
         onCommandSelected = ::applyCommandContext,
@@ -203,29 +170,10 @@ class ContextComposerPanel(private val project: Project) : Disposable {
         }
 
         configureTree(tree) { file -> lastDedupedFiles.contains(file) }
-        configureTree(suggestionTree) { false }
-        configureTree(requestedTree) { false }
         setupExternalFileDropTarget()
 
-        suggestionTreeContainer.add(JBScrollPane(suggestionTree), BorderLayout.CENTER)
-        requestedTreeContainer.add(JBScrollPane(requestedTree), BorderLayout.CENTER)
-
-        treeSplitter.apply {
-            firstComponent = topTreesSplitter
-            secondComponent = JBScrollPane(tree)
-            addComponentListener(object : ComponentAdapter() {
-                private var initialized = false
-                override fun componentResized(e: ComponentEvent?) {
-                    if (!initialized && treeSplitter.height > 0) {
-                        initialized = true
-                        updateStagingSplitters()
-                    }
-                }
-            })
-        }
-
         val splitPane = JBSplitter(true, 0.7f).apply {
-            firstComponent = treeSplitter
+            firstComponent = JBScrollPane(tree)
             secondComponent = setupBottomPanel()
         }
 
@@ -903,63 +851,6 @@ class ContextComposerPanel(private val project: Project) : Disposable {
         uiRefreshTimer.restart()
     }
 
-    private fun updateStagingTree(
-        targetTree: Tree,
-        container: JPanel,
-        rebuilt: Boolean,
-        rootNode: DefaultMutableTreeNode?,
-        emptyPlaceholder: String
-    ) {
-        if (!rebuilt) {
-            targetTree.repaint()
-            return
-        }
-        if (rootNode != null) {
-            container.isVisible = true
-            treeManager.updateTreeModel(targetTree, rootNode, expandAllByDefault = true)
-        } else {
-            targetTree.model = DefaultTreeModel(DefaultMutableTreeNode(emptyPlaceholder))
-            container.isVisible = false
-        }
-        container.revalidate()
-    }
-
-    private fun updateStagingSplitters() {
-        val reqVisible = requestedTreeContainer.isVisible
-        val sugVisible = suggestionTreeContainer.isVisible
-
-        if (reqVisible || sugVisible) {
-            val maxRowsPerTree = if (reqVisible && sugVisible) 5 else 6
-            val padding = JBUI.scale(6)
-
-            val reqHeight = if (reqVisible) {
-                requestedTree.visibleRowCount = requestedTree.rowCount.coerceIn(1, maxRowsPerTree)
-                requestedTreeContainer.preferredSize.height + padding
-            } else {
-                0
-            }
-
-            val sugHeight = if (sugVisible) {
-                suggestionTree.visibleRowCount = suggestionTree.rowCount.coerceIn(1, maxRowsPerTree)
-                suggestionTreeContainer.preferredSize.height + padding
-            } else {
-                0
-            }
-
-            if (reqVisible && sugVisible && reqHeight + sugHeight > 0) {
-                topTreesSplitter.proportion = (reqHeight.toFloat() / (reqHeight + sugHeight)).coerceIn(0.25f, 0.75f)
-            }
-
-            val desiredTopHeight = reqHeight + sugHeight + if (reqVisible && sugVisible) topTreesSplitter.dividerWidth else 0
-            val availableHeight = (treeSplitter.height - treeSplitter.dividerWidth).takeIf { it > 0 } ?: 500
-            val maxTreeProportion = if (reqVisible && sugVisible) 0.55f else 0.4f
-            treeSplitter.proportion = (desiredTopHeight.toFloat() / availableHeight).coerceIn(0.1f, maxTreeProportion)
-        }
-
-        content.revalidate()
-        content.repaint()
-    }
-
     private fun refreshTree() {
         treeUpdateJob?.cancel()
 
@@ -1006,23 +897,19 @@ class ContextComposerPanel(private val project: Project) : Disposable {
             treeManager.clearCache()
 
             val shouldRebuildMainTree = shouldRefreshVfs || mainTreeForceRebuild || showSelectedOnly
-            val mainRootNode = if (shouldRebuildMainTree) {
+            val (projectNode, externalNode) = if (shouldRebuildMainTree) {
                 readAction {
-                    treeManager.buildWorkspaceTree(projectDir, showSelectedOnly)
+                    treeManager.buildProjectNode(projectDir, showSelectedOnly) to
+                        treeManager.buildExternalContextNode(showSelectedOnly)
                 }
             } else {
-                null
+                null to null
             }
 
             val shouldRebuildSuggestionTree = shouldRefreshVfs || suggestions != lastSuggestions
             val suggestionRootNode = if (shouldRebuildSuggestionTree) {
                 readAction {
-                    if (projectDir != null && suggestions.isNotEmpty()) {
-                        treeManager.buildFileTree(projectDir, false, allowedLeaves = suggestions, isRoot = true)
-                            ?.takeIf { it.childCount > 0 }
-                    } else {
-                        null
-                    }
+                    treeManager.buildSuggestedFilesNode(projectDir, suggestions)
                 }
             } else {
                 null
@@ -1032,7 +919,7 @@ class ContextComposerPanel(private val project: Project) : Disposable {
             val shouldRebuildRequestedTree = shouldRefreshVfs || currentRequests != lastRequestedFiles
             val requestedRootNode = if (shouldRebuildRequestedTree) {
                 readAction {
-                    treeManager.buildRequestedFilesTree(projectDir, currentRequests)
+                    treeManager.buildRequestedFilesNode(projectDir, currentRequests)
                 }
             } else {
                 null
@@ -1051,36 +938,26 @@ class ContextComposerPanel(private val project: Project) : Disposable {
                     promptCompletionProvider.updateFileMentionItems(fileMentionItems)
                 }
 
-                if (mainRootNode != null) {
-                    treeManager.updateTreeModel(tree, mainRootNode, expandAllByDefault = false)
-                } else {
-                    tree.repaint()
-                }
-
                 if (shouldRebuildSuggestionTree) {
                     lastSuggestions = suggestions
                 }
-                updateStagingTree(
-                    suggestionTree,
-                    suggestionTreeContainer,
-                    shouldRebuildSuggestionTree,
-                    suggestionRootNode,
-                    "No Suggestions"
-                )
-
                 if (shouldRebuildRequestedTree) {
                     lastRequestedFiles = currentRequests
                 }
-                updateStagingTree(
-                    requestedTree,
-                    requestedTreeContainer,
-                    shouldRebuildRequestedTree,
-                    requestedRootNode,
-                    "No pending requests."
-                )
 
-                if (shouldRebuildSuggestionTree || shouldRebuildRequestedTree) {
-                    updateStagingSplitters()
+                if (shouldRebuildMainTree || shouldRebuildSuggestionTree || shouldRebuildRequestedTree) {
+                    treeManager.updateWorkspaceModel(
+                        tree = tree,
+                        updateRequested = shouldRebuildRequestedTree,
+                        requestedNode = requestedRootNode,
+                        updateSuggested = shouldRebuildSuggestionTree,
+                        suggestedNode = suggestionRootNode,
+                        updateMain = shouldRebuildMainTree,
+                        projectNode = projectNode,
+                        externalNode = externalNode
+                    )
+                } else {
+                    tree.repaint()
                 }
             }, ModalityState.nonModal())
         }
