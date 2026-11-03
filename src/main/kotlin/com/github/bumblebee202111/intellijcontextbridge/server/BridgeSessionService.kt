@@ -4,13 +4,19 @@ import com.github.bumblebee202111.intellijcontextbridge.commands.CommandRegistry
 import com.github.bumblebee202111.intellijcontextbridge.commands.SlashCommand
 import com.github.bumblebee202111.intellijcontextbridge.commands.SyncCommand
 import com.github.bumblebee202111.intellijcontextbridge.context.core.AiPayload
+import com.github.bumblebee202111.intellijcontextbridge.parser.FillCommitMessageTool
+import com.github.bumblebee202111.intellijcontextbridge.parser.ReadFileTool
+import com.github.bumblebee202111.intellijcontextbridge.parser.ToolParser
 import com.github.bumblebee202111.intellijcontextbridge.state.ContextState
+import com.github.bumblebee202111.intellijcontextbridge.vcs.CommitBridgeService
 import com.intellij.openapi.Disposable
 import com.intellij.openapi.application.ApplicationManager
+import com.intellij.openapi.application.readAction
 import com.intellij.openapi.components.Service
 import com.intellij.openapi.components.service
 import com.intellij.openapi.project.Project
 import com.intellij.openapi.util.Disposer
+import kotlinx.coroutines.launch
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
 import java.util.concurrent.CopyOnWriteArrayList
@@ -23,7 +29,7 @@ class BridgeSessionService(private val project: Project) : Disposable {
     private val commandRegistry = project.service<CommandRegistryService>()
 
     private val stateListeners = CopyOnWriteArrayList<() -> Unit>()
-    private val messageListeners = CopyOnWriteArrayList<(String) -> Unit>()
+    private val responseListeners = CopyOnWriteArrayList<() -> Unit>()
 
     var activeTabId: String? = null
         private set
@@ -35,7 +41,7 @@ class BridgeSessionService(private val project: Project) : Disposable {
         server.addHandshakeListener(this, ::handleTabHandshake)
         server.addMessageListener(this) { tabId, markdownText ->
             if (tabId == activeTabId) {
-                messageListeners.forEach { it(markdownText) }
+                processIncomingResponse(markdownText, fromWebSocket = true)
             }
         }
         commandRegistry.addChangeListener(this, ::handleCommandsChanged)
@@ -47,9 +53,45 @@ class BridgeSessionService(private val project: Project) : Disposable {
         Disposer.register(parentDisposable) { stateListeners.remove(listener) }
     }
 
-    fun addMessageListener(parentDisposable: Disposable, listener: (String) -> Unit) {
-        messageListeners.add(listener)
-        Disposer.register(parentDisposable) { messageListeners.remove(listener) }
+    fun addResponseListener(parentDisposable: Disposable, listener: () -> Unit) {
+        responseListeners.add(listener)
+        Disposer.register(parentDisposable) { responseListeners.remove(listener) }
+    }
+
+    fun processIncomingResponse(markdownText: String, fromWebSocket: Boolean) {
+        if (markdownText.isBlank()) return
+
+        val tools = ToolParser.parse(markdownText)
+        val commitTools = tools.filterIsInstance<FillCommitMessageTool>()
+        commitTools.forEach {
+            project.service<CommitBridgeService>().injectCommitMessage(it.message)
+        }
+
+        val nonCommitTools = tools.filterNot { it is FillCommitMessageTool }
+        if (fromWebSocket && commitTools.isNotEmpty() && nonCommitTools.isEmpty()) {
+            return
+        }
+
+        contextState.addModelTurn(markdownText)
+
+        val readPaths = nonCommitTools.filterIsInstance<ReadFileTool>()
+            .flatMap { it.paths }
+            .distinct()
+
+        if (readPaths.isNotEmpty()) {
+            contextState.scope.launch {
+                readAction {
+                    val requestedFiles = contextState.promoteFiles(readPaths)
+                    if (requestedFiles.isNotEmpty()) {
+                        contextState.pendingAiRequests.clear()
+                        contextState.pendingAiRequests.addAll(requestedFiles)
+                    }
+                }
+                notifyResponseProcessed()
+            }
+        } else {
+            notifyResponseProcessed()
+        }
     }
 
     fun isBoundTabConnected(): Boolean = server.isTabConnected(activeTabId)
@@ -156,8 +198,12 @@ class BridgeSessionService(private val project: Project) : Disposable {
         stateListeners.forEach { it() }
     }
 
+    private fun notifyResponseProcessed() {
+        responseListeners.forEach { it() }
+    }
+
     override fun dispose() {
         stateListeners.clear()
-        messageListeners.clear()
+        responseListeners.clear()
     }
 }

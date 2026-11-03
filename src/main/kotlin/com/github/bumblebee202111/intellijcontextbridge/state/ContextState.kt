@@ -67,6 +67,9 @@ class ContextState(
     // User-attached external files and directories outside the project root
     val externalRoots: MutableSet<VirtualFile> = ConcurrentHashMap.newKeySet()
 
+    // Files requested by AI read_file tool calls awaiting user inspection/transmission
+    val pendingAiRequests: MutableSet<VirtualFile> = ConcurrentHashMap.newKeySet()
+
     // Transient cache to prevent re-hashing unmodified files during UI renders
     private val hashCache = ConcurrentHashMap<VirtualFile, HashCacheEntry>()
 
@@ -293,6 +296,7 @@ class ContextState(
     fun pruneInvalidFiles() {
         fileStates.keys.removeIf { !it.isValid }
         externalRoots.removeIf { !it.isValid }
+        pendingAiRequests.removeIf { !it.isValid }
         hashCache.keys.removeIf { !it.isValid }
         seedGraphCache.entries.removeIf { (seed, entry) ->
             !seed.isValid ||
@@ -397,6 +401,7 @@ class ContextState(
         isInitialized = false
         fileStates.clear()
         externalRoots.clear()
+        pendingAiRequests.clear()
         myState.turns.clear()
         myState.modelTurns.clear()
         hashCache.clear()

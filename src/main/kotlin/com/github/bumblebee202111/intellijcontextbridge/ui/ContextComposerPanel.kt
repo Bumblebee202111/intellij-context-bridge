@@ -100,9 +100,6 @@ class ContextComposerPanel(private val project: Project) : Disposable {
         },
         onHistoryChanged = {
             refreshUi(vfsStructureChanged = true, forceMainRebuild = true)
-        },
-        onFocusChat = {
-            switchView(VIEW_CHAT)
         }
     )
 
@@ -167,6 +164,12 @@ class ContextComposerPanel(private val project: Project) : Disposable {
         }
 
         bridgeSession.addStateListener(this, ::updateTabsUI)
+        bridgeSession.addResponseListener(this) {
+            ApplicationManager.getApplication().invokeLater({
+                switchView(VIEW_CHAT, scrollToBottom = true)
+                refreshUi()
+            }, ModalityState.nonModal())
+        }
         commandRegistry.addChangeListener(this) {
             ApplicationManager.getApplication().invokeLater({
                 promptCompletionProvider.refreshItems()
@@ -178,20 +181,18 @@ class ContextComposerPanel(private val project: Project) : Disposable {
         refreshUi()
     }
 
-    private fun switchView(view: String) {
+    private fun switchView(view: String, scrollToBottom: Boolean = false) {
         if (activeView != view) {
             activeView = view
             mainCardLayout.show(mainViewport, view)
             if (view == VIEW_CHAT) {
-                chatTimelinePanel.refresh(scrollToBottom = false)
+                chatTimelinePanel.refresh(scrollToBottom = scrollToBottom)
             } else {
                 refreshUi()
             }
+        } else if (view == VIEW_CHAT && scrollToBottom) {
+            chatTimelinePanel.refresh(scrollToBottom = true)
         }
-    }
-
-    fun processIncomingMarkdown(markdownText: String, fromWebSocket: Boolean) {
-        chatTimelinePanel.processIncomingMarkdown(markdownText, fromWebSocket)
     }
 
     private fun updateTabsUI() {
@@ -235,12 +236,16 @@ class ContextComposerPanel(private val project: Project) : Disposable {
     private fun stageReadFiles(paths: List<String>, switchToTree: Boolean) {
         contextState.scope.launch {
             val requestedFiles = readAction {
-                contextState.promoteFiles(paths)
+                val promoted = contextState.promoteFiles(paths)
+                if (promoted.isNotEmpty()) {
+                    contextState.pendingAiRequests.clear()
+                    contextState.pendingAiRequests.addAll(promoted)
+                }
+                promoted
             }
 
             ApplicationManager.getApplication().invokeLater({
                 if (requestedFiles.isNotEmpty()) {
-                    treeManager.setPendingRequests(requestedFiles)
                     if (switchToTree) {
                         switchView(VIEW_CONTEXT)
                     }
@@ -302,7 +307,7 @@ class ContextComposerPanel(private val project: Project) : Disposable {
             Messages.showInfoMessage(project, "Clipboard is empty.", "Paste Response")
             return
         }
-        processIncomingMarkdown(clipboardText, fromWebSocket = false)
+        bridgeSession.processIncomingResponse(clipboardText, fromWebSocket = false)
     }
 
     private fun setupTopToolbar(): JPanel {
@@ -602,7 +607,7 @@ class ContextComposerPanel(private val project: Project) : Disposable {
         historyIndex = -1
         draftPrompt = ""
 
-        treeManager.clearPendingRequests()
+        contextState.pendingAiRequests.clear()
         setGeneratingState(true)
 
         contextState.scope.launch {

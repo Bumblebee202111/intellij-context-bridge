@@ -86,8 +86,6 @@ class ContextTreeManager(
             requestRefresh(forceMainRebuild = true)
         }
 
-    private var pendingAiRequests = emptySet<VirtualFile>()
-
     @Volatile
     private var lastDedupedFiles = emptySet<VirtualFile>()
 
@@ -133,17 +131,7 @@ class ContextTreeManager(
         uiRefreshTimer.restart()
     }
 
-    fun setPendingRequests(files: Set<VirtualFile>) {
-        pendingAiRequests = files
-        requestRefresh()
-    }
-
-    fun clearPendingRequests() {
-        pendingAiRequests = emptySet()
-    }
-
     fun reset() {
-        pendingAiRequests = emptySet()
         requestRefresh(vfsStructureChanged = true, forceMainRebuild = true)
     }
 
@@ -346,7 +334,7 @@ class ContextTreeManager(
                 null
             }
 
-            val currentRequests = pendingAiRequests
+            val currentRequests = contextState.pendingAiRequests.toSet()
             val shouldRebuildRequestedTree = shouldRefreshVfs || currentRequests != lastRequestedFiles
             val requestedRootNode = if (shouldRebuildRequestedTree) {
                 readAction {
