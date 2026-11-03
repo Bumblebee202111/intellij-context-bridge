@@ -4,6 +4,7 @@ import com.github.bumblebee202111.intellijcontextbridge.commands.CommandRegistry
 import com.github.bumblebee202111.intellijcontextbridge.commands.SlashCommand
 import com.github.bumblebee202111.intellijcontextbridge.commands.SyncCommand
 import com.github.bumblebee202111.intellijcontextbridge.context.core.AiPayload
+import com.github.bumblebee202111.intellijcontextbridge.diagnostics.DiagnosticReport
 import com.github.bumblebee202111.intellijcontextbridge.parser.FillCommitMessageTool
 import com.github.bumblebee202111.intellijcontextbridge.parser.ReadFileTool
 import com.github.bumblebee202111.intellijcontextbridge.parser.ToolParser
@@ -27,6 +28,7 @@ class BridgeSessionService(private val project: Project) : Disposable {
     private val server = ApplicationManager.getApplication().getService(ContextBridgeServer::class.java)
     private val contextState = project.service<ContextState>()
     private val commandRegistry = project.service<CommandRegistryService>()
+    private val jsonParser = Json { ignoreUnknownKeys = true }
 
     private val stateListeners = CopyOnWriteArrayList<() -> Unit>()
     private val responseListeners = CopyOnWriteArrayList<() -> Unit>()
@@ -140,6 +142,28 @@ class BridgeSessionService(private val project: Project) : Disposable {
         val jsonString = Json.encodeToString(payload)
         server.sendToTab(tabId, jsonString)
         return true
+    }
+
+    fun runDiagnostics(
+        parentDisposable: Disposable,
+        tabId: String? = activeTabId,
+        onResult: (Result<DiagnosticReport>) -> Unit
+    ) {
+        val targetTabId = tabId ?: return
+        server.addDiagnosticListener(parentDisposable) { incomingTabId, json ->
+            if (incomingTabId == targetTabId) {
+                val result = runCatching {
+                    jsonParser.decodeFromString<DiagnosticReport>(json)
+                }.recoverCatching { e ->
+                    throw IllegalArgumentException(
+                        "Failed to parse diagnostic report:\n${e.message}\n\nRaw JSON:\n$json",
+                        e
+                    )
+                }
+                onResult(result)
+            }
+        }
+        server.sendDiagnosticRun(targetTabId)
     }
 
     private fun handleTabsChanged(tabs: List<BrowserTab>) {

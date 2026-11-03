@@ -1,11 +1,10 @@
 package com.github.bumblebee202111.intellijcontextbridge.ui
 
-import com.github.bumblebee202111.intellijcontextbridge.diagnostics.DiagnosticReport
 import com.github.bumblebee202111.intellijcontextbridge.diagnostics.DiagnosticStatus
 import com.github.bumblebee202111.intellijcontextbridge.diagnostics.DiagnosticStep
-import com.github.bumblebee202111.intellijcontextbridge.server.ContextBridgeServer
+import com.github.bumblebee202111.intellijcontextbridge.server.BridgeSessionService
 import com.intellij.icons.AllIcons
-import com.intellij.openapi.application.ApplicationManager
+import com.intellij.openapi.components.service
 import com.intellij.openapi.project.Project
 import com.intellij.openapi.ui.DialogWrapper
 import com.intellij.ui.ColoredListCellRenderer
@@ -15,7 +14,6 @@ import com.intellij.ui.components.JBList
 import com.intellij.ui.components.JBScrollPane
 import com.intellij.ui.components.JBTextArea
 import com.intellij.util.ui.JBUI
-import kotlinx.serialization.json.Json
 import java.awt.BorderLayout
 import java.awt.Dimension
 import javax.swing.DefaultListModel
@@ -24,8 +22,8 @@ import javax.swing.JList
 import javax.swing.JPanel
 import javax.swing.SwingUtilities
 
-class DiagnosticDialog(private val project: Project, private val tabId: String) : DialogWrapper(project, true) {
-    private val server = ApplicationManager.getApplication().getService(ContextBridgeServer::class.java)
+class DiagnosticDialog(private val project: Project, private val tabId: String? = null) : DialogWrapper(project, true) {
+    private val bridgeSession = project.service<BridgeSessionService>()
     private val listModel = DefaultListModel<DiagnosticStep>()
     private val stepList = JBList(listModel)
     private val detailsArea = JBTextArea().apply {
@@ -35,7 +33,6 @@ class DiagnosticDialog(private val project: Project, private val tabId: String) 
         emptyText.text = "Select a step to view details..."
         margin = JBUI.insets(5)
     }
-    private val jsonParser = Json { ignoreUnknownKeys = true }
 
     init {
         title = "Web UI Diagnostics (Waiting for results...)"
@@ -76,22 +73,17 @@ class DiagnosticDialog(private val project: Project, private val tabId: String) 
             }
         }
 
-        server.addDiagnosticListener(disposable) { incomingTabId, json ->
-            if (incomingTabId == tabId) {
-                SwingUtilities.invokeLater {
-                    try {
-                        val report = jsonParser.decodeFromString<DiagnosticReport>(json)
-                        listModel.clear()
-                        report.steps.forEach { listModel.addElement(it) }
-                        title = "Web UI Diagnostics - Total Duration: ${report.totalDurationMs}ms"
-                    } catch (e: Exception) {
-                        detailsArea.text = "Failed to parse diagnostic report:\n${e.message}\n\nRaw JSON:\n$json"
-                    }
+        bridgeSession.runDiagnostics(disposable, tabId) { result ->
+            SwingUtilities.invokeLater {
+                result.onSuccess { report ->
+                    listModel.clear()
+                    report.steps.forEach { listModel.addElement(it) }
+                    title = "Web UI Diagnostics - Total Duration: ${report.totalDurationMs}ms"
+                }.onFailure { error ->
+                    detailsArea.text = error.message ?: "Failed to parse diagnostic report."
                 }
             }
         }
-
-        server.sendDiagnosticRun(tabId)
     }
 
     override fun createCenterPanel(): JComponent {

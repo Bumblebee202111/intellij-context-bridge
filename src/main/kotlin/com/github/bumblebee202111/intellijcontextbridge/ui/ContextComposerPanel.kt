@@ -388,11 +388,10 @@ class ContextComposerPanel(private val project: Project) : Disposable {
             })
             add(object : AnAction("Run Web UI Diagnostics", "Test stability of background DOM interactions", AllIcons.Actions.StartDebugger) {
                 override fun actionPerformed(e: AnActionEvent) {
-                    val tabId = bridgeSession.activeTabId
-                    if (tabId != null) {
-                        DiagnosticDialog(project, tabId).show()
+                    if (bridgeSession.isBoundTabConnected()) {
+                        DiagnosticDialog(project).show()
                     } else {
-                        Messages.showWarningDialog("No active AI Studio tab bound. Please select a tab first.", "Diagnostics Failed")
+                        Messages.showWarningDialog("No active AI Studio tab bound. Please select a connected tab first.", "Diagnostics Failed")
                     }
                 }
             })
