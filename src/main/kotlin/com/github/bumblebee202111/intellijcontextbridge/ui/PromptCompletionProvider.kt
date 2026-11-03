@@ -77,7 +77,6 @@ private class PromptPrefixMatcher(prefix: String) : PrefixMatcher(prefix) {
 
 class PromptCompletionProvider(
     private val project: Project,
-    private val onCommandSelected: (SlashCommand) -> Unit,
     private val onFileMentionSelected: (VirtualFile) -> Unit
 ) : TextFieldWithAutoCompletionListProvider<PromptCompletionItem>(emptyList()) {
 
@@ -229,10 +228,6 @@ class PromptCompletionProvider(
                         val replacement = "/${item.slashCommand.name} "
                         context.document.replaceString(start, end, replacement)
                         context.editor.caretModel.moveToOffset(start + replacement.length)
-
-                        ApplicationManager.getApplication().invokeLater {
-                            onCommandSelected(item.slashCommand)
-                        }
                     }
             }
 

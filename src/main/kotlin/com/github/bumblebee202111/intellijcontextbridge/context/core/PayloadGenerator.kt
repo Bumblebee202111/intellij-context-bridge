@@ -1,5 +1,6 @@
 package com.github.bumblebee202111.intellijcontextbridge.context.core
 
+import com.github.bumblebee202111.intellijcontextbridge.commands.CommandContextAction
 import com.github.bumblebee202111.intellijcontextbridge.commands.CommandRegistryService
 import com.github.bumblebee202111.intellijcontextbridge.state.ContextLevel
 import com.github.bumblebee202111.intellijcontextbridge.state.ContextState
@@ -27,14 +28,6 @@ object PayloadGenerator {
             ?.bufferedReader(Charsets.UTF_8)
             ?.use { it.readText() }
             ?: throw IllegalStateException("Missing required prompt resource: $filename")
-    }
-
-    private fun getRelativePath(file: VirtualFile, projectDir: VirtualFile?): String {
-        return if (projectDir != null) {
-            VfsUtilCore.getRelativePath(file, projectDir) ?: file.path
-        } else {
-            file.path
-        }
     }
 
     fun getFileHash(project: Project, contextState: ContextState, file: VirtualFile, level: ContextLevel): String {
@@ -86,7 +79,8 @@ object PayloadGenerator {
         userPrompt: String,
         intentMode: IntentMode,
         isCommit: Boolean = false,
-        dynamicVariables: Map<String, String> = emptyMap()
+        dynamicVariables: Map<String, String> = emptyMap(),
+        alreadyAppliedCommands: Set<String> = emptySet()
     ): PayloadGenerationResult {
         val attachments = mutableListOf<AiAttachment>()
 
@@ -107,22 +101,53 @@ object PayloadGenerator {
             }
         }
 
-        if (remainingPrompt.contains('@')) {
-            readAction {
-                for (match in FILE_MENTION_REGEX.findAll(remainingPrompt)) {
-                    ProgressManager.checkCanceled()
-                    val rawPath = match.groupValues[1].trimEnd('.', ',', ':', ';', ')', ']')
-                    if (rawPath.isNotEmpty()) {
-                        val mentionedFile = contextState.resolveFile(rawPath)
-                        if (mentionedFile != null && mentionedFile.exists()) {
-                            contextState.applyStateRecursively(mentionedFile, ContextLevel.COMPLETE, checkIgnore = true)
+        val effectiveFileStates: Map<VirtualFile, ContextLevel> = readAction {
+            if (isCommit) {
+                val isolatedMap = mutableMapOf<VirtualFile, ContextLevel>()
+                if (rawCommands.none { it.contextAction == CommandContextAction.REPLACE }) {
+                    contextState.ensureInitialized()
+                    isolatedMap.putAll(contextState.fileStates)
+                }
+                for (cmd in rawCommands) {
+                    contextState.applyCommandContext(cmd, isolatedMap)
+                }
+                if (remainingPrompt.contains('@')) {
+                    for (match in FILE_MENTION_REGEX.findAll(remainingPrompt)) {
+                        ProgressManager.checkCanceled()
+                        val rawPath = match.groupValues[1].trimEnd('.', ',', ':', ';', ')', ']')
+                        if (rawPath.isNotEmpty()) {
+                            val mentionedFile = contextState.resolveFile(rawPath)
+                            if (mentionedFile != null && mentionedFile.exists()) {
+                                contextState.applyFileMention(mentionedFile, isolatedMap)
+                            }
                         }
                     }
                 }
+                isolatedMap
+            } else {
+                contextState.ensureInitialized()
+                for (cmd in rawCommands) {
+                    if (cmd.name !in alreadyAppliedCommands) {
+                        contextState.applyCommandContext(cmd)
+                    }
+                }
+                if (remainingPrompt.contains('@')) {
+                    for (match in FILE_MENTION_REGEX.findAll(remainingPrompt)) {
+                        ProgressManager.checkCanceled()
+                        val rawPath = match.groupValues[1].trimEnd('.', ',', ':', ';', ')', ']')
+                        if (rawPath.isNotEmpty()) {
+                            val mentionedFile = contextState.resolveFile(rawPath)
+                            if (mentionedFile != null && mentionedFile.exists()) {
+                                contextState.applyFileMention(mentionedFile)
+                            }
+                        }
+                    }
+                }
+                HashMap(contextState.fileStates)
             }
         }
 
-        val sortedFiles = contextState.fileStates.entries
+        val sortedFiles = effectiveFileStates.entries
             .filter { it.value != ContextLevel.NONE }
             .sortedBy { it.key.path }
 
@@ -219,15 +244,17 @@ object PayloadGenerator {
 
         val markdownText = buildString {
             // 2. Project Context
-            appendLine("<project_context>")
-            appendLine()
+            if (!isCommit || fileSections.isNotEmpty()) {
+                appendLine("<project_context>")
+                appendLine()
 
-            for (section in fileSections) {
-                appendLine(section)
+                for (section in fileSections) {
+                    appendLine(section)
+                }
+
+                appendLine("</project_context>")
+                appendLine()
             }
-
-            appendLine("</project_context>")
-            appendLine()
 
             if (appliedCommands.isNotEmpty()) {
                 appendLine("<applied_commands>")

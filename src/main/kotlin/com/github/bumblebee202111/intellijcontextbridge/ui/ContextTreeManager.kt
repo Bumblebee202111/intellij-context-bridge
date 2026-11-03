@@ -87,7 +87,6 @@ class ContextTreeManager(
         }
 
     private var pendingAiRequests = emptySet<VirtualFile>()
-    private var isConfigLoaded = false
 
     @Volatile
     private var lastDedupedFiles = emptySet<VirtualFile>()
@@ -144,7 +143,6 @@ class ContextTreeManager(
     }
 
     fun reset() {
-        isConfigLoaded = false
         pendingAiRequests = emptySet()
         requestRefresh(vfsStructureChanged = true, forceMainRebuild = true)
     }
@@ -297,15 +295,8 @@ class ContextTreeManager(
         treeUpdateJob?.cancel()
 
         treeUpdateJob = contextState.scope.launch {
-            if (!isConfigLoaded) {
-                readAction {
-                    if (contextState.getLastTurn() == null) {
-                        contextState.loadConfig()
-                    } else {
-                        contextState.restoreFromLastTurn()
-                    }
-                }
-                isConfigLoaded = true
+            readAction {
+                contextState.ensureInitialized()
             }
 
             val suggestions = ContextSuggestionEngine.calculateSuggestions(project, contextState)

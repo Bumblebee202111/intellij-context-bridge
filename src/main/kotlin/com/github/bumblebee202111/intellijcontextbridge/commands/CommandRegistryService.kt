@@ -21,6 +21,7 @@ class CommandRegistryService(private val project: Project, private val scope: Co
 
     companion object {
         private val LEADING_COMMAND_REGEX = Regex("^/([a-zA-Z0-9_-]+)(?:\\s+|$)")
+        private val COMMITTED_COMMAND_REGEX = Regex("^/([a-zA-Z0-9_-]+)\\s+")
     }
 
     private val commands = ConcurrentHashMap<String, SlashCommand>()
@@ -85,6 +86,20 @@ class CommandRegistryService(private val project: Project, private val scope: Co
         }
 
         return matched to remaining
+    }
+
+    fun parseCommittedLeadingCommands(prompt: String): List<SlashCommand> {
+        var remaining = prompt.trimStart()
+        val matched = mutableListOf<SlashCommand>()
+
+        while (remaining.isNotEmpty()) {
+            val match = COMMITTED_COMMAND_REGEX.find(remaining) ?: break
+            val cmd = getCommand(match.groupValues[1]) ?: break
+            matched.add(cmd)
+            remaining = remaining.substring(match.range.last + 1).trimStart()
+        }
+
+        return matched
     }
 
     fun isAtCommandPosition(textBefore: String): Boolean {

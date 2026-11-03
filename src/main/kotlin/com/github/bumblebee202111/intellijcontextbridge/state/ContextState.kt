@@ -90,7 +90,21 @@ class ContextState(
     // Transient cache for per-seed PSI graph results (outgoing imports + incoming ReferencesSearch scores)
     private val seedGraphCache = ConcurrentHashMap<VirtualFile, SeedGraphCacheEntry>()
 
+    @Volatile
+    private var isInitialized = false
+
     private val jsonParser = Json { ignoreUnknownKeys = true }
+
+    fun ensureInitialized() {
+        if (!isInitialized) {
+            if (getLastTurn() == null) {
+                loadConfig()
+            } else {
+                restoreFromLastTurn()
+            }
+            isInitialized = true
+        }
+    }
 
     fun getLevel(file: VirtualFile): ContextLevel {
         return fileStates[file] ?: ContextLevel.NONE
@@ -175,27 +189,38 @@ class ContextState(
         return found
     }
 
-    fun applyCommandContext(command: SlashCommand) {
+    fun applyCommandContext(
+        command: SlashCommand,
+        targetMap: MutableMap<VirtualFile, ContextLevel> = fileStates
+    ) {
         if (command.contextAction == CommandContextAction.REPLACE) {
-            clearFileStates()
+            targetMap.clear()
         }
 
         for (path in command.includeFiles) {
             ProgressManager.checkCanceled()
             val file = resolveFile(path)
             if (file != null && file.exists()) {
-                applyStateRecursively(file, ContextLevel.COMPLETE, checkIgnore = true)
+                applyStateRecursively(file, ContextLevel.COMPLETE, checkIgnore = true, targetMap = targetMap)
             }
         }
     }
 
-    fun applyFileMention(file: VirtualFile) {
+    fun applyFileMention(
+        file: VirtualFile,
+        targetMap: MutableMap<VirtualFile, ContextLevel> = fileStates
+    ) {
         if (file.isValid) {
-            applyStateRecursively(file, ContextLevel.COMPLETE, checkIgnore = true)
+            applyStateRecursively(file, ContextLevel.COMPLETE, checkIgnore = true, targetMap = targetMap)
         }
     }
 
-    fun applyStateRecursively(file: VirtualFile, level: ContextLevel, checkIgnore: Boolean = true) {
+    fun applyStateRecursively(
+        file: VirtualFile,
+        level: ContextLevel,
+        checkIgnore: Boolean = true,
+        targetMap: MutableMap<VirtualFile, ContextLevel> = fileStates
+    ) {
         ProgressManager.checkCanceled()
         // Skip slow index operations if we already know the file is valid (e.g., from a UI click)
         if (checkIgnore && FileFilterUtil.isIgnored(project, file)) return
@@ -204,22 +229,22 @@ class ContextState(
             if (file.children.isEmpty()) {
                 val cappedLevel = if (level == ContextLevel.COMPLETE) ContextLevel.SKELETON else level
                 if (cappedLevel == ContextLevel.NONE || cappedLevel == ContextLevel.MIXED) {
-                    fileStates.remove(file)
+                    targetMap.remove(file)
                 } else {
-                    fileStates[file] = cappedLevel
+                    targetMap[file] = cappedLevel
                 }
             } else {
-                fileStates.remove(file)
-                file.children.forEach { applyStateRecursively(it, level, checkIgnore) }
+                targetMap.remove(file)
+                file.children.forEach { applyStateRecursively(it, level, checkIgnore, targetMap) }
             }
         } else {
             val maxLevel = ContextCapabilityUtil.getMaxLevel(file)
             val cappedLevel = if (level == ContextLevel.COMPLETE && maxLevel == ContextLevel.SKELETON) ContextLevel.SKELETON else level
 
             if (cappedLevel == ContextLevel.NONE || cappedLevel == ContextLevel.MIXED) {
-                fileStates.remove(file)
+                targetMap.remove(file)
             } else {
-                fileStates[file] = cappedLevel
+                targetMap[file] = cappedLevel
             }
         }
     }
@@ -371,6 +396,7 @@ class ContextState(
     }
 
     fun clear() {
+        isInitialized = false
         fileStates.clear()
         externalRoots.clear()
         myState.turns.clear()

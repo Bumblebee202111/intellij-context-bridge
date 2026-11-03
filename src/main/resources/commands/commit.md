@@ -2,7 +2,7 @@
 name: "commit"
 description: "Generate a commit message from the provided diff."
 mode: "EDIT"
-context-action: "ADDITIVE"
+context-action: "REPLACE"
 ---
 Generate a brief, scoped Conventional Commit message for the following diff:
 

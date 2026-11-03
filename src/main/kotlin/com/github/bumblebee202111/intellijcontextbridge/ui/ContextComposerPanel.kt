@@ -67,12 +67,12 @@ class ContextComposerPanel(private val project: Project) : Disposable {
     private var historyIndex = -1
     private var draftPrompt = ""
     private var lastAppliedCommands = emptyList<String>()
+    private var appliedCommandNames = emptyList<String>()
 
     private val dateFormat = SimpleDateFormat("HH:mm:ss")
 
     private val promptCompletionProvider = PromptCompletionProvider(
         project = project,
-        onCommandSelected = ::applyCommandContext,
         onFileMentionSelected = ::applyFileMentionContext
     )
 
@@ -426,6 +426,14 @@ class ContextComposerPanel(private val project: Project) : Disposable {
                     }
                 }
 
+                val committedCommands = commandRegistry.parseCommittedLeadingCommands(promptArea.text)
+                val committedNames = committedCommands.map { it.name }
+                if (committedNames != appliedCommandNames) {
+                    val newlyCommitted = committedCommands.filter { it.name !in appliedCommandNames }
+                    appliedCommandNames = committedNames
+                    newlyCommitted.forEach(::applyCommandContext)
+                }
+
                 val newText = event.newFragment.toString()
                 if (newText == "/" || newText == "@") {
                     val offset = event.offset
@@ -475,6 +483,7 @@ class ContextComposerPanel(private val project: Project) : Disposable {
                     promptArea.text = ""
                     historyIndex = -1
                     draftPrompt = ""
+                    appliedCommandNames = emptyList()
                     treeManager.reset()
                     chatTimelinePanel.refresh()
                 }
@@ -589,6 +598,7 @@ class ContextComposerPanel(private val project: Project) : Disposable {
     private fun executePayloadAction(isWsSend: Boolean) {
         val promptText = promptArea.text
         val intent = if (askRadio.isSelected) IntentMode.ASK else IntentMode.EDIT
+        val alreadyApplied = appliedCommandNames.toSet()
         historyIndex = -1
         draftPrompt = ""
 
@@ -597,7 +607,13 @@ class ContextComposerPanel(private val project: Project) : Disposable {
 
         contextState.scope.launch {
             try {
-                val result = PayloadGenerator.generatePayload(project, contextState, promptText, intent)
+                val result = PayloadGenerator.generatePayload(
+                    project = project,
+                    contextState = contextState,
+                    userPrompt = promptText,
+                    intentMode = intent,
+                    alreadyAppliedCommands = alreadyApplied
+                )
                 ApplicationManager.getApplication().invokeLater({
                     val payloadObj = result.payload
                     contextState.addTurn(result.turn)
@@ -622,6 +638,7 @@ class ContextComposerPanel(private val project: Project) : Disposable {
                     }
 
                     promptArea.text = ""
+                    appliedCommandNames = emptyList()
                     setGeneratingState(false)
                 }, ModalityState.nonModal())
             } catch (e: Exception) {
