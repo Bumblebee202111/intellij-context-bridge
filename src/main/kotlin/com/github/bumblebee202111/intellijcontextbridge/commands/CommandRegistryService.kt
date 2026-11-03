@@ -6,6 +6,7 @@ import com.intellij.openapi.components.Service
 import com.intellij.openapi.diagnostic.thisLogger
 import com.intellij.openapi.project.Project
 import com.intellij.openapi.project.guessProjectDir
+import com.intellij.openapi.util.Disposer
 import com.intellij.openapi.vfs.VfsUtilCore
 import com.intellij.openapi.vfs.VirtualFileManager
 import com.intellij.openapi.vfs.newvfs.BulkFileListener
@@ -13,6 +14,7 @@ import com.intellij.openapi.vfs.newvfs.events.VFileEvent
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.launch
 import java.util.concurrent.ConcurrentHashMap
+import java.util.concurrent.CopyOnWriteArrayList
 
 @Service(Service.Level.PROJECT)
 class CommandRegistryService(private val project: Project, private val scope: CoroutineScope) : Disposable {
@@ -22,6 +24,11 @@ class CommandRegistryService(private val project: Project, private val scope: Co
     }
 
     private val commands = ConcurrentHashMap<String, SlashCommand>()
+    private val changeListeners = CopyOnWriteArrayList<(List<SlashCommand>) -> Unit>()
+
+    @Volatile
+    var isLoaded: Boolean = false
+        private set
 
     private val builtInManifest = listOf(
         "plan.md", "impl.md", "debug.md", "review.md", "review-bugs.md", "review-simplify.md", "review-arch.md", "review-product.md", "test.md", "lore.md", "research.md", "commit.md", "cmd.md"
@@ -48,6 +55,14 @@ class CommandRegistryService(private val project: Project, private val scope: Co
                 }
             }
         })
+    }
+
+    fun addChangeListener(parentDisposable: Disposable, listener: (List<SlashCommand>) -> Unit) {
+        changeListeners.add(listener)
+        Disposer.register(parentDisposable) { changeListeners.remove(listener) }
+        if (isLoaded) {
+            listener(getCommands())
+        }
     }
 
     fun getCommands(): List<SlashCommand> {
@@ -120,10 +135,14 @@ class CommandRegistryService(private val project: Project, private val scope: Co
 
             commands.clear()
             commands.putAll(newCommands)
+            isLoaded = true
+            val snapshot = getCommands()
+            changeListeners.forEach { it(snapshot) }
         }
     }
 
     override fun dispose() {
         commands.clear()
+        changeListeners.clear()
     }
 }

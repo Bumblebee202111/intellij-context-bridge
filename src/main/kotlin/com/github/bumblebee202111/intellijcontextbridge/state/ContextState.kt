@@ -1,5 +1,7 @@
 package com.github.bumblebee202111.intellijcontextbridge.state
 
+import com.github.bumblebee202111.intellijcontextbridge.commands.CommandContextAction
+import com.github.bumblebee202111.intellijcontextbridge.commands.SlashCommand
 import com.github.bumblebee202111.intellijcontextbridge.utils.ContextCapabilityUtil
 import com.github.bumblebee202111.intellijcontextbridge.utils.FileFilterUtil
 import com.intellij.openapi.components.PersistentStateComponent
@@ -146,6 +148,50 @@ class ContextState(
                 val initialLevel = if (file.isDirectory) ContextLevel.SKELETON else ContextLevel.COMPLETE
                 applyStateRecursively(file, initialLevel, checkIgnore = true)
             }
+        }
+    }
+
+    fun promoteFiles(paths: List<String>): Set<VirtualFile> {
+        val found = mutableSetOf<VirtualFile>()
+
+        fun collectFiles(vf: VirtualFile) {
+            ProgressManager.checkCanceled()
+            if (!vf.isValid || FileFilterUtil.isIgnored(project, vf)) return
+            if (vf.isDirectory) {
+                vf.children.forEach(::collectFiles)
+            } else {
+                applyStateRecursively(vf, ContextLevel.COMPLETE, checkIgnore = false)
+                found.add(vf)
+            }
+        }
+
+        for (path in paths) {
+            ProgressManager.checkCanceled()
+            val file = resolveFile(path)
+            if (file != null && file.exists()) {
+                collectFiles(file)
+            }
+        }
+        return found
+    }
+
+    fun applyCommandContext(command: SlashCommand) {
+        if (command.contextAction == CommandContextAction.REPLACE) {
+            clearFileStates()
+        }
+
+        for (path in command.includeFiles) {
+            ProgressManager.checkCanceled()
+            val file = resolveFile(path)
+            if (file != null && file.exists()) {
+                applyStateRecursively(file, ContextLevel.COMPLETE, checkIgnore = true)
+            }
+        }
+    }
+
+    fun applyFileMention(file: VirtualFile) {
+        if (file.isValid) {
+            applyStateRecursively(file, ContextLevel.COMPLETE, checkIgnore = true)
         }
     }
 

@@ -17,8 +17,13 @@ import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.CopyOnWriteArrayList
 import kotlin.time.Duration.Companion.seconds
 
-data class BrowserTab(val id: String, val pathname: String, val title: String) {
-    override fun toString(): String = title
+data class BrowserTab(
+    val id: String,
+    val pathname: String,
+    val title: String,
+    val isConnected: Boolean = true
+) {
+    override fun toString(): String = if (isConnected) title else "$title (Disconnected)"
 }
 
 @Service(Service.Level.APP)
@@ -59,6 +64,8 @@ class ContextBridgeServer(private val scope: CoroutineScope) : Disposable {
     }
 
     fun getActiveTabs(): List<BrowserTab> = activeTabs.values.toList()
+
+    fun isTabConnected(tabId: String?): Boolean = tabId != null && activeTabs.containsKey(tabId)
 
     fun start() {
         if (server != null) return

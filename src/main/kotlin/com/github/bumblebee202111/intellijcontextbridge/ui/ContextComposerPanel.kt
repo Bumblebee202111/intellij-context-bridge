@@ -1,17 +1,12 @@
 package com.github.bumblebee202111.intellijcontextbridge.ui
 
-import com.github.bumblebee202111.intellijcontextbridge.commands.CommandContextAction
 import com.github.bumblebee202111.intellijcontextbridge.commands.CommandRegistryService
 import com.github.bumblebee202111.intellijcontextbridge.commands.SlashCommand
-import com.github.bumblebee202111.intellijcontextbridge.commands.SyncCommand
-import com.github.bumblebee202111.intellijcontextbridge.context.core.ContextSuggestionEngine
 import com.github.bumblebee202111.intellijcontextbridge.context.core.PayloadGenerator
+import com.github.bumblebee202111.intellijcontextbridge.server.BridgeSessionService
 import com.github.bumblebee202111.intellijcontextbridge.server.BrowserTab
-import com.github.bumblebee202111.intellijcontextbridge.server.ContextBridgeServer
-import com.github.bumblebee202111.intellijcontextbridge.state.ContextLevel
 import com.github.bumblebee202111.intellijcontextbridge.state.ContextState
 import com.github.bumblebee202111.intellijcontextbridge.state.IntentMode
-import com.github.bumblebee202111.intellijcontextbridge.utils.FileFilterUtil
 import com.intellij.codeInsight.AutoPopupController
 import com.intellij.icons.AllIcons
 import com.intellij.openapi.Disposable
@@ -24,7 +19,6 @@ import com.intellij.openapi.actionSystem.DefaultActionGroup
 import com.intellij.openapi.actionSystem.ToggleAction
 import com.intellij.openapi.application.ApplicationManager
 import com.intellij.openapi.application.ModalityState
-import com.intellij.openapi.application.ReadAction
 import com.intellij.openapi.application.readAction
 import com.intellij.openapi.components.service
 import com.intellij.openapi.editor.event.DocumentEvent
@@ -33,29 +27,19 @@ import com.intellij.openapi.fileChooser.FileChooser
 import com.intellij.openapi.fileChooser.FileChooserDescriptorFactory
 import com.intellij.openapi.fileEditor.FileDocumentManager
 import com.intellij.openapi.fileEditor.FileEditorManager
-import com.intellij.openapi.fileEditor.OpenFileDescriptor
 import com.intellij.openapi.ide.CopyPasteManager
-import com.intellij.openapi.progress.ProgressManager
 import com.intellij.openapi.project.Project
-import com.intellij.openapi.project.guessProjectDir
 import com.intellij.openapi.ui.ComboBox
 import com.intellij.openapi.ui.Messages
-import com.intellij.openapi.vfs.LocalFileSystem
+import com.intellij.openapi.util.Disposer
 import com.intellij.openapi.vfs.VirtualFile
 import com.intellij.ui.IdeBorderFactory
 import com.intellij.ui.JBSplitter
-import com.intellij.ui.SimpleTextAttributes
 import com.intellij.ui.TextFieldWithAutoCompletion
-import com.intellij.ui.TreeSpeedSearch
 import com.intellij.ui.components.JBRadioButton
-import com.intellij.ui.components.JBScrollPane
-import com.intellij.ui.treeStructure.Tree
 import com.intellij.util.ui.AsyncProcessIcon
 import com.intellij.util.ui.JBUI
-import kotlinx.coroutines.Job
 import kotlinx.coroutines.launch
-import kotlinx.serialization.encodeToString
-import kotlinx.serialization.json.Json
 import java.awt.BorderLayout
 import java.awt.CardLayout
 import java.awt.Dimension
@@ -64,16 +48,10 @@ import java.awt.datatransfer.DataFlavor
 import java.awt.datatransfer.StringSelection
 import java.awt.event.InputEvent
 import java.awt.event.ItemEvent
-import java.awt.event.KeyAdapter
 import java.awt.event.KeyEvent
-import java.awt.event.MouseAdapter
-import java.awt.event.MouseEvent
-import java.io.File
 import java.text.SimpleDateFormat
 import java.util.Date
 import javax.swing.*
-import javax.swing.tree.DefaultMutableTreeNode
-import javax.swing.tree.DefaultTreeModel
 
 class ContextComposerPanel(private val project: Project) : Disposable {
     companion object {
@@ -82,50 +60,32 @@ class ContextComposerPanel(private val project: Project) : Disposable {
     }
 
     private val contextState = project.service<ContextState>()
-    private val server = ApplicationManager.getApplication().getService(ContextBridgeServer::class.java)
-    private val treeManager = ContextTreeManager(project, contextState)
+    private val bridgeSession = project.service<BridgeSessionService>()
+    private val commandRegistry = project.service<CommandRegistryService>()
 
     private var activeView = VIEW_CONTEXT
     private var historyIndex = -1
     private var draftPrompt = ""
     private var lastAppliedCommands = emptyList<String>()
 
-    @Volatile
-    private var lastDedupedFiles = emptySet<VirtualFile>()
-    private var isConfigLoaded = false
-
-    private var pendingAiRequests = emptySet<VirtualFile>()
-
-    @Volatile
-    private var vfsStructureDirty = true
-
-    @Volatile
-    private var mainTreeForceRebuild = true
-
-    private var lastSuggestions: Set<VirtualFile>? = null
-    private var lastRequestedFiles: Set<VirtualFile>? = null
-
-    private var treeUpdateJob: Job? = null
-
-    private val uiRefreshTimer = Timer(300) {
-        refreshTree()
-    }.apply { isRepeats = false }
-
     private val dateFormat = SimpleDateFormat("HH:mm:ss")
 
-    private var showSelectedOnly = false
+    private val promptCompletionProvider = PromptCompletionProvider(
+        project = project,
+        onCommandSelected = ::applyCommandContext,
+        onFileMentionSelected = ::applyFileMentionContext
+    )
 
-    private val treeModel = DefaultTreeModel(DefaultMutableTreeNode("Loading..."))
-    private val tree = Tree(treeModel).apply {
-        isRootVisible = false
-        showsRootHandles = true
-        emptyText.text = "Loading project..."
-        emptyText.appendSecondaryText(
-            "Space/Click: Toggle | Enter: Open | Right-Click: Clear/Detach",
-            SimpleTextAttributes.GRAYED_ATTRIBUTES,
-            null
-        )
-    }
+    private val treeManager = ContextTreeManager(
+        project = project,
+        contextState = contextState,
+        onVfsRefreshed = { projectDir, externalRoots ->
+            val items = promptCompletionProvider.collectFileMentionItems(projectDir, externalRoots)
+            ApplicationManager.getApplication().invokeLater({
+                promptCompletionProvider.updateFileMentionItems(items)
+            }, ModalityState.nonModal())
+        }
+    )
 
     private val mainCardLayout = CardLayout()
     private val mainViewport = JPanel(mainCardLayout)
@@ -139,19 +99,11 @@ class ContextComposerPanel(private val project: Project) : Disposable {
             approveAndSendReadFiles(paths)
         },
         onHistoryChanged = {
-            vfsStructureDirty = true
-            mainTreeForceRebuild = true
-            refreshUi()
+            refreshUi(vfsStructureChanged = true, forceMainRebuild = true)
         },
         onFocusChat = {
             switchView(VIEW_CHAT)
         }
-    )
-
-    private val promptCompletionProvider = PromptCompletionProvider(
-        project = project,
-        onCommandSelected = ::applyCommandContext,
-        onFileMentionSelected = ::applyFileMentionContext
     )
 
     private val promptArea = TextFieldWithAutoCompletion(
@@ -190,17 +142,13 @@ class ContextComposerPanel(private val project: Project) : Disposable {
     private val NONE_TAB = BrowserTab("", "", "<None / Disconnected>")
 
     init {
+        Disposer.register(this, treeManager)
+
         ContextChangeTracker(this, project, contextState) { vfsStructureChanged ->
-            if (vfsStructureChanged) {
-                vfsStructureDirty = true
-            }
-            refreshUi()
+            refreshUi(vfsStructureChanged = vfsStructureChanged)
         }
 
-        configureTree(tree) { file -> lastDedupedFiles.contains(file) }
-        setupExternalFileDropTarget()
-
-        mainViewport.add(JBScrollPane(tree), VIEW_CONTEXT)
+        mainViewport.add(treeManager.content, VIEW_CONTEXT)
         mainViewport.add(chatTimelinePanel.content, VIEW_CHAT)
 
         val splitPane = JBSplitter(true, 0.7f).apply {
@@ -214,13 +162,17 @@ class ContextComposerPanel(private val project: Project) : Disposable {
         tabComboBox.addItemListener { event ->
             if (!isUpdatingTabs && event.stateChange == ItemEvent.SELECTED) {
                 val selected = event.item as? BrowserTab ?: return@addItemListener
-                changeBinding(selected.id, selected.pathname, selected.title)
+                bridgeSession.changeBinding(selected.id, selected.pathname, selected.title)
             }
         }
 
-        server.addTabsListener(this, ::handleTabsChanged)
-        updateTabsUI(server.getActiveTabs())
-        server.addHandshakeListener(this, ::handleTabHandshake)
+        bridgeSession.addStateListener(this, ::updateTabsUI)
+        commandRegistry.addChangeListener(this) {
+            ApplicationManager.getApplication().invokeLater({
+                promptCompletionProvider.refreshItems()
+            }, ModalityState.nonModal())
+        }
+        updateTabsUI()
 
         chatTimelinePanel.refresh()
         refreshUi()
@@ -242,89 +194,24 @@ class ContextComposerPanel(private val project: Project) : Disposable {
         chatTimelinePanel.processIncomingMarkdown(markdownText, fromWebSocket)
     }
 
-    private fun configureTree(targetTree: Tree, isCached: (VirtualFile) -> Boolean) {
-        targetTree.cellRenderer = ContextTreeCellRenderer(treeManager::getComputedLevel, isCached)
-        targetTree.addMouseListener(createTreeMouseListener(targetTree))
-        targetTree.addKeyListener(createTreeKeyListener(targetTree))
-        TreeSpeedSearch(targetTree)
-    }
-
-    private fun attachExternalFiles(filesProvider: () -> Collection<VirtualFile>) {
-        contextState.scope.launch {
-            val added = readAction {
-                val files = filesProvider()
-                if (files.isNotEmpty()) {
-                    contextState.addExternalFiles(files)
-                    true
-                } else {
-                    false
-                }
-            }
-            if (added) {
-                ApplicationManager.getApplication().invokeLater({
-                    vfsStructureDirty = true
-                    mainTreeForceRebuild = true
-                    refreshUi()
-                }, ModalityState.nonModal())
-            }
-        }
-    }
-
-    private fun setupExternalFileDropTarget() {
-        tree.transferHandler = object : TransferHandler() {
-            override fun canImport(support: TransferSupport): Boolean {
-                return support.isDataFlavorSupported(DataFlavor.javaFileListFlavor)
-            }
-
-            override fun importData(support: TransferSupport): Boolean {
-                if (!canImport(support)) return false
-                return try {
-                    @Suppress("UNCHECKED_CAST")
-                    val droppedFiles = support.transferable.getTransferData(DataFlavor.javaFileListFlavor) as? List<File>
-                        ?: return false
-                    if (droppedFiles.isEmpty()) return false
-
-                    attachExternalFiles {
-                        droppedFiles.mapNotNull { LocalFileSystem.getInstance().findFileByIoFile(it) }
-                    }
-                    true
-                } catch (e: Exception) {
-                    false
-                }
-            }
-        }
-    }
-
-    private fun updateTabsUI(tabs: List<BrowserTab>) {
+    private fun updateTabsUI() {
+        val displayTabs = bridgeSession.getDisplayTabs()
+        val activeTabId = bridgeSession.activeTabId
         SwingUtilities.invokeLater {
             isUpdatingTabs = true
             try {
-                val previousSelectionId = contextState.activeTabId
                 tabComboBox.removeAllItems()
                 tabComboBox.addItem(NONE_TAB)
 
                 var matchedItem: BrowserTab? = null
-                tabs.forEach { tab ->
+                displayTabs.forEach { tab ->
                     tabComboBox.addItem(tab)
-                    if (tab.id == previousSelectionId) {
+                    if (tab.id == activeTabId) {
                         matchedItem = tab
                     }
                 }
 
-                if (matchedItem != null) {
-                    tabComboBox.selectedItem = matchedItem
-                } else if (contextState.activeTabId != null) {
-                    val state = contextState.getState()
-                    val disconnectedItem = BrowserTab(
-                        contextState.activeTabId!!,
-                        contextState.activeTabPathname ?: "",
-                        "${state.boundTabTitle} (Disconnected)"
-                    )
-                    tabComboBox.addItem(disconnectedItem)
-                    tabComboBox.selectedItem = disconnectedItem
-                } else {
-                    tabComboBox.selectedItem = NONE_TAB
-                }
+                tabComboBox.selectedItem = matchedItem ?: NONE_TAB
                 updateSendButtonState()
             } finally {
                 isUpdatingTabs = false
@@ -332,106 +219,28 @@ class ContextComposerPanel(private val project: Project) : Disposable {
         }
     }
 
-    private fun handleTabsChanged(tabs: List<BrowserTab>) {
-        val state = contextState.getState()
-        if (contextState.activeTabId != null && tabs.none { it.id == contextState.activeTabId }) {
-            val match = tabs.find { state.boundTabTitle.isNotEmpty() && it.title == state.boundTabTitle }
-            if (match != null) {
-                changeBinding(match.id, match.pathname, match.title)
-            }
-        }
-        updateTabsUI(tabs)
-    }
-
-    private fun handleTabHandshake(tab: BrowserTab) {
-        val state = contextState.getState()
-
-        if (state.boundTabTitle.isNotEmpty() && tab.title == state.boundTabTitle) {
-            if (tab.id != contextState.activeTabId || tab.pathname != contextState.activeTabPathname) {
-                changeBinding(tab.id, tab.pathname, tab.title)
-                updateTabsUI(server.getActiveTabs())
-            }
-        } else if (tab.id == contextState.activeTabId) {
-            if (tab.pathname == contextState.activeTabPathname) {
-                changeBinding(tab.id, tab.pathname, tab.title)
-                updateTabsUI(server.getActiveTabs())
-            } else {
-                changeBinding(null, "", "")
-                updateTabsUI(server.getActiveTabs())
-            }
-        }
-
-        val commands = project.service<CommandRegistryService>().getCommands()
-        val dtos = commands.map { SyncCommand(it.name, it.mode.name, it.promptBody) }
-        val json = Json.encodeToString(dtos)
-        server.sendToTab(tab.id, "[COMMANDS]$json")
-    }
-
-    private fun changeBinding(newId: String?, newPathname: String, newTitle: String) {
-        val oldId = contextState.activeTabId
-        if (oldId != null && oldId != newId) {
-            server.sendToTab(oldId, "[UNBOUND]")
-        }
-        if (newId.isNullOrEmpty()) {
-            contextState.unbind()
-        } else {
-            contextState.bindToTab(newId, newPathname, newTitle)
-            if (oldId != newId) {
-                server.sendToTab(newId, "[BOUND]|${project.name}")
-            }
-        }
-        updateSendButtonState()
-    }
-
     private fun updateSendButtonState() {
-        if (contextState.activeTabId == null) {
+        if (bridgeSession.activeTabId == null) {
             sendWsButton.text = "Select Tab to Send"
             sendWsButton.isEnabled = false
+        } else if (!bridgeSession.isBoundTabConnected()) {
+            sendWsButton.text = "Disconnected"
+            sendWsButton.isEnabled = false
         } else {
-            val isDisconnected = tabComboBox.selectedItem?.toString()?.endsWith("(Disconnected)") == true
-            if (isDisconnected) {
-                sendWsButton.text = "Disconnected"
-                sendWsButton.isEnabled = false
-            } else {
-                sendWsButton.text = "Send to AI Studio"
-                sendWsButton.isEnabled = !loadingIcon.isVisible
-            }
+            sendWsButton.text = "Send to AI Studio"
+            sendWsButton.isEnabled = !loadingIcon.isVisible
         }
-    }
-
-    private fun collectAndPromoteFiles(paths: List<String>): Set<VirtualFile> {
-        val found = mutableSetOf<VirtualFile>()
-
-        fun collectFiles(vf: VirtualFile) {
-            ProgressManager.checkCanceled()
-            if (!vf.isValid || FileFilterUtil.isIgnored(project, vf)) return
-            if (vf.isDirectory) {
-                vf.children.forEach(::collectFiles)
-            } else {
-                contextState.applyStateRecursively(vf, ContextLevel.COMPLETE, checkIgnore = false)
-                found.add(vf)
-            }
-        }
-
-        for (path in paths) {
-            ProgressManager.checkCanceled()
-            val file = contextState.resolveFile(path)
-            if (file != null && file.exists()) {
-                collectFiles(file)
-            }
-        }
-        return found
     }
 
     private fun stageReadFiles(paths: List<String>, switchToTree: Boolean) {
         contextState.scope.launch {
             val requestedFiles = readAction {
-                collectAndPromoteFiles(paths)
+                contextState.promoteFiles(paths)
             }
 
             ApplicationManager.getApplication().invokeLater({
                 if (requestedFiles.isNotEmpty()) {
-                    pendingAiRequests = requestedFiles
+                    treeManager.setPendingRequests(requestedFiles)
                     if (switchToTree) {
                         switchView(VIEW_CONTEXT)
                     }
@@ -449,7 +258,7 @@ class ContextComposerPanel(private val project: Project) : Disposable {
     private fun approveAndSendReadFiles(paths: List<String>) {
         contextState.scope.launch {
             val requestedFiles = readAction {
-                collectAndPromoteFiles(paths)
+                contextState.promoteFiles(paths)
             }
 
             ApplicationManager.getApplication().invokeLater({
@@ -460,11 +269,7 @@ class ContextComposerPanel(private val project: Project) : Disposable {
                     )
                     return@invokeLater
                 }
-                val selectedTab = tabComboBox.selectedItem as? BrowserTab
-                val canSendWs = selectedTab != null &&
-                    selectedTab.id.isNotEmpty() &&
-                    !selectedTab.toString().endsWith("(Disconnected)")
-                executePayloadAction(isWsSend = canSendWs, selectedTab = selectedTab)
+                executePayloadAction(isWsSend = bridgeSession.isBoundTabConnected())
             }, ModalityState.nonModal())
         }
     }
@@ -472,16 +277,7 @@ class ContextComposerPanel(private val project: Project) : Disposable {
     fun applyCommandContext(command: SlashCommand) {
         contextState.scope.launch {
             readAction {
-                if (command.contextAction == CommandContextAction.REPLACE) {
-                    contextState.clearFileStates()
-                }
-
-                for (path in command.includeFiles) {
-                    val file = contextState.resolveFile(path)
-                    if (file != null && file.exists()) {
-                        contextState.applyStateRecursively(file, ContextLevel.COMPLETE, checkIgnore = true)
-                    }
-                }
+                contextState.applyCommandContext(command)
             }
             ApplicationManager.getApplication().invokeLater({
                 refreshUi()
@@ -492,9 +288,7 @@ class ContextComposerPanel(private val project: Project) : Disposable {
     private fun applyFileMentionContext(file: VirtualFile) {
         contextState.scope.launch {
             readAction {
-                if (file.isValid) {
-                    contextState.applyStateRecursively(file, ContextLevel.COMPLETE, checkIgnore = true)
-                }
+                contextState.applyFileMention(file)
             }
             ApplicationManager.getApplication().invokeLater({
                 refreshUi()
@@ -544,7 +338,7 @@ class ContextComposerPanel(private val project: Project) : Disposable {
                     val editor = FileEditorManager.getInstance(project).selectedTextEditor
                     val file = editor?.document?.let { FileDocumentManager.getInstance().getFile(it) }
                     if (file != null) {
-                        attachExternalFiles { listOf(file) }
+                        treeManager.attachExternalFiles { listOf(file) }
                     } else {
                         Messages.showInfoMessage("No active editor found.", "Add Active File")
                     }
@@ -561,7 +355,7 @@ class ContextComposerPanel(private val project: Project) : Disposable {
                         description = "Select files or folders to include in Context Bridge"
                     }
                     FileChooser.chooseFiles(descriptor, project, null) { files ->
-                        attachExternalFiles { files }
+                        treeManager.attachExternalFiles { files }
                     }
                 }
             })
@@ -570,12 +364,10 @@ class ContextComposerPanel(private val project: Project) : Disposable {
                 "Filter to show only selected files",
                 AllIcons.General.Filter
             ) {
-                override fun isSelected(e: AnActionEvent): Boolean = showSelectedOnly
+                override fun isSelected(e: AnActionEvent): Boolean = treeManager.showSelectedOnly
                 override fun setSelected(e: AnActionEvent, state: Boolean) {
-                    showSelectedOnly = state
-                    mainTreeForceRebuild = true
+                    treeManager.showSelectedOnly = state
                     switchView(VIEW_CONTEXT)
-                    refreshUi()
                 }
                 override fun getActionUpdateThread() = ActionUpdateThread.EDT
             })
@@ -591,7 +383,7 @@ class ContextComposerPanel(private val project: Project) : Disposable {
             })
             add(object : AnAction("Run Web UI Diagnostics", "Test stability of background DOM interactions", AllIcons.Actions.StartDebugger) {
                 override fun actionPerformed(e: AnActionEvent) {
-                    val tabId = contextState.activeTabId
+                    val tabId = bridgeSession.activeTabId
                     if (tabId != null) {
                         DiagnosticDialog(project, tabId).show()
                     } else {
@@ -620,7 +412,6 @@ class ContextComposerPanel(private val project: Project) : Disposable {
                     draftPrompt = promptArea.text
                 }
 
-                val commandRegistry = project.service<CommandRegistryService>()
                 val (currentCommands, _) = commandRegistry.parseLeadingCommands(promptArea.text)
 
                 val currentCommandNames = currentCommands.map { it.name }
@@ -681,15 +472,11 @@ class ContextComposerPanel(private val project: Project) : Disposable {
             add(object : AnAction("New Chat", "Clear context and start a new chat", AllIcons.General.Reset) {
                 override fun actionPerformed(e: AnActionEvent) {
                     contextState.clear()
-                    isConfigLoaded = false
-                    vfsStructureDirty = true
-                    mainTreeForceRebuild = true
                     promptArea.text = ""
                     historyIndex = -1
                     draftPrompt = ""
-                    pendingAiRequests = emptySet()
+                    treeManager.reset()
                     chatTimelinePanel.refresh()
-                    refreshUi()
                 }
             })
             add(object : AnAction("Undo Last", "Undo last sent prompt", AllIcons.Actions.Undo) {
@@ -702,10 +489,8 @@ class ContextComposerPanel(private val project: Project) : Disposable {
                                 contextState.restoreFromLastTurn()
                             }
                             ApplicationManager.getApplication().invokeLater({
-                                vfsStructureDirty = true
-                                mainTreeForceRebuild = true
                                 chatTimelinePanel.refresh()
-                                refreshUi()
+                                refreshUi(vfsStructureChanged = true, forceMainRebuild = true)
                             }, ModalityState.nonModal())
                         }
                     }
@@ -735,9 +520,8 @@ class ContextComposerPanel(private val project: Project) : Disposable {
 
         copyButton.addActionListener { executePayloadAction(isWsSend = false) }
         sendWsButton.addActionListener {
-            val selectedTab = tabComboBox.selectedItem as? BrowserTab ?: return@addActionListener
-            if (selectedTab.id.isNotEmpty()) {
-                executePayloadAction(isWsSend = true, selectedTab = selectedTab)
+            if (bridgeSession.isBoundTabConnected()) {
+                executePayloadAction(isWsSend = true)
             }
         }
         val actionButtonPanel = JPanel(BorderLayout(5, 0)).apply {
@@ -802,15 +586,13 @@ class ContextComposerPanel(private val project: Project) : Disposable {
         )
     }
 
-    private fun executePayloadAction(isWsSend: Boolean, selectedTab: BrowserTab? = null) {
+    private fun executePayloadAction(isWsSend: Boolean) {
         val promptText = promptArea.text
         val intent = if (askRadio.isSelected) IntentMode.ASK else IntentMode.EDIT
         historyIndex = -1
         draftPrompt = ""
 
-        // Clear pending requests upon successful transmission
-        pendingAiRequests = emptySet()
-
+        treeManager.clearPendingRequests()
         setGeneratingState(true)
 
         contextState.scope.launch {
@@ -822,10 +604,7 @@ class ContextComposerPanel(private val project: Project) : Disposable {
                     chatTimelinePanel.refresh(scrollToBottom = true)
                     refreshUi()
 
-                    if (isWsSend && selectedTab != null) {
-                        val jsonString = Json.encodeToString(payloadObj)
-                        server.sendToTab(selectedTab.id, jsonString)
-
+                    if (isWsSend && bridgeSession.sendPayload(payloadObj)) {
                         val originalText = sendWsButton.text
                         sendWsButton.text = "Sent!"
                         Timer(1500) { sendWsButton.text = originalText }.apply { isRepeats = false }.start()
@@ -859,228 +638,12 @@ class ContextComposerPanel(private val project: Project) : Disposable {
         updateSendButtonState()
     }
 
-    private fun applyNodeStateAsync(targetTree: Tree, action: () -> Boolean) {
-        contextState.scope.launch {
-            val structureChanged = readAction {
-                action()
-            }
-            ApplicationManager.getApplication().invokeLater({
-                if (structureChanged) {
-                    vfsStructureDirty = true
-                    mainTreeForceRebuild = true
-                }
-                targetTree.repaint()
-                refreshUi()
-            }, ModalityState.nonModal())
-        }
-    }
-
-    private fun createTreeMouseListener(targetTree: Tree): MouseAdapter {
-        return object : MouseAdapter() {
-            override fun mouseClicked(e: MouseEvent) {
-                val path = targetTree.getPathForLocation(e.x, e.y) ?: return
-                val bounds = targetTree.getPathBounds(path) ?: return
-                val node = path.lastPathComponent as? DefaultMutableTreeNode ?: return
-
-                val nodeData = node.userObject as? NodeData ?: return
-                val file = nodeData.file
-
-                if (SwingUtilities.isRightMouseButton(e)) {
-                    applyNodeStateAsync(targetTree) {
-                        treeManager.applyStateToNode(node, ContextLevel.NONE)
-                    }
-                    e.consume()
-                } else if (SwingUtilities.isLeftMouseButton(e)) {
-                    if (e.clickCount == 1) {
-                        if (e.x >= bounds.x && e.x < bounds.x + 28) {
-                            applyNodeStateAsync(targetTree) {
-                                val nextLevel = treeManager.getNextToggleLevel(node, file)
-                                treeManager.applyStateToNode(node, nextLevel)
-                            }
-                            e.consume()
-                        }
-                    } else if (e.clickCount == 2) {
-                        if (file != null && !nodeData.isDirectory) {
-                            OpenFileDescriptor(project, file).navigate(true)
-                            e.consume()
-                        }
-                    }
-                }
-            }
-        }
-    }
-
-    private fun createTreeKeyListener(targetTree: Tree): KeyAdapter {
-        return object : KeyAdapter() {
-            override fun keyPressed(e: KeyEvent) {
-                val paths = targetTree.selectionPaths ?: return
-                val keyCode = e.keyCode
-
-                if (keyCode == KeyEvent.VK_ENTER) {
-                    for (path in paths) {
-                        val node = path.lastPathComponent as? DefaultMutableTreeNode ?: continue
-                        val nodeData = node.userObject as? NodeData ?: continue
-                        val file = nodeData.file
-                        if (file != null && !nodeData.isDirectory) {
-                            OpenFileDescriptor(project, file).navigate(true)
-                        }
-                    }
-                    return
-                }
-
-                if (keyCode == KeyEvent.VK_SPACE ||
-                    keyCode == KeyEvent.VK_S ||
-                    keyCode == KeyEvent.VK_F ||
-                    keyCode == KeyEvent.VK_BACK_SPACE ||
-                    keyCode == KeyEvent.VK_DELETE
-                ) {
-                    applyNodeStateAsync(targetTree) {
-                        var structureChanged = false
-                        for (path in paths) {
-                            val node = path.lastPathComponent as? DefaultMutableTreeNode ?: continue
-                            val nodeData = node.userObject as? NodeData ?: continue
-                            val file = nodeData.file
-
-                            val changed = when (keyCode) {
-                                KeyEvent.VK_SPACE -> {
-                                    val nextLevel = treeManager.getNextToggleLevel(node, file)
-                                    treeManager.applyStateToNode(node, nextLevel)
-                                }
-                                KeyEvent.VK_S -> treeManager.applyStateToNode(node, ContextLevel.SKELETON)
-                                KeyEvent.VK_F -> treeManager.applyStateToNode(node, ContextLevel.COMPLETE)
-                                KeyEvent.VK_BACK_SPACE, KeyEvent.VK_DELETE -> {
-                                    treeManager.applyStateToNode(node, ContextLevel.NONE)
-                                }
-                                else -> false
-                            }
-                            if (changed) structureChanged = true
-                        }
-                        structureChanged
-                    }
-                    e.consume()
-                }
-            }
-        }
-    }
-
-    fun refreshUi() {
+    fun refreshUi(vfsStructureChanged: Boolean = false, forceMainRebuild: Boolean = false) {
         promptCompletionProvider.refreshItems()
-        uiRefreshTimer.restart()
-    }
-
-    private fun refreshTree() {
-        treeUpdateJob?.cancel()
-
-        treeUpdateJob = contextState.scope.launch {
-            if (!isConfigLoaded) {
-                readAction {
-                    if (contextState.getLastTurn() == null) {
-                        contextState.loadConfig()
-                    } else {
-                        contextState.restoreFromLastTurn()
-                    }
-                }
-                isConfigLoaded = true
-            }
-
-            val suggestions = ContextSuggestionEngine.calculateSuggestions(project, contextState)
-
-            val newDedupedFiles = mutableSetOf<VirtualFile>()
-            val cache = contextState.getDedupCache()
-            for ((file, currentLevel) in contextState.fileStates) {
-                if (currentLevel == ContextLevel.NONE || currentLevel == ContextLevel.MIXED) continue
-
-                val isDeduped = readAction {
-                    ProgressManager.checkCanceled()
-                    if (!file.isValid) return@readAction false
-                    PayloadGenerator.isFileDeduped(project, contextState, file, currentLevel, cache)
-                }
-
-                if (isDeduped) {
-                    newDedupedFiles.add(file)
-                }
-            }
-
-            val projectDir = readAction { project.guessProjectDir() }
-            val shouldRefreshVfs = vfsStructureDirty
-            val fileMentionItems = if (shouldRefreshVfs) {
-                readAction {
-                    promptCompletionProvider.collectFileMentionItems(projectDir, contextState.externalRoots)
-                }
-            } else {
-                null
-            }
-
-            treeManager.clearCache()
-
-            val shouldRebuildMainTree = shouldRefreshVfs || mainTreeForceRebuild || showSelectedOnly
-            val (projectNode, externalNode) = if (shouldRebuildMainTree) {
-                readAction {
-                    treeManager.buildProjectNode(projectDir, showSelectedOnly) to
-                        treeManager.buildExternalContextNode(showSelectedOnly)
-                }
-            } else {
-                null to null
-            }
-
-            val shouldRebuildSuggestionTree = shouldRefreshVfs || suggestions != lastSuggestions
-            val suggestionRootNode = if (shouldRebuildSuggestionTree) {
-                readAction {
-                    treeManager.buildSuggestedFilesNode(projectDir, suggestions)
-                }
-            } else {
-                null
-            }
-
-            val currentRequests = pendingAiRequests
-            val shouldRebuildRequestedTree = shouldRefreshVfs || currentRequests != lastRequestedFiles
-            val requestedRootNode = if (shouldRebuildRequestedTree) {
-                readAction {
-                    treeManager.buildRequestedFilesNode(projectDir, currentRequests)
-                }
-            } else {
-                null
-            }
-
-            ApplicationManager.getApplication().invokeLater({
-                if (shouldRefreshVfs) {
-                    vfsStructureDirty = false
-                }
-                if (shouldRebuildMainTree) {
-                    mainTreeForceRebuild = false
-                }
-
-                lastDedupedFiles = newDedupedFiles
-                if (fileMentionItems != null) {
-                    promptCompletionProvider.updateFileMentionItems(fileMentionItems)
-                }
-
-                if (shouldRebuildSuggestionTree) {
-                    lastSuggestions = suggestions
-                }
-                if (shouldRebuildRequestedTree) {
-                    lastRequestedFiles = currentRequests
-                }
-
-                if (shouldRebuildMainTree || shouldRebuildSuggestionTree || shouldRebuildRequestedTree) {
-                    treeManager.updateWorkspaceModel(
-                        tree = tree,
-                        updateRequested = shouldRebuildRequestedTree,
-                        requestedNode = requestedRootNode,
-                        updateSuggested = shouldRebuildSuggestionTree,
-                        suggestedNode = suggestionRootNode,
-                        updateMain = shouldRebuildMainTree,
-                        projectNode = projectNode,
-                        externalNode = externalNode
-                    )
-                } else {
-                    tree.repaint()
-                }
-            }, ModalityState.nonModal())
-        }
+        treeManager.requestRefresh(vfsStructureChanged = vfsStructureChanged, forceMainRebuild = forceMainRebuild)
     }
 
     override fun dispose() {
-        treeUpdateJob?.cancel()
+        // Cleaned up via Disposer hierarchy
     }
 }

@@ -1,25 +1,51 @@
 package com.github.bumblebee202111.intellijcontextbridge.ui
 
+import com.github.bumblebee202111.intellijcontextbridge.context.core.ContextSuggestionEngine
+import com.github.bumblebee202111.intellijcontextbridge.context.core.PayloadGenerator
 import com.github.bumblebee202111.intellijcontextbridge.state.ContextLevel
 import com.github.bumblebee202111.intellijcontextbridge.state.ContextState
 import com.github.bumblebee202111.intellijcontextbridge.utils.ContextCapabilityUtil
 import com.github.bumblebee202111.intellijcontextbridge.utils.FileFilterUtil
 import com.intellij.icons.AllIcons
+import com.intellij.openapi.Disposable
+import com.intellij.openapi.application.ApplicationManager
+import com.intellij.openapi.application.ModalityState
+import com.intellij.openapi.application.readAction
+import com.intellij.openapi.fileEditor.OpenFileDescriptor
 import com.intellij.openapi.progress.ProgressManager
 import com.intellij.openapi.project.Project
+import com.intellij.openapi.project.guessProjectDir
+import com.intellij.openapi.vfs.LocalFileSystem
 import com.intellij.openapi.vfs.VfsUtilCore
 import com.intellij.openapi.vfs.VirtualFile
+import com.intellij.ui.SimpleTextAttributes
+import com.intellij.ui.TreeSpeedSearch
+import com.intellij.ui.components.JBScrollPane
 import com.intellij.ui.treeStructure.Tree
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.launch
+import java.awt.datatransfer.DataFlavor
+import java.awt.event.KeyAdapter
+import java.awt.event.KeyEvent
+import java.awt.event.MouseAdapter
+import java.awt.event.MouseEvent
+import java.io.File
 import java.util.concurrent.ConcurrentHashMap
 import javax.swing.Icon
+import javax.swing.JComponent
 import javax.swing.JScrollPane
 import javax.swing.SwingUtilities
+import javax.swing.Timer
+import javax.swing.TransferHandler
 import javax.swing.tree.DefaultMutableTreeNode
 import javax.swing.tree.DefaultTreeModel
 import javax.swing.tree.TreePath
-import kotlin.compareTo
 
-class ContextTreeManager(private val project: Project, private val contextState: ContextState) {
+class ContextTreeManager(
+    private val project: Project,
+    private val contextState: ContextState,
+    private val onVfsRefreshed: ((projectDir: VirtualFile?, externalRoots: Collection<VirtualFile>) -> Unit)? = null
+) : Disposable {
 
     companion object {
         const val WORKSPACE_ROOT_NAME = "[Workspace]"
@@ -53,6 +79,326 @@ class ContextTreeManager(private val project: Project, private val contextState:
     private var currentSuggestedNode: DefaultMutableTreeNode? = null
     private var currentProjectNode: DefaultMutableTreeNode? = null
     private var currentExternalNode: DefaultMutableTreeNode? = null
+
+    var showSelectedOnly: Boolean = false
+        set(value) {
+            field = value
+            requestRefresh(forceMainRebuild = true)
+        }
+
+    private var pendingAiRequests = emptySet<VirtualFile>()
+    private var isConfigLoaded = false
+
+    @Volatile
+    private var lastDedupedFiles = emptySet<VirtualFile>()
+
+    @Volatile
+    private var vfsStructureDirty = true
+
+    @Volatile
+    private var mainTreeForceRebuild = true
+
+    private var lastSuggestions: Set<VirtualFile>? = null
+    private var lastRequestedFiles: Set<VirtualFile>? = null
+    private var treeUpdateJob: Job? = null
+
+    private val uiRefreshTimer = Timer(300) {
+        refreshTree()
+    }.apply { isRepeats = false }
+
+    private val treeModel = DefaultTreeModel(DefaultMutableTreeNode("Loading..."))
+    val tree = Tree(treeModel).apply {
+        isRootVisible = false
+        showsRootHandles = true
+        emptyText.text = "Loading project..."
+        emptyText.appendSecondaryText(
+            "Space/Click: Toggle | Enter: Open | Right-Click: Clear/Detach",
+            SimpleTextAttributes.GRAYED_ATTRIBUTES,
+            null
+        )
+    }
+
+    val content: JComponent = JBScrollPane(tree)
+
+    init {
+        tree.cellRenderer = ContextTreeCellRenderer(::getComputedLevel) { file -> lastDedupedFiles.contains(file) }
+        tree.addMouseListener(createTreeMouseListener())
+        tree.addKeyListener(createTreeKeyListener())
+        TreeSpeedSearch(tree)
+        setupExternalFileDropTarget()
+    }
+
+    fun requestRefresh(vfsStructureChanged: Boolean = false, forceMainRebuild: Boolean = false) {
+        if (vfsStructureChanged) vfsStructureDirty = true
+        if (forceMainRebuild) mainTreeForceRebuild = true
+        uiRefreshTimer.restart()
+    }
+
+    fun setPendingRequests(files: Set<VirtualFile>) {
+        pendingAiRequests = files
+        requestRefresh()
+    }
+
+    fun clearPendingRequests() {
+        pendingAiRequests = emptySet()
+    }
+
+    fun reset() {
+        isConfigLoaded = false
+        pendingAiRequests = emptySet()
+        requestRefresh(vfsStructureChanged = true, forceMainRebuild = true)
+    }
+
+    fun attachExternalFiles(filesProvider: () -> Collection<VirtualFile>) {
+        contextState.scope.launch {
+            val added = readAction {
+                val files = filesProvider()
+                if (files.isNotEmpty()) {
+                    contextState.addExternalFiles(files)
+                    true
+                } else {
+                    false
+                }
+            }
+            if (added) {
+                ApplicationManager.getApplication().invokeLater({
+                    requestRefresh(vfsStructureChanged = true, forceMainRebuild = true)
+                }, ModalityState.nonModal())
+            }
+        }
+    }
+
+    private fun setupExternalFileDropTarget() {
+        tree.transferHandler = object : TransferHandler() {
+            override fun canImport(support: TransferSupport): Boolean {
+                return support.isDataFlavorSupported(DataFlavor.javaFileListFlavor)
+            }
+
+            override fun importData(support: TransferSupport): Boolean {
+                if (!canImport(support)) return false
+                return try {
+                    @Suppress("UNCHECKED_CAST")
+                    val droppedFiles = support.transferable.getTransferData(DataFlavor.javaFileListFlavor) as? List<File>
+                        ?: return false
+                    if (droppedFiles.isEmpty()) return false
+
+                    attachExternalFiles {
+                        droppedFiles.mapNotNull { LocalFileSystem.getInstance().findFileByIoFile(it) }
+                    }
+                    true
+                } catch (e: Exception) {
+                    false
+                }
+            }
+        }
+    }
+
+    private fun applyNodeStateAsync(action: () -> Boolean) {
+        contextState.scope.launch {
+            val structureChanged = readAction {
+                action()
+            }
+            ApplicationManager.getApplication().invokeLater({
+                tree.repaint()
+                requestRefresh(vfsStructureChanged = structureChanged, forceMainRebuild = structureChanged)
+            }, ModalityState.nonModal())
+        }
+    }
+
+    private fun createTreeMouseListener(): MouseAdapter {
+        return object : MouseAdapter() {
+            override fun mouseClicked(e: MouseEvent) {
+                val path = tree.getPathForLocation(e.x, e.y) ?: return
+                val bounds = tree.getPathBounds(path) ?: return
+                val node = path.lastPathComponent as? DefaultMutableTreeNode ?: return
+
+                val nodeData = node.userObject as? NodeData ?: return
+                val file = nodeData.file
+
+                if (SwingUtilities.isRightMouseButton(e)) {
+                    applyNodeStateAsync {
+                        applyStateToNode(node, ContextLevel.NONE)
+                    }
+                    e.consume()
+                } else if (SwingUtilities.isLeftMouseButton(e)) {
+                    if (e.clickCount == 1) {
+                        if (e.x >= bounds.x && e.x < bounds.x + 28) {
+                            applyNodeStateAsync {
+                                val nextLevel = getNextToggleLevel(node, file)
+                                applyStateToNode(node, nextLevel)
+                            }
+                            e.consume()
+                        }
+                    } else if (e.clickCount == 2) {
+                        if (file != null && !nodeData.isDirectory) {
+                            OpenFileDescriptor(project, file).navigate(true)
+                            e.consume()
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    private fun createTreeKeyListener(): KeyAdapter {
+        return object : KeyAdapter() {
+            override fun keyPressed(e: KeyEvent) {
+                val paths = tree.selectionPaths ?: return
+                val keyCode = e.keyCode
+
+                if (keyCode == KeyEvent.VK_ENTER) {
+                    for (path in paths) {
+                        val node = path.lastPathComponent as? DefaultMutableTreeNode ?: continue
+                        val nodeData = node.userObject as? NodeData ?: continue
+                        val file = nodeData.file
+                        if (file != null && !nodeData.isDirectory) {
+                            OpenFileDescriptor(project, file).navigate(true)
+                        }
+                    }
+                    return
+                }
+
+                if (keyCode == KeyEvent.VK_SPACE ||
+                    keyCode == KeyEvent.VK_S ||
+                    keyCode == KeyEvent.VK_F ||
+                    keyCode == KeyEvent.VK_BACK_SPACE ||
+                    keyCode == KeyEvent.VK_DELETE
+                ) {
+                    applyNodeStateAsync {
+                        var structureChanged = false
+                        for (path in paths) {
+                            val node = path.lastPathComponent as? DefaultMutableTreeNode ?: continue
+                            val nodeData = node.userObject as? NodeData ?: continue
+                            val file = nodeData.file
+
+                            val changed = when (keyCode) {
+                                KeyEvent.VK_SPACE -> {
+                                    val nextLevel = getNextToggleLevel(node, file)
+                                    applyStateToNode(node, nextLevel)
+                                }
+                                KeyEvent.VK_S -> applyStateToNode(node, ContextLevel.SKELETON)
+                                KeyEvent.VK_F -> applyStateToNode(node, ContextLevel.COMPLETE)
+                                KeyEvent.VK_BACK_SPACE, KeyEvent.VK_DELETE -> {
+                                    applyStateToNode(node, ContextLevel.NONE)
+                                }
+                                else -> false
+                            }
+                            if (changed) structureChanged = true
+                        }
+                        structureChanged
+                    }
+                    e.consume()
+                }
+            }
+        }
+    }
+
+    private fun refreshTree() {
+        treeUpdateJob?.cancel()
+
+        treeUpdateJob = contextState.scope.launch {
+            if (!isConfigLoaded) {
+                readAction {
+                    if (contextState.getLastTurn() == null) {
+                        contextState.loadConfig()
+                    } else {
+                        contextState.restoreFromLastTurn()
+                    }
+                }
+                isConfigLoaded = true
+            }
+
+            val suggestions = ContextSuggestionEngine.calculateSuggestions(project, contextState)
+
+            val newDedupedFiles = mutableSetOf<VirtualFile>()
+            val cache = contextState.getDedupCache()
+            for ((file, currentLevel) in contextState.fileStates) {
+                if (currentLevel == ContextLevel.NONE || currentLevel == ContextLevel.MIXED) continue
+
+                val isDeduped = readAction {
+                    ProgressManager.checkCanceled()
+                    if (!file.isValid) return@readAction false
+                    PayloadGenerator.isFileDeduped(project, contextState, file, currentLevel, cache)
+                }
+
+                if (isDeduped) {
+                    newDedupedFiles.add(file)
+                }
+            }
+
+            val projectDir = readAction { project.guessProjectDir() }
+            val shouldRefreshVfs = vfsStructureDirty
+            if (shouldRefreshVfs && onVfsRefreshed != null) {
+                readAction {
+                    onVfsRefreshed.invoke(projectDir, contextState.externalRoots)
+                }
+            }
+
+            clearCache()
+
+            val shouldRebuildMainTree = shouldRefreshVfs || mainTreeForceRebuild || showSelectedOnly
+            val (projectNode, externalNode) = if (shouldRebuildMainTree) {
+                readAction {
+                    buildProjectNode(projectDir, showSelectedOnly) to
+                            buildExternalContextNode(showSelectedOnly)
+                }
+            } else {
+                null to null
+            }
+
+            val shouldRebuildSuggestionTree = shouldRefreshVfs || suggestions != lastSuggestions
+            val suggestionRootNode = if (shouldRebuildSuggestionTree) {
+                readAction {
+                    buildSuggestedFilesNode(projectDir, suggestions)
+                }
+            } else {
+                null
+            }
+
+            val currentRequests = pendingAiRequests
+            val shouldRebuildRequestedTree = shouldRefreshVfs || currentRequests != lastRequestedFiles
+            val requestedRootNode = if (shouldRebuildRequestedTree) {
+                readAction {
+                    buildRequestedFilesNode(projectDir, currentRequests)
+                }
+            } else {
+                null
+            }
+
+            ApplicationManager.getApplication().invokeLater({
+                if (shouldRefreshVfs) {
+                    vfsStructureDirty = false
+                }
+                if (shouldRebuildMainTree) {
+                    mainTreeForceRebuild = false
+                }
+
+                lastDedupedFiles = newDedupedFiles
+
+                if (shouldRebuildSuggestionTree) {
+                    lastSuggestions = suggestions
+                }
+                if (shouldRebuildRequestedTree) {
+                    lastRequestedFiles = currentRequests
+                }
+
+                if (shouldRebuildMainTree || shouldRebuildSuggestionTree || shouldRebuildRequestedTree) {
+                    updateWorkspaceModel(
+                        tree = tree,
+                        updateRequested = shouldRebuildRequestedTree,
+                        requestedNode = requestedRootNode,
+                        updateSuggested = shouldRebuildSuggestionTree,
+                        suggestedNode = suggestionRootNode,
+                        updateMain = shouldRebuildMainTree,
+                        projectNode = projectNode,
+                        externalNode = externalNode
+                    )
+                } else {
+                    tree.repaint()
+                }
+            }, ModalityState.nonModal())
+        }
+    }
 
     fun clearCache() {
         nodeStateCache.clear()
@@ -528,5 +874,10 @@ class ContextTreeManager(private val project: Project, private val contextState:
             getPathKey(path)?.let { selected.add(it) }
         }
         return selected
+    }
+
+    override fun dispose() {
+        uiRefreshTimer.stop()
+        treeUpdateJob?.cancel()
     }
 }

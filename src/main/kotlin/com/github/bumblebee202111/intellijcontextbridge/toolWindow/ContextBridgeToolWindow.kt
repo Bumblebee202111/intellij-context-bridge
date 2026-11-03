@@ -1,10 +1,9 @@
 package com.github.bumblebee202111.intellijcontextbridge.toolWindow
 
-import com.github.bumblebee202111.intellijcontextbridge.server.ContextBridgeServer
-import com.github.bumblebee202111.intellijcontextbridge.state.ContextState
+import com.github.bumblebee202111.intellijcontextbridge.server.BridgeSessionService
 import com.github.bumblebee202111.intellijcontextbridge.ui.ContextComposerPanel
 import com.intellij.openapi.Disposable
-import com.intellij.openapi.application.ApplicationManager
+import com.intellij.openapi.components.service
 import com.intellij.openapi.project.Project
 import com.intellij.openapi.util.Disposer
 import com.intellij.ui.JBColor
@@ -19,16 +18,12 @@ class ContextBridgeToolWindow(private val project: Project) : Disposable {
 
     fun getContent(): JComponent {
         try {
-            val server = ApplicationManager.getApplication().getService(ContextBridgeServer::class.java)
-            val contextState = project.getService(ContextState::class.java)
-            server.start()
+            val bridgeSession = project.service<BridgeSessionService>()
 
             val composerPanel = ContextComposerPanel(project)
             Disposer.register(this, composerPanel)
 
-            server.addMessageListener(this) { tabId, markdownText ->
-                if (tabId != contextState.activeTabId) return@addMessageListener
-
+            bridgeSession.addMessageListener(this) { markdownText ->
                 SwingUtilities.invokeLater {
                     composerPanel.processIncomingMarkdown(markdownText, fromWebSocket = true)
                 }
