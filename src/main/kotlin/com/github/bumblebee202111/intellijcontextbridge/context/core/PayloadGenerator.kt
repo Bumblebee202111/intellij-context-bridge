@@ -35,16 +35,14 @@ object PayloadGenerator {
         if (file.isDirectory) return "EMPTY_DIR"
         contextState.getCachedHash(file, level)?.let { return it }
 
-        val hash = if (ContextCapabilityUtil.isTextFile(file)) {
+        return if (ContextCapabilityUtil.isTextFile(file)) {
             val extractedText = extractTextContent(project, file, level) ?: "OMITTED_NON_CODE_SKELETON"
-            contextState.calculateHash(extractedText)
+            contextState.cacheContentHash(file, level, extractedText)
         } else if (level == ContextLevel.COMPLETE) {
-            contextState.calculateHash("${file.modificationStamp}_${file.length}")
+            contextState.cacheContentHash(file, level, "${file.modificationStamp}_${file.length}")
         } else {
-            "OMITTED_BINARY_SKELETON"
+            contextState.cacheHash(file, level, "OMITTED_BINARY_SKELETON")
         }
-
-        return contextState.cacheHash(file, level, hash)
     }
 
     fun isFileDeduped(
@@ -211,10 +209,10 @@ object PayloadGenerator {
 
                 try {
                     val extractedText = extractTextContent(project, file, level)
-                    val currentHash = fastHash ?: contextState.cacheHash(
+                    val currentHash = fastHash ?: contextState.cacheContentHash(
                         file,
                         level,
-                        contextState.calculateHash(extractedText ?: "OMITTED_NON_CODE_SKELETON")
+                        extractedText ?: "OMITTED_NON_CODE_SKELETON"
                     )
                     val isDeduped = previousRecord?.level == level && previousRecord.hash == currentHash
                     newTurn.sentFiles[relativePath] = FileStateRecord(level, currentHash, wasDeduped = isDeduped)

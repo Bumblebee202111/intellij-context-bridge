@@ -48,11 +48,6 @@ class ContextState(
 
     private var myState = State()
 
-    var activeTabId: String? = null
-        private set
-    var activeTabPathname: String? = null
-        private set
-
     override fun getState(): State = myState
 
     override fun loadState(state: State) {
@@ -64,18 +59,6 @@ class ContextState(
         if (myState.modelTurns !is CopyOnWriteArrayList) {
             myState.modelTurns = CopyOnWriteArrayList(myState.modelTurns)
         }
-    }
-
-    fun bindToTab(id: String, pathname: String, title: String) {
-        activeTabId = id
-        activeTabPathname = pathname
-        myState.boundTabTitle = title
-    }
-
-    fun unbind() {
-        activeTabId = null
-        activeTabPathname = null
-        myState.boundTabTitle = ""
     }
 
     // Thread-safe map for background configuration loading and UI rendering
@@ -307,7 +290,18 @@ class ContextState(
         }
     }
 
-    fun calculateHash(content: String): String {
+    fun pruneInvalidFiles() {
+        fileStates.keys.removeIf { !it.isValid }
+        externalRoots.removeIf { !it.isValid }
+        hashCache.keys.removeIf { !it.isValid }
+        seedGraphCache.entries.removeIf { (seed, entry) ->
+            !seed.isValid ||
+                entry.outgoingFiles.any { !it.isValid } ||
+                entry.incomingScores.keys.any { !it.isValid }
+        }
+    }
+
+    private fun calculateHash(content: String): String {
         val bytes = MessageDigest.getInstance("MD5").digest(content.toByteArray(Charsets.UTF_8))
         return bytes.joinToString("") { "%02x".format(it) }
     }
@@ -325,6 +319,10 @@ class ContextState(
     fun cacheHash(file: VirtualFile, level: ContextLevel, hash: String): String {
         hashCache[file] = HashCacheEntry(file.modificationStamp, level, hash)
         return hash
+    }
+
+    fun cacheContentHash(file: VirtualFile, level: ContextLevel, content: String): String {
+        return cacheHash(file, level, calculateHash(content))
     }
 
     fun getCachedSeedGraph(file: VirtualFile): SeedGraphCacheEntry? {

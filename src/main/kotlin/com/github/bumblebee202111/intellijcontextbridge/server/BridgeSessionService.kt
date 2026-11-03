@@ -25,15 +25,16 @@ class BridgeSessionService(private val project: Project) : Disposable {
     private val stateListeners = CopyOnWriteArrayList<() -> Unit>()
     private val messageListeners = CopyOnWriteArrayList<(String) -> Unit>()
 
-    val activeTabId: String?
-        get() = contextState.activeTabId
+    var activeTabId: String? = null
+        private set
+    private var activeTabPathname: String? = null
 
     init {
         server.start()
         server.addTabsListener(this, ::handleTabsChanged)
         server.addHandshakeListener(this, ::handleTabHandshake)
         server.addMessageListener(this) { tabId, markdownText ->
-            if (tabId == contextState.activeTabId) {
+            if (tabId == activeTabId) {
                 messageListeners.forEach { it(markdownText) }
             }
         }
@@ -51,15 +52,15 @@ class BridgeSessionService(private val project: Project) : Disposable {
         Disposer.register(parentDisposable) { messageListeners.remove(listener) }
     }
 
-    fun isBoundTabConnected(): Boolean = server.isTabConnected(contextState.activeTabId)
+    fun isBoundTabConnected(): Boolean = server.isTabConnected(activeTabId)
 
     fun getDisplayTabs(): List<BrowserTab> {
         val activeTabs = server.getActiveTabs()
-        val boundId = contextState.activeTabId
+        val boundId = activeTabId
         if (boundId != null && activeTabs.none { it.id == boundId }) {
             val disconnectedTab = BrowserTab(
                 id = boundId,
-                pathname = contextState.activeTabPathname ?: "",
+                pathname = activeTabPathname ?: "",
                 title = contextState.state.boundTabTitle,
                 isConnected = false
             )
@@ -69,14 +70,18 @@ class BridgeSessionService(private val project: Project) : Disposable {
     }
 
     fun changeBinding(newId: String?, newPathname: String, newTitle: String) {
-        val oldId = contextState.activeTabId
+        val oldId = activeTabId
         if (oldId != null && oldId != newId) {
             server.sendToTab(oldId, "[UNBOUND]")
         }
         if (newId.isNullOrEmpty()) {
-            contextState.unbind()
+            activeTabId = null
+            activeTabPathname = null
+            contextState.state.boundTabTitle = ""
         } else {
-            contextState.bindToTab(newId, newPathname, newTitle)
+            activeTabId = newId
+            activeTabPathname = newPathname
+            contextState.state.boundTabTitle = newTitle
             if (oldId != newId) {
                 server.sendToTab(newId, "[BOUND]|${project.name}")
                 if (commandRegistry.isLoaded) {
@@ -88,7 +93,7 @@ class BridgeSessionService(private val project: Project) : Disposable {
     }
 
     fun sendPayload(payload: AiPayload): Boolean {
-        val tabId = contextState.activeTabId ?: return false
+        val tabId = activeTabId ?: return false
         if (!server.isTabConnected(tabId)) return false
         val jsonString = Json.encodeToString(payload)
         server.sendToTab(tabId, jsonString)
@@ -97,7 +102,7 @@ class BridgeSessionService(private val project: Project) : Disposable {
 
     private fun handleTabsChanged(tabs: List<BrowserTab>) {
         val state = contextState.state
-        if (state.boundTabTitle.isNotEmpty() && !server.isTabConnected(contextState.activeTabId)) {
+        if (state.boundTabTitle.isNotEmpty() && !server.isTabConnected(activeTabId)) {
             val match = tabs.find { it.title == state.boundTabTitle }
             if (match != null) {
                 changeBinding(match.id, match.pathname, match.title)
@@ -111,14 +116,14 @@ class BridgeSessionService(private val project: Project) : Disposable {
         val state = contextState.state
 
         if (state.boundTabTitle.isNotEmpty() && tab.title == state.boundTabTitle) {
-            if (tab.id != contextState.activeTabId || tab.pathname != contextState.activeTabPathname) {
+            if (tab.id != activeTabId || tab.pathname != activeTabPathname) {
                 changeBinding(tab.id, tab.pathname, tab.title)
             } else {
                 server.sendToTab(tab.id, "[BOUND]|${project.name}")
                 notifyStateChanged()
             }
-        } else if (tab.id == contextState.activeTabId) {
-            if (tab.pathname == contextState.activeTabPathname) {
+        } else if (tab.id == activeTabId) {
+            if (tab.pathname == activeTabPathname) {
                 changeBinding(tab.id, tab.pathname, tab.title)
             } else {
                 changeBinding(null, "", "")
@@ -131,7 +136,7 @@ class BridgeSessionService(private val project: Project) : Disposable {
     }
 
     private fun handleCommandsChanged(commands: List<SlashCommand>) {
-        val boundId = contextState.activeTabId
+        val boundId = activeTabId
         if (boundId != null && server.isTabConnected(boundId)) {
             sendCommandsToTab(boundId, commands)
         } else {

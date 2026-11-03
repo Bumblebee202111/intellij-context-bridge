@@ -60,8 +60,7 @@ class ContextChangeTracker(
                 }
 
                 if (needsRefresh) {
-                    contextState.fileStates.keys.removeIf { !it.isValid }
-                    contextState.externalRoots.removeIf { !it.isValid }
+                    contextState.pruneInvalidFiles()
                     onRefreshNeeded(structureChanged)
                 }
             }
