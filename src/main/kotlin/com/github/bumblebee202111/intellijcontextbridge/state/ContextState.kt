@@ -43,6 +43,7 @@ class ContextState(
     class State {
         var turns: MutableList<UserTurn> = CopyOnWriteArrayList()
         var modelTurns: MutableList<ModelTurn> = CopyOnWriteArrayList()
+        var externalRootPaths: MutableList<String> = CopyOnWriteArrayList()
         var boundTabTitle: String = ""
     }
 
@@ -58,6 +59,9 @@ class ContextState(
         }
         if (myState.modelTurns !is CopyOnWriteArrayList) {
             myState.modelTurns = CopyOnWriteArrayList(myState.modelTurns)
+        }
+        if (myState.externalRootPaths !is CopyOnWriteArrayList) {
+            myState.externalRootPaths = CopyOnWriteArrayList(myState.externalRootPaths)
         }
     }
 
@@ -83,6 +87,7 @@ class ContextState(
 
     fun ensureInitialized() {
         if (!isInitialized) {
+            restoreExternalRoots()
             if (getLastTurn() == null) {
                 loadConfig()
             } else {
@@ -90,6 +95,39 @@ class ContextState(
             }
             isInitialized = true
         }
+    }
+
+    private fun restoreExternalRoots() {
+        val fs = LocalFileSystem.getInstance()
+        for (path in myState.externalRootPaths) {
+            ProgressManager.checkCanceled()
+            val file = fs.findFileByPath(path)
+            if (file != null && file.isValid && file.exists()) {
+                externalRoots.add(file)
+            }
+        }
+        syncExternalRootPaths()
+    }
+
+    private fun syncExternalRootPaths() {
+        val paths = externalRoots.filter { it.isValid }.map { it.path }.sorted()
+        myState.externalRootPaths.clear()
+        myState.externalRootPaths.addAll(paths)
+    }
+
+    fun removeExternalRoot(file: VirtualFile): Boolean {
+        val removed = externalRoots.remove(file)
+        if (removed) {
+            syncExternalRootPaths()
+        }
+        return removed
+    }
+
+    fun clearExternalRoots(): Boolean {
+        if (externalRoots.isEmpty()) return false
+        externalRoots.clear()
+        myState.externalRootPaths.clear()
+        return true
     }
 
     fun getLevel(file: VirtualFile): ContextLevel {
@@ -128,6 +166,7 @@ class ContextState(
 
     fun addExternalFiles(files: Collection<VirtualFile>) {
         val projectDir = project.guessProjectDir()
+        var externalChanged = false
         for (file in files) {
             ProgressManager.checkCanceled()
             if (!file.isValid) continue
@@ -135,20 +174,26 @@ class ContextState(
                 applyStateRecursively(file, ContextLevel.COMPLETE, checkIgnore = true)
             } else {
                 if (file.isDirectory) {
-                    externalRoots.removeIf { existing ->
-                        existing != file && VfsUtilCore.isAncestor(file, existing, true)
+                    if (externalRoots.removeIf { existing ->
+                            existing != file && VfsUtilCore.isAncestor(file, existing, true)
+                        }
+                    ) {
+                        externalChanged = true
                     }
                 }
                 val coveredByAncestor = externalRoots.any { existing ->
                     existing.isDirectory && VfsUtilCore.isAncestor(existing, file, false)
                 }
-                if (!coveredByAncestor) {
-                    externalRoots.add(file)
+                if (!coveredByAncestor && externalRoots.add(file)) {
+                    externalChanged = true
                 }
                 if (!file.isDirectory) {
                     applyStateRecursively(file, ContextLevel.COMPLETE, checkIgnore = true)
                 }
             }
+        }
+        if (externalChanged) {
+            syncExternalRootPaths()
         }
     }
 
@@ -263,13 +308,19 @@ class ContextState(
             val file = if (path == "." || path == "/") projectDir else projectDir.findFileByRelativePath(path)
             if (file != null && file.exists()) applyStateRecursively(file, ContextLevel.COMPLETE, checkIgnore = true)
         }
+
+        for (extRoot in externalRoots) {
+            ProgressManager.checkCanceled()
+            if (extRoot.isValid && !extRoot.isDirectory) {
+                applyStateRecursively(extRoot, ContextLevel.COMPLETE, checkIgnore = true)
+            }
+        }
     }
 
     fun restoreFromLastTurn() {
         val lastTurn = getLastTurn()
         if (lastTurn == null) {
             fileStates.clear()
-            externalRoots.clear()
             loadConfig()
             return
         }
@@ -277,6 +328,7 @@ class ContextState(
         val projectDir = project.guessProjectDir()
 
         fileStates.clear()
+        var externalChanged = false
         for ((path, record) in lastTurn.sentFiles) {
             ProgressManager.checkCanceled()
             val file = resolveFile(path)
@@ -286,17 +338,22 @@ class ContextState(
                     val covered = externalRoots.any { existing ->
                         existing == file || (existing.isDirectory && VfsUtilCore.isAncestor(existing, file, false))
                     }
-                    if (!covered) {
-                        externalRoots.add(file)
+                    if (!covered && externalRoots.add(file)) {
+                        externalChanged = true
                     }
                 }
             }
+        }
+        if (externalChanged) {
+            syncExternalRootPaths()
         }
     }
 
     fun pruneInvalidFiles() {
         fileStates.keys.removeIf { !it.isValid }
-        externalRoots.removeIf { !it.isValid }
+        if (externalRoots.removeIf { !it.isValid }) {
+            syncExternalRootPaths()
+        }
         pendingAiRequests.removeIf { !it.isValid }
         hashCache.keys.removeIf { !it.isValid }
         seedGraphCache.entries.removeIf { (seed, entry) ->
@@ -402,6 +459,7 @@ class ContextState(
         isInitialized = false
         fileStates.clear()
         externalRoots.clear()
+        myState.externalRootPaths.clear()
         pendingAiRequests.clear()
         myState.turns.clear()
         myState.modelTurns.clear()

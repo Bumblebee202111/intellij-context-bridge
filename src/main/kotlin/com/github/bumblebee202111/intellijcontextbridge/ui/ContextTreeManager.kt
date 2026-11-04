@@ -445,10 +445,9 @@ class ContextTreeManager(
         var structureChanged = false
 
         if (level == ContextLevel.NONE && currentLevel == ContextLevel.NONE) {
-            if (file != null && contextState.externalRoots.remove(file)) {
+            if (file != null && contextState.removeExternalRoot(file)) {
                 structureChanged = true
-            } else if (file == null && nodeData?.displayName == EXTERNAL_ROOT_NAME && contextState.externalRoots.isNotEmpty()) {
-                contextState.externalRoots.clear()
+            } else if (file == null && nodeData?.displayName == EXTERNAL_ROOT_NAME && contextState.clearExternalRoots()) {
                 structureChanged = true
             }
         }
