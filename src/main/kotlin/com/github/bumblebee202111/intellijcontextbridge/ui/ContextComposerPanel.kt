@@ -351,7 +351,7 @@ class ContextComposerPanel(private val project: Project) : Disposable {
             })
             add(object : AnAction(
                 "Attach External Files or Folders...",
-                "Pick files or directories outside the project to include in context",
+                "Pick files or directories outside the project to include in context (or Drop / Ctrl+V in tree)",
                 AllIcons.General.OpenDisk
             ) {
                 override fun actionPerformed(e: AnActionEvent) {

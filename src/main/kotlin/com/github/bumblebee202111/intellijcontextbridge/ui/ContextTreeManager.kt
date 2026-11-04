@@ -8,10 +8,15 @@ import com.github.bumblebee202111.intellijcontextbridge.utils.ContextCapabilityU
 import com.github.bumblebee202111.intellijcontextbridge.utils.FileFilterUtil
 import com.intellij.icons.AllIcons
 import com.intellij.openapi.Disposable
+import com.intellij.openapi.actionSystem.ActionManager
+import com.intellij.openapi.actionSystem.AnAction
+import com.intellij.openapi.actionSystem.AnActionEvent
+import com.intellij.openapi.actionSystem.IdeActions
 import com.intellij.openapi.application.ApplicationManager
 import com.intellij.openapi.application.ModalityState
 import com.intellij.openapi.application.readAction
 import com.intellij.openapi.fileEditor.OpenFileDescriptor
+import com.intellij.openapi.ide.CopyPasteManager
 import com.intellij.openapi.progress.ProgressManager
 import com.intellij.openapi.project.Project
 import com.intellij.openapi.project.guessProjectDir
@@ -25,6 +30,7 @@ import com.intellij.ui.treeStructure.Tree
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.launch
 import java.awt.datatransfer.DataFlavor
+import java.awt.datatransfer.Transferable
 import java.awt.event.KeyAdapter
 import java.awt.event.KeyEvent
 import java.awt.event.MouseAdapter
@@ -52,6 +58,10 @@ class ContextTreeManager(
         const val PENDING_REQUESTS_ROOT_NAME = "Pending AI Requests"
         const val SUGGESTED_ROOT_NAME = "Suggested Context"
         const val EXTERNAL_ROOT_NAME = "External Context"
+
+        private val LINE_COL_SUFFIX_REGEX = Regex(":\\d+(?::\\d+)?$")
+        private val LIST_PREFIX_REGEX = Regex("^(?:[-*•]|\\d+\\.)\\s+")
+        private val GIT_STATUS_PREFIX_REGEX = Regex("^(?:[MADRCU?!]{1,2})\\s+")
     }
 
     private data class AggregatedState(
@@ -109,7 +119,7 @@ class ContextTreeManager(
         showsRootHandles = true
         emptyText.text = "Loading project..."
         emptyText.appendSecondaryText(
-            "Space/Click: Toggle | Enter: Open | Right-Click: Clear/Detach",
+            "Space/Click: Toggle | Enter: Open | Right-Click: Clear/Detach | Ctrl+V: Paste Files/Paths",
             SimpleTextAttributes.GRAYED_ATTRIBUTES,
             null
         )
@@ -123,6 +133,7 @@ class ContextTreeManager(
         tree.addKeyListener(createTreeKeyListener())
         TreeSpeedSearch(tree)
         setupExternalFileDropTarget()
+        setupPasteAction()
     }
 
     fun requestRefresh(vfsStructureChanged: Boolean = false, forceMainRebuild: Boolean = false) {
@@ -157,26 +168,118 @@ class ContextTreeManager(
     private fun setupExternalFileDropTarget() {
         tree.transferHandler = object : TransferHandler() {
             override fun canImport(support: TransferSupport): Boolean {
-                return support.isDataFlavorSupported(DataFlavor.javaFileListFlavor)
+                return support.isDataFlavorSupported(DataFlavor.javaFileListFlavor) ||
+                    support.isDataFlavorSupported(DataFlavor.stringFlavor)
             }
 
             override fun importData(support: TransferSupport): Boolean {
                 if (!canImport(support)) return false
-                return try {
-                    @Suppress("UNCHECKED_CAST")
-                    val droppedFiles = support.transferable.getTransferData(DataFlavor.javaFileListFlavor) as? List<File>
-                        ?: return false
-                    if (droppedFiles.isEmpty()) return false
+                return importFromTransferable(support.transferable)
+            }
+        }
+    }
 
-                    attachExternalFiles {
-                        droppedFiles.mapNotNull { LocalFileSystem.getInstance().findFileByIoFile(it) }
+    private fun setupPasteAction() {
+        val pasteShortcutSet = ActionManager.getInstance().getAction(IdeActions.ACTION_PASTE)?.shortcutSet ?: return
+        object : AnAction() {
+            override fun actionPerformed(e: AnActionEvent) {
+                val contents = CopyPasteManager.getInstance().contents ?: return
+                importFromTransferable(contents)
+            }
+        }.registerCustomShortcutSet(pasteShortcutSet, tree, this)
+    }
+
+    private fun importFromTransferable(transferable: Transferable): Boolean {
+        if (transferable.isDataFlavorSupported(DataFlavor.javaFileListFlavor)) {
+            val droppedFiles = runCatching {
+                @Suppress("UNCHECKED_CAST")
+                transferable.getTransferData(DataFlavor.javaFileListFlavor) as? List<File>
+            }.getOrNull()
+            if (!droppedFiles.isNullOrEmpty()) {
+                attachExternalFiles {
+                    droppedFiles.mapNotNull { LocalFileSystem.getInstance().findFileByIoFile(it) }
+                }
+                return true
+            }
+        }
+
+        if (transferable.isDataFlavorSupported(DataFlavor.stringFlavor)) {
+            val rawText = runCatching {
+                transferable.getTransferData(DataFlavor.stringFlavor) as? String
+            }.getOrNull()
+            if (!rawText.isNullOrBlank()) {
+                attachExternalFiles {
+                    resolveFilesFromText(rawText)
+                }
+                return true
+            }
+        }
+
+        return false
+    }
+
+    private fun resolveFilesFromText(rawText: String): List<VirtualFile> {
+        val resolved = LinkedHashSet<VirtualFile>()
+        val userHome = System.getProperty("user.home")
+
+        fun cleanToken(raw: String): String {
+            var token = raw.trim()
+                .removeSurrounding("\"")
+                .removeSurrounding("'")
+                .removeSurrounding("`")
+                .removePrefix("@")
+                .trimEnd(',', ';')
+            if (token.startsWith("file://")) {
+                token = token.removePrefix("file://")
+            } else if (token.startsWith("~/") && !userHome.isNullOrBlank()) {
+                token = userHome.trimEnd('/', '\\') + token.removePrefix("~")
+            }
+            return token
+        }
+
+        fun resolveCandidate(rawCandidate: String): VirtualFile? {
+            val cleaned = cleanToken(rawCandidate)
+            if (cleaned.isEmpty()) return null
+
+            contextState.resolveFile(cleaned)?.takeIf { it.isValid && it.exists() }?.let { return it }
+
+            if (LINE_COL_SUFFIX_REGEX.containsMatchIn(cleaned)) {
+                val withoutLineCol = cleaned.replace(LINE_COL_SUFFIX_REGEX, "")
+                if (withoutLineCol.isNotEmpty()) {
+                    contextState.resolveFile(withoutLineCol)?.takeIf { it.isValid && it.exists() }?.let { return it }
+                }
+            }
+            return null
+        }
+
+        for (rawLine in rawText.lineSequence()) {
+            ProgressManager.checkCanceled()
+            val strippedLine = rawLine.trim().replace(LIST_PREFIX_REGEX, "")
+            if (strippedLine.isEmpty()) continue
+
+            val direct = resolveCandidate(strippedLine) ?: run {
+                if (GIT_STATUS_PREFIX_REGEX.containsMatchIn(strippedLine)) {
+                    resolveCandidate(strippedLine.replace(GIT_STATUS_PREFIX_REGEX, ""))
+                } else {
+                    null
+                }
+            }
+
+            if (direct != null) {
+                resolved.add(direct)
+                continue
+            }
+
+            if (strippedLine.any { it.isWhitespace() }) {
+                for (part in strippedLine.split(Regex("\\s+"))) {
+                    if (part.startsWith("@") || part.contains('/') || part.contains('\\') || part.contains('.')) {
+                        resolveCandidate(part)?.let { resolved.add(it) }
                     }
-                    true
-                } catch (e: Exception) {
-                    false
                 }
             }
         }
+
+        return resolved.toList()
     }
 
     private fun applyNodeStateAsync(action: () -> Boolean) {
