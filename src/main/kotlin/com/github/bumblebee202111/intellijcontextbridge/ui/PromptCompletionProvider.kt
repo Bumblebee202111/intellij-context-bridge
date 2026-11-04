@@ -151,7 +151,7 @@ class PromptCompletionProvider(
     }
 
     override fun acceptChar(c: Char): CharFilter.Result? {
-        return if (c.isLetterOrDigit() || c == '/' || c == '.' || c == '-' || c == '_' || c == '@') {
+        return if (c.isLetterOrDigit() || c == '/' || c == '.' || c == '-' || c == '_' || c == '$' || c == '@') {
             CharFilter.Result.ADD_TO_PREFIX
         } else {
             CharFilter.Result.HIDE_LOOKUP

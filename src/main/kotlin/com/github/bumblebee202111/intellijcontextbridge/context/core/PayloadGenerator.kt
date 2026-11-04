@@ -20,7 +20,7 @@ import java.util.Base64
 
 object PayloadGenerator {
 
-    private val FILE_MENTION_REGEX = Regex("(?:^|\\s)@([a-zA-Z0-9_./-]+)")
+    private val FILE_MENTION_REGEX = Regex("(?:^|\\s)@([a-zA-Z0-9_./\$-]+)")
     private val VCS_DIFF_TOKEN_REGEX = Regex("(?<!`)\\{\\{vcs_diff\\}\\}(?!`)")
 
     private fun loadPrompt(filename: String): String {
