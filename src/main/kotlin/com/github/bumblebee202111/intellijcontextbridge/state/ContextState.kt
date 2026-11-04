@@ -145,8 +145,9 @@ class ContextState(
                 if (!coveredByAncestor) {
                     externalRoots.add(file)
                 }
-                val initialLevel = if (file.isDirectory) ContextLevel.SKELETON else ContextLevel.COMPLETE
-                applyStateRecursively(file, initialLevel, checkIgnore = true)
+                if (!file.isDirectory) {
+                    applyStateRecursively(file, ContextLevel.COMPLETE, checkIgnore = true)
+                }
             }
         }
     }
