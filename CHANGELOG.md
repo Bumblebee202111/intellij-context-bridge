@@ -6,7 +6,7 @@
 
 ## [Unreleased]
 ### Core Capabilities Implemented
-- **External Context Support**: Attach files and directories outside the project via native file chooser or OS drag-and-drop with full tree toggling, `@` mentions, and `read_file` support.
+- **External Context Support**: Attach and persist files and directories outside the project via native file chooser, drag-and-drop, or clipboard paste with full tree toggling, `@` mentions, and `read_file` support.
 - **Explicit `@` Context Mentions**: Inline `@` file/folder auto-completion in the prompt composer with automatic promotion to `Complete` context.
 - **Granular Read Actions & Graph Caching**: Off-EDT tree rendering, yielding `readAction` coroutines, and per-seed PSI graph caching by `modificationStamp`.
 - **Cross-IDE & Multi-Language Support**: Optional plugin dependencies and AST Skeleton/Graph extractors for Kotlin, Java, JavaScript, TypeScript, and Vue.

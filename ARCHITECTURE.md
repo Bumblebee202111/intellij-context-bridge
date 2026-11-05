@@ -5,7 +5,7 @@ The plugin consists of five decoupled layers. Implementation details for each la
 ## 1. UI Layer (Tool Window)
 * **Native Interface:** Built using standard IntelliJ platform components (`EditorTextField` for prompts, `ActionToolbar` for actions, `AsyncProcessIcon` for background tasks) to ensure a seamless, first-class IDE experience.
 * **Switchable Canvas & Persistent Composer:** Combines a switchable main viewport (`Context` tree vs. chronological `Chat` timeline with inline tool cards) above a persistent bottom prompt composer.
-* **Unified Context Tree:** Renders a single Project-style tree integrating temporary `Pending AI Requests`, dynamic `Suggested Context`, the primary project root, and optional `External Context` roots (attached via file chooser or OS drag-and-drop). Resolves VFS metadata off the EDT, updates subtrees partially, and preserves section-scoped expansion, selection, and scroll state.
+* **Unified Context Tree:** Renders a single Project-style tree integrating temporary `Pending AI Requests`, dynamic `Suggested Context`, the primary project root, and optional `External Context` roots (attached via file chooser, drag-and-drop, or clipboard paste). Resolves VFS metadata off the EDT, updates subtrees partially, and preserves section-scoped expansion, selection, and scroll state.
 * **Dual-Prefix Composer (`/` & `@`):** Supports inline auto-completion for both `/` slash commands and `@` file/directory mentions, automatically promoting `@`-mentioned paths to `Complete` context.
 * **Intent Selection:** Segmented controls allow users to quickly specify the desired AI behavior (e.g., Ask vs. Edit) to tailor the underlying system instructions and constraints.
 
