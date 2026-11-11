@@ -64,9 +64,10 @@
         statusPill.id = 'cb-status-pill';
         statusPill.style.cssText = `
             position: fixed; bottom: 24px; right: 24px; z-index: 999999;
-            background-color: #333; color: white; border-radius: 16px;
-            padding: 6px 12px; font-family: Inter, sans-serif; font-size: 12px; font-weight: bold;
-            box-shadow: 0 2px 8px rgba(0,0,0,0.2); transition: opacity 0.3s ease;
+            background-color: var(--color-v3-surface-container); color: var(--color-v3-text);
+            border: 1px solid var(--color-v3-outline-var); border-radius: 16px;
+            padding: 6px 12px; font-family: Inter, sans-serif; font-size: 12px; font-weight: 500;
+            box-shadow: var(--v3-shadow-lg); transition: opacity 0.3s ease, border-color 0.2s ease;
             pointer-events: none; opacity: 0;
         `;
         document.body.appendChild(statusPill);
@@ -76,7 +77,7 @@
     function renderStatusPill(text, color) {
         if (!statusPill) return;
         statusPill.textContent = text;
-        statusPill.style.backgroundColor = color;
+        statusPill.style.borderColor = color || 'var(--color-v3-outline-var)';
         statusPill.style.opacity = '1';
     }
 
@@ -108,26 +109,28 @@
         let modeText = win.__cbIsBridgeChat ? '⚡ Bridge' : '💬 Normal';
 
         if (connected && win.__cbIsBound) {
-            renderStatusPill(`🎯 ${win.__cbProjectName} (${modeText})`, '#4CAF50');
+            renderStatusPill(`🎯 ${win.__cbProjectName} (${modeText})`, 'var(--color-v3-accent-4)');
         } else if (connected && !win.__cbIsBound) {
-            renderStatusPill(`🔗 Standby (${modeText})`, '#757575');
+            renderStatusPill(`🔗 Standby (${modeText})`, 'var(--color-v3-outline-var)');
         } else {
-            renderStatusPill(`🔌 Disconnected (${modeText})`, '#F44336');
+            renderStatusPill(`🔌 Disconnected (${modeText})`, 'var(--color-v3-accent-3)');
         }
     }
 
     function applyBoundStateToButton(btn) {
         if (win.__cbIsBound) {
             btn.textContent = `✨ Send to ${win.__cbProjectName}`;
-            btn.style.color = '#4CAF50';
-            btn.style.borderColor = '#4CAF50';
+            btn.style.background = 'var(--color-v3-surface-container)';
+            btn.style.color = 'var(--color-v3-text)';
+            btn.style.borderColor = 'var(--color-v3-outline)';
             btn.style.opacity = '1';
             btn.style.pointerEvents = 'auto';
         } else {
             btn.textContent = '🚫 IDE Not Bound';
-            btn.style.color = '#757575';
-            btn.style.borderColor = '#757575';
-            btn.style.opacity = '0.7';
+            btn.style.background = 'transparent';
+            btn.style.color = 'var(--color-v3-text-disable)';
+            btn.style.borderColor = 'var(--color-v3-outline-var)';
+            btn.style.opacity = '1';
             btn.style.pointerEvents = 'none';
         }
     }
@@ -484,7 +487,7 @@
                     const subtitle = sysCard.querySelector('.subtitle');
                     if (subtitle && subtitle.textContent.includes(expectedFirstSentence)) return;
 
-                    showToast('⚙️ Updating System Instructions...', '#FF9800', 0);
+                    showToast('⚙️ Updating System Instructions...', 'var(--color-v3-accent-1)', 0);
                     sysCard.click();
 
                     const dialog = await AIStudioDOM.Utils.waitForElement('mat-dialog-container', 3000);
@@ -623,8 +626,9 @@
                     this.suggestionBox.id = 'cb-suggestion-box';
                     this.suggestionBox.style.cssText = `
                         position: absolute; bottom: 100%; left: 0; margin-bottom: 8px;
-                        background: #222; border: 1px solid #444; border-radius: 8px;
-                        box-shadow: 0 4px 12px rgba(0,0,0,0.3); z-index: 10000;
+                        background: var(--color-v3-surface-container); border: 1px solid var(--color-v3-outline-var);
+                        border-radius: 12px; padding: 4px;
+                        box-shadow: var(--v3-shadow-lg); z-index: 10000;
                         display: none; flex-direction: column; min-width: 300px;
                         font-family: Inter, sans-serif; font-size: 13px; overflow: hidden;
                     `;
@@ -639,8 +643,8 @@
                     const editBtn = document.getElementById('cb-mode-edit');
                     if (!askBtn || !editBtn) return;
 
-                    const activeStyle = 'background: #4CAF50; color: white; border: 1px solid #4CAF50; border-radius: 12px; padding: 4px 12px; cursor: pointer; font-weight: bold; transition: all 0.2s;';
-                    const inactiveStyle = 'background: transparent; color: #aaa; border: 1px solid #555; border-radius: 12px; padding: 4px 12px; cursor: pointer; transition: all 0.2s;';
+                    const activeStyle = 'background: var(--color-v3-button-container-accent); color: var(--color-v3-text-on-button); border: 1px solid var(--color-v3-outline); border-radius: 12px; padding: 4px 12px; cursor: pointer; font-weight: 500; transition: all 0.2s;';
+                    const inactiveStyle = 'background: transparent; color: var(--color-v3-text-var); border: 1px solid var(--color-v3-outline-var); border-radius: 12px; padding: 4px 12px; cursor: pointer; font-weight: 400; transition: all 0.2s;';
 
                     askBtn.style.cssText = win.__cbCurrentMode === 'ASK' ? activeStyle : inactiveStyle;
                     editBtn.style.cssText = win.__cbCurrentMode === 'EDIT' ? activeStyle : inactiveStyle;
@@ -698,16 +702,16 @@
                     this.filteredCmds.forEach((cmd, i) => {
                         let item = document.createElement('div');
                         item.style.cssText = `
-                            padding: 8px 12px; cursor: pointer; display: flex; justify-content: space-between;
-                            background: ${i === this.selectedIndex ? '#4CAF50' : 'transparent'};
-                            color: ${i === this.selectedIndex ? '#fff' : '#ccc'};
+                            padding: 6px 10px; border-radius: 8px; cursor: pointer; display: flex; justify-content: space-between; align-items: center;
+                            background: ${i === this.selectedIndex ? 'var(--color-v3-button-container-high)' : 'transparent'};
+                            color: var(--color-v3-text);
                         `;
 
                         let nameStrong = document.createElement('strong');
                         nameStrong.textContent = '/' + cmd.name;
 
                         let modeSpan = document.createElement('span');
-                        modeSpan.style.cssText = 'opacity:0.7; font-size:11px;';
+                        modeSpan.style.cssText = 'color: var(--color-v3-text-var); font-size: 11px;';
                         modeSpan.textContent = cmd.mode;
 
                         item.appendChild(nameStrong);
@@ -745,19 +749,19 @@
                         const sendBtn = document.createElement('button');
                         sendBtn.className = 'cb-send-to-ide-btn';
                         sendBtn.style.cssText = `
-                            background: transparent; border-radius: 16px;
+                            background: var(--color-v3-surface-container); border-radius: 16px;
                             padding: 0 12px; margin-left: 8px; font-size: 13px; font-weight: 500; font-family: inherit;
                             cursor: pointer; display: inline-flex; align-items: center; justify-content: center;
                             height: 32px; transition: all 0.2s ease; white-space: nowrap; box-sizing: border-box;
-                            border: 1px solid #757575;
+                            border: 1px solid var(--color-v3-outline); color: var(--color-v3-text);
                         `;
                         applyBoundStateToButton(sendBtn);
 
                         sendBtn.onmouseover = () => {
-                            if (win.__cbIsBound) sendBtn.style.background = 'rgba(76, 175, 80, 0.1)';
+                            if (win.__cbIsBound) sendBtn.style.background = 'var(--color-v3-hover)';
                         };
                         sendBtn.onmouseout = () => {
-                            sendBtn.style.background = 'transparent';
+                            sendBtn.style.background = win.__cbIsBound ? 'var(--color-v3-surface-container)' : 'transparent';
                         };
 
                         sendBtn.addEventListener('click', async (e) => {
@@ -766,19 +770,19 @@
                             if (sendBtn.textContent.includes('...')) return;
 
                             sendBtn.textContent = '⏳ Copying...';
-                            sendBtn.style.color = '#FF9800';
-                            sendBtn.style.borderColor = '#FF9800';
+                            sendBtn.style.color = 'var(--color-v3-accent-1)';
+                            sendBtn.style.borderColor = 'var(--color-v3-accent-1)';
 
                             const text = await AIStudioDOM.Chat.extractViaNativeCopy(turn);
                             if (text) {
                                 sendToIde(text);
                                 sendBtn.textContent = '✅ Sent to IDE';
-                                sendBtn.style.color = '#4CAF50';
-                                sendBtn.style.borderColor = '#4CAF50';
+                                sendBtn.style.color = 'var(--color-v3-accent-4)';
+                                sendBtn.style.borderColor = 'var(--color-v3-accent-4)';
                             } else {
                                 sendBtn.textContent = '❌ Extract Failed';
-                                sendBtn.style.color = '#F44336';
-                                sendBtn.style.borderColor = '#F44336';
+                                sendBtn.style.color = 'var(--color-v3-accent-3)';
+                                sendBtn.style.borderColor = 'var(--color-v3-accent-3)';
                             }
 
                             setTimeout(() => {
@@ -880,7 +884,7 @@
                     }
                 },
                 async run(ws) {
-                    showToast('🧪 Running Diagnostics...', '#9C27B0', 0);
+                    showToast('🧪 Running Diagnostics...', 'var(--color-v3-outline-accent)', 0);
 
                     AIStudioDOM.Preferences.snapshotCurrentState();
                     AIStudioDOM.Preferences.isProgrammaticUpdate = true;
@@ -943,7 +947,7 @@
                     if (ws && ws.readyState === WebSocket.OPEN) {
                         ws.send("[DIAGNOSTIC_RESULT]" + JSON.stringify(report));
                     }
-                    showToast('✅ Diagnostics Complete', '#4CAF50', 3000);
+                    showToast('✅ Diagnostics Complete', 'var(--color-v3-accent-4)', 3000);
                 }
             }
         };
@@ -1139,7 +1143,7 @@
 
             setTimeout(async () => {
                 if (options.expectedModel && AIStudioDOM.Controls.getActiveModelName() !== options.expectedModel) {
-                    showToast(`❌ Active model mismatch (${AIStudioDOM.Controls.getActiveModelName()})! Prompt left unsent.`, '#F44336', 5000);
+                    showToast(`❌ Active model mismatch (${AIStudioDOM.Controls.getActiveModelName()})! Prompt left unsent.`, 'var(--color-v3-accent-3)', 5000);
                     if (options.onAbort) await options.onAbort();
                     isProcessing = false;
                     return;
@@ -1157,7 +1161,7 @@
                 const initialTotalTurns = document.querySelectorAll('.chat-turn-container').length;
                 runBtn.click();
 
-                showToast(options.generatingToast, '#FF9800', 0);
+                showToast(options.generatingToast, 'var(--color-v3-accent-1)', 0);
                 let hasSeenGenerating = false;
                 let startupTicks = 0;
 
@@ -1188,19 +1192,19 @@
 
                             const hasThumbUp = lastTurn.querySelector('button[aria-label="Good response"]') !== null;
                             if (hasThumbUp) {
-                                showToast(options.extractingToast, '#FF9800', 0);
+                                showToast(options.extractingToast, 'var(--color-v3-accent-1)', 0);
                                 const text = await AIStudioDOM.Chat.extractViaNativeCopy(lastTurn);
                                 if (text) {
                                     sendToIde(text);
-                                    showToast(options.successToast, '#4CAF50', 3000);
+                                    showToast(options.successToast, 'var(--color-v3-accent-4)', 3000);
                                 } else {
-                                    showToast(options.extractFailedToast, options.extractFailedColor || '#FF9800', 3000);
+                                    showToast(options.extractFailedToast, options.extractFailedColor || 'var(--color-v3-accent-1)', 3000);
                                 }
                             } else {
-                                showToast(options.stoppedToast, '#FF9800', 3000);
+                                showToast(options.stoppedToast, 'var(--color-v3-accent-1)', 3000);
                             }
                         } else {
-                            showToast(options.stoppedToast, '#FF9800', 3000);
+                            showToast(options.stoppedToast, 'var(--color-v3-accent-1)', 3000);
                         }
 
                         if (options.onCleanup) {
@@ -1216,7 +1220,7 @@
         }
 
         async function handleCommitGeneration(payloadObj) {
-            showToast('⚙️ Configuring for Commit Generation...', '#FF9800', 0);
+            showToast('⚙️ Configuring for Commit Generation...', 'var(--color-v3-accent-1)', 0);
 
             AIStudioDOM.Preferences.snapshotCurrentState();
             AIStudioDOM.Preferences.isProgrammaticUpdate = true;
@@ -1235,7 +1239,7 @@
                 AIStudioDOM.Input.setPromptText(payloadObj.text);
                 AIStudioDOM.Preferences.snapshot = null;
                 isProcessing = false;
-                showToast(`❌ Model swap to ${FLASH_MODEL_ID} failed! Prompt left unsent.`, '#F44336', 5000);
+                showToast(`❌ Model swap to ${FLASH_MODEL_ID} failed! Prompt left unsent.`, 'var(--color-v3-accent-3)', 5000);
                 return;
             }
 
@@ -1245,19 +1249,19 @@
                 extractingToast: '⏳ Extracting Commit Message...',
                 successToast: '✅ Sent Commit Message to IDE',
                 extractFailedToast: '❌ Failed to copy model response',
-                extractFailedColor: '#F44336',
+                extractFailedColor: 'var(--color-v3-accent-3)',
                 stoppedToast: '⏹️ Commit Generation Stopped',
                 onAbort: async () => {
                     await AIStudioDOM.Preferences.restoreSnapshot();
                 },
                 onCleanup: async (addedTurns) => {
                     if (addedTurns > 0) {
-                        showToast('🧹 Cleaning up session...', '#FF9800', 0);
+                        showToast('🧹 Cleaning up session...', 'var(--color-v3-accent-1)', 0);
                         await AIStudioDOM.Chat.deleteLastTwoTurns(addedTurns);
                     }
-                    showToast('⚙️ Restoring Settings...', '#FF9800', 0);
+                    showToast('⚙️ Restoring Settings...', 'var(--color-v3-accent-1)', 0);
                     await AIStudioDOM.Preferences.restoreSnapshot();
-                    showToast('✅ Ready', '#4CAF50', 3000);
+                    showToast('✅ Ready', 'var(--color-v3-accent-4)', 3000);
                 }
             });
         }
@@ -1295,7 +1299,7 @@
             }
 
             if (payloadObj.attachments && payloadObj.attachments.length > 0) {
-                showToast(`📎 Attaching ${payloadObj.attachments.length} files...`, '#FF9800', 0);
+                showToast(`📎 Attaching ${payloadObj.attachments.length} files...`, 'var(--color-v3-accent-1)', 0);
                 const files = payloadObj.attachments.map(att => AIStudioDOM.Utils.base64ToFile(att.base64Data, att.mimeType, att.name));
                 AIStudioDOM.Utils.simulateFileDrop(files);
                 await new Promise(r => setTimeout(r, 2000));
@@ -1306,7 +1310,7 @@
                 extractingToast: '⏳ Syncing to IDE...',
                 successToast: '✅ Generation Complete & Synced',
                 extractFailedToast: '⚠️ Generation Complete (Auto-sync failed)',
-                extractFailedColor: '#FF9800',
+                extractFailedColor: 'var(--color-v3-accent-1)',
                 stoppedToast: '⏹️ Generation Stopped'
             });
         }
