@@ -784,12 +784,13 @@
                     setInterval(() => {
                         const sysCard = document.querySelector('[data-test-system-instructions-card]');
                         const subtitle = sysCard?.querySelector('.subtitle');
-                        const isBridge = Boolean(subtitle && subtitle.textContent.includes('expert AI coding assistant'));
-
-                        if (win.__cbIsBridgeChat !== isBridge) {
-                            win.__cbIsBridgeChat = isBridge;
-                            this.updateToggleStyles();
-                            updateStatusPill();
+                        if (subtitle) {
+                            const isBridge = subtitle.textContent.includes('expert AI coding assistant');
+                            if (win.__cbIsBridgeChat !== isBridge) {
+                                win.__cbIsBridgeChat = isBridge;
+                                this.updateToggleStyles();
+                                updateStatusPill();
+                            }
                         }
 
                         this.injectModeToggle();
