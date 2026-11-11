@@ -72,23 +72,47 @@
         document.head.appendChild(style);
     }
 
+    function ensureStatusPillMounted() {
+        if (!statusPill) return;
+        const toolbarRight = document.querySelector('ms-header .toolbar-right');
+        if (toolbarRight) {
+            if (statusPill.parentElement !== toolbarRight) {
+                statusPill.style.position = 'static';
+                statusPill.style.bottom = '';
+                statusPill.style.right = '';
+                statusPill.style.marginRight = '4px';
+                statusPill.style.boxShadow = 'none';
+                toolbarRight.insertBefore(statusPill, toolbarRight.firstChild);
+            }
+        } else if (statusPill.parentElement !== document.body) {
+            statusPill.style.position = 'fixed';
+            statusPill.style.bottom = '24px';
+            statusPill.style.right = '24px';
+            statusPill.style.marginRight = '0';
+            statusPill.style.boxShadow = 'var(--v3-shadow-lg)';
+            document.body.appendChild(statusPill);
+        }
+    }
+
     function initStatusPill() {
         statusPill = document.createElement('div');
         statusPill.id = 'cb-status-pill';
         statusPill.style.cssText = `
-            position: fixed; bottom: 24px; right: 24px; z-index: 999999;
+            z-index: 999999; display: inline-flex; align-items: center;
             background-color: var(--color-v3-surface-container); color: var(--color-v3-text);
-            border: 1px solid var(--color-v3-outline-var); border-radius: 16px;
-            padding: 6px 12px; font-family: Inter, sans-serif; font-size: 12px; font-weight: 500;
-            box-shadow: var(--v3-shadow-lg); transition: opacity 0.3s ease, border-color 0.2s ease;
+            border: 1px solid var(--color-v3-outline-var); border-radius: 14px;
+            height: 28px; padding: 0 12px; font-family: Inter, sans-serif; font-size: 12px; font-weight: 500;
+            line-height: 1; white-space: nowrap; flex-shrink: 0;
+            transition: opacity 0.3s ease, border-color 0.2s ease;
             pointer-events: none; opacity: 0;
         `;
-        document.body.appendChild(statusPill);
+        ensureStatusPillMounted();
         updateStatusPill();
     }
 
     function renderStatusPill(text, color) {
         if (!statusPill) return;
+        ensureStatusPillMounted();
         statusPill.textContent = text;
         statusPill.style.borderColor = color || 'var(--color-v3-outline-var)';
         statusPill.style.opacity = '1';
@@ -867,6 +891,7 @@
                             }
                         }
 
+                        ensureStatusPillMounted();
                         this.injectModeToggle();
                         this.injectTurnButtons();
 
