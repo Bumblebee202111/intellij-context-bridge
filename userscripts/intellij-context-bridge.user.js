@@ -386,6 +386,7 @@
                 }
             },
             Input: {
+                lastAppliedCommandsKey: "",
                 isGenerating() {
                     const btn = document.querySelector('ms-run-button button');
                     if (!btn) return false;
@@ -399,6 +400,20 @@
                     if (textarea) {
                         textarea.focus();
                         AIStudioDOM.Utils.setNativeValue(textarea, text);
+                    }
+                },
+                syncModeFromCommands(text) {
+                    const {appliedCommands} = this.parseLeadingCommands(text);
+                    const currentKey = appliedCommands.map(c => c.name).join(',');
+                    if (currentKey !== this.lastAppliedCommandsKey) {
+                        this.lastAppliedCommandsKey = currentKey;
+                        if (appliedCommands.length > 0) {
+                            const targetMode = appliedCommands.some(c => c.mode === 'EDIT') ? 'EDIT' : 'ASK';
+                            if (win.__cbCurrentMode !== targetMode) {
+                                win.__cbCurrentMode = targetMode;
+                                AIStudioDOM.Injections.updateToggleStyles();
+                            }
+                        }
                     }
                 },
                 applyCommand(cmd) {
@@ -416,10 +431,7 @@
                     textarea.selectionStart = textarea.selectionEnd = newTextBefore.length;
                     textarea.focus();
 
-                    if (win.__cbCurrentMode !== cmd.mode) {
-                        win.__cbCurrentMode = cmd.mode;
-                        AIStudioDOM.Injections.updateToggleStyles();
-                    }
+                    this.syncModeFromCommands(textarea.value);
 
                     AIStudioDOM.Injections.activePrefix = null;
                     AIStudioDOM.Injections.updateSuggestions();
@@ -445,6 +457,7 @@
                     if (!val.trim()) return;
                     if (val.includes('<user_prompt mode=')) return;
 
+                    this.syncModeFromCommands(val);
                     const {appliedCommands, remainingPrompt} = this.parseLeadingCommands(val);
                     const mode = win.__cbCurrentMode || 'ASK';
 
@@ -461,6 +474,7 @@
                         : `<user_prompt mode="${mode}">\n</user_prompt>`;
 
                     AIStudioDOM.Utils.setNativeValue(textarea, wrapped);
+                    this.lastAppliedCommandsKey = "";
                 }
             },
             System: {
@@ -1021,12 +1035,18 @@
             if (textarea.tagName === 'TEXTAREA' && (textarea.getAttribute('formcontrolname') === 'promptText' || textarea.getAttribute('aria-label') === 'Enter a prompt')) {
                 let val = textarea.value;
 
-                if (val.includes('<user_prompt mode="EDIT">') && win.__cbCurrentMode !== 'EDIT') {
-                    win.__cbCurrentMode = 'EDIT';
-                    AIStudioDOM.Injections.updateToggleStyles();
-                } else if (val.includes('<user_prompt mode="ASK">') && win.__cbCurrentMode !== 'ASK') {
-                    win.__cbCurrentMode = 'ASK';
-                    AIStudioDOM.Injections.updateToggleStyles();
+                if (val.includes('<user_prompt mode="EDIT">')) {
+                    if (win.__cbCurrentMode !== 'EDIT') {
+                        win.__cbCurrentMode = 'EDIT';
+                        AIStudioDOM.Injections.updateToggleStyles();
+                    }
+                } else if (val.includes('<user_prompt mode="ASK">')) {
+                    if (win.__cbCurrentMode !== 'ASK') {
+                        win.__cbCurrentMode = 'ASK';
+                        AIStudioDOM.Injections.updateToggleStyles();
+                    }
+                } else {
+                    AIStudioDOM.Input.syncModeFromCommands(val);
                 }
 
                 let cursor = textarea.selectionStart;
