@@ -59,6 +59,19 @@
 
     // --- UI HELPERS ---
 
+    function initCustomStyles() {
+        if (document.getElementById('cb-custom-styles')) return;
+        const style = document.createElement('style');
+        style.id = 'cb-custom-styles';
+        style.textContent = `
+            body.cb-is-bridge-chat .chat-turn-container.model.cb-latest-turn .actions.hover-or-edit {
+                opacity: 1 !important;
+                pointer-events: auto !important;
+            }
+        `;
+        document.head.appendChild(style);
+    }
+
     function initStatusPill() {
         statusPill = document.createElement('div');
         statusPill.id = 'cb-status-pill';
@@ -157,6 +170,7 @@
 
     document.addEventListener('DOMContentLoaded', () => {
         let isProcessing = false;
+        initCustomStyles();
         initStatusPill();
 
         // --- AIStudioDOM NAMESPACE ---
@@ -643,6 +657,7 @@
                     }
                 },
                 updateToggleStyles() {
+                    document.body.classList.toggle('cb-is-bridge-chat', Boolean(win.__cbIsBridgeChat));
                     const toggleContainer = document.getElementById('cb-mode-toggle');
                     if (toggleContainer) {
                         toggleContainer.style.display = win.__cbIsBridgeChat ? 'flex' : 'none';
@@ -753,15 +768,29 @@
                     }
                 },
                 injectTurnButtons() {
+                    const allModelTurns = document.querySelectorAll('.chat-turn-container.model');
                     if (!win.__cbIsBridgeChat) {
                         document.querySelectorAll('.cb-send-to-ide-btn').forEach(btn => btn.style.display = 'none');
+                        allModelTurns.forEach(turn => turn.classList.remove('cb-latest-turn'));
                         return;
                     } else {
                         document.querySelectorAll('.cb-send-to-ide-btn').forEach(btn => btn.style.display = 'inline-flex');
                     }
 
-                    const turns = document.querySelectorAll('.chat-turn-container.model');
-                    turns.forEach(turn => {
+                    const completedTurns = Array.from(allModelTurns).filter(turn => turn.querySelector('button[aria-label="Good response"]') !== null);
+                    const lastCompletedTurn = completedTurns[completedTurns.length - 1] || null;
+
+                    allModelTurns.forEach(turn => {
+                        if (turn === lastCompletedTurn) {
+                            if (!turn.classList.contains('cb-latest-turn')) {
+                                turn.classList.add('cb-latest-turn');
+                            }
+                        } else {
+                            if (turn.classList.contains('cb-latest-turn')) {
+                                turn.classList.remove('cb-latest-turn');
+                            }
+                        }
+
                         if (turn.querySelector('.cb-send-to-ide-btn')) return;
 
                         const hasThumbUp = turn.querySelector('button[aria-label="Good response"]') !== null;
