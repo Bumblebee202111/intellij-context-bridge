@@ -30,7 +30,8 @@
     let lastActivePort = null;
 
     let statusPill;
-    let toastTimeout;
+    let toastTimeout = null;
+    let isToastActive = false;
 
     // --- CLIPBOARD INTERCEPTORS ---
 
@@ -69,31 +70,49 @@
             pointer-events: none; opacity: 0;
         `;
         document.body.appendChild(statusPill);
+        updateStatusPill();
     }
 
-    function showToast(text, color, duration = 3000) {
+    function renderStatusPill(text, color) {
         if (!statusPill) return;
         statusPill.textContent = text;
         statusPill.style.backgroundColor = color;
         statusPill.style.opacity = '1';
+    }
+
+    function showToast(text, color, duration = 3000) {
+        if (!statusPill) return;
+        isToastActive = true;
+        renderStatusPill(text, color);
         clearTimeout(toastTimeout);
+        toastTimeout = null;
         if (duration > 0) {
             toastTimeout = setTimeout(() => {
-                statusPill.style.opacity = '0';
+                toastTimeout = null;
+                isToastActive = false;
+                updateStatusPill();
             }, duration);
         }
     }
 
+    function clearIndefiniteToast() {
+        if (!toastTimeout) {
+            isToastActive = false;
+            updateStatusPill();
+        }
+    }
+
     function updateStatusPill() {
+        if (isToastActive) return;
         let connected = Array.from(activeSockets.values()).some(ws => ws.readyState === WebSocket.OPEN);
         let modeText = win.__cbIsBridgeChat ? '⚡ Bridge' : '💬 Normal';
 
         if (connected && win.__cbIsBound) {
-            showToast(`🎯 ${win.__cbProjectName} (${modeText})`, '#4CAF50', 0);
+            renderStatusPill(`🎯 ${win.__cbProjectName} (${modeText})`, '#4CAF50');
         } else if (connected && !win.__cbIsBound) {
-            showToast(`🔗 Standby (${modeText})`, '#757575', 0);
+            renderStatusPill(`🔗 Standby (${modeText})`, '#757575');
         } else {
-            showToast(`🔌 Disconnected (${modeText})`, '#F44336', 0);
+            renderStatusPill(`🔌 Disconnected (${modeText})`, '#F44336');
         }
     }
 
@@ -617,13 +636,13 @@
                     const textarea = AIStudioDOM.Input.getPromptArea();
                     if (!textarea) return;
 
-                    const container = textarea.closest('ms-prompt-input-bar') || textarea.closest('.input-container') || textarea.parentElement;
+                    const container = textarea.closest('.textarea-row') || textarea.closest('ms-prompt-input-bar') || textarea.closest('.input-container') || textarea.parentElement;
                     if (!container) return;
 
                     const toggleContainer = document.createElement('div');
                     toggleContainer.id = 'cb-mode-toggle';
                     toggleContainer.style.cssText = `
-                        display: ${win.__cbIsBridgeChat ? 'flex' : 'none'}; gap: 8px; margin-bottom: 8px; padding-left: 8px;
+                        display: ${win.__cbIsBridgeChat ? 'flex' : 'none'}; gap: 8px;
                         font-family: Inter, sans-serif; font-size: 13px; position: relative;
                     `;
 
@@ -930,10 +949,12 @@
                 if (!activeSockets.has(port)) {
                     try {
                         const ws = new WebSocket(`ws://127.0.0.1:${port}/ai-bridge`);
+                        let wasOpen = false;
 
                         activeSockets.set(port, ws);
 
                         ws.onopen = () => {
+                            wasOpen = true;
                             ws.send(`[HANDSHAKE]${tabId}|${currentPathname}|${currentTitle}`);
                             updateStatusPill();
                         };
@@ -973,7 +994,9 @@
 
                         ws.onclose = () => {
                             activeSockets.delete(port);
-                            updateStatusPill();
+                            if (wasOpen) {
+                                updateStatusPill();
+                            }
                         };
 
                         ws.onerror = () => {
@@ -1086,6 +1109,7 @@
             const textarea = AIStudioDOM.Input.getPromptArea();
             if (!textarea) {
                 if (options.onAbort) await options.onAbort();
+                clearIndefiniteToast();
                 isProcessing = false;
                 return;
             }
@@ -1103,6 +1127,7 @@
                 const runBtn = await AIStudioDOM.Utils.waitForElement('ms-run-button button');
                 if (!runBtn) {
                     if (options.onAbort) await options.onAbort();
+                    clearIndefiniteToast();
                     isProcessing = false;
                     return;
                 }
@@ -1162,6 +1187,7 @@
                             await options.onCleanup(addedTurns);
                         }
                     } finally {
+                        clearIndefiniteToast();
                         isProcessing = false;
                     }
                 }, 500);
