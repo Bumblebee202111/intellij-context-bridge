@@ -436,8 +436,7 @@
 
                     this.syncModeFromCommands(textarea.value);
 
-                    AIStudioDOM.Injections.activePrefix = null;
-                    AIStudioDOM.Injections.updateSuggestions();
+                    AIStudioDOM.Injections.hideSuggestions();
                 },
                 parseLeadingCommands(text) {
                     let remainingPrompt = text.trimStart();
@@ -629,9 +628,19 @@
                         background: var(--color-v3-surface-container); border: 1px solid var(--color-v3-outline-var);
                         border-radius: 12px; padding: 4px;
                         box-shadow: var(--v3-shadow-lg); z-index: 10000;
-                        display: none; flex-direction: column; min-width: 300px;
-                        font-family: Inter, sans-serif; font-size: 13px; overflow: hidden;
+                        display: none; flex-direction: column; min-width: 320px; max-width: 480px;
+                        max-height: 240px; overflow-y: auto; overscroll-behavior: contain;
+                        scrollbar-width: thin; scrollbar-color: var(--color-v3-outline-var) transparent;
+                        font-family: Inter, sans-serif; font-size: 13px;
                     `;
+                },
+                hideSuggestions() {
+                    this.activePrefix = null;
+                    this.filteredCmds = [];
+                    this.selectedIndex = 0;
+                    if (this.suggestionBox) {
+                        this.suggestionBox.style.display = 'none';
+                    }
                 },
                 updateToggleStyles() {
                     const toggleContainer = document.getElementById('cb-mode-toggle');
@@ -691,7 +700,7 @@
                 },
                 updateSuggestions() {
                     if (!this.activePrefix || this.filteredCmds.length === 0) {
-                        this.suggestionBox.style.display = 'none';
+                        this.hideSuggestions();
                         return;
                     }
 
@@ -704,17 +713,30 @@
                         item.style.cssText = `
                             padding: 6px 10px; border-radius: 8px; cursor: pointer; display: flex; justify-content: space-between; align-items: center;
                             background: ${i === this.selectedIndex ? 'var(--color-v3-button-container-high)' : 'transparent'};
-                            color: var(--color-v3-text);
+                            color: var(--color-v3-text); gap: 12px;
                         `;
+
+                        let leftCol = document.createElement('div');
+                        leftCol.style.cssText = 'display: flex; align-items: center; gap: 6px; min-width: 0; overflow: hidden;';
 
                         let nameStrong = document.createElement('strong');
                         nameStrong.textContent = '/' + cmd.name;
+                        nameStrong.style.cssText = 'flex-shrink: 0;';
+                        leftCol.appendChild(nameStrong);
+
+                        if (cmd.description) {
+                            let descSpan = document.createElement('span');
+                            descSpan.style.cssText = 'color: var(--color-v3-text-var); font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: normal;';
+                            descSpan.textContent = cmd.description;
+                            descSpan.title = cmd.description;
+                            leftCol.appendChild(descSpan);
+                        }
 
                         let modeSpan = document.createElement('span');
-                        modeSpan.style.cssText = 'color: var(--color-v3-text-var); font-size: 11px;';
+                        modeSpan.style.cssText = 'color: var(--color-v3-text-var); font-size: 11px; flex-shrink: 0;';
                         modeSpan.textContent = cmd.mode;
 
-                        item.appendChild(nameStrong);
+                        item.appendChild(leftCol);
                         item.appendChild(modeSpan);
 
                         item.onmousedown = (e) => {
@@ -724,6 +746,11 @@
                         this.suggestionBox.appendChild(item);
                     });
                     this.suggestionBox.style.display = 'flex';
+
+                    const selectedEl = this.suggestionBox.children[this.selectedIndex];
+                    if (selectedEl) {
+                        selectedEl.scrollIntoView({ block: 'nearest' });
+                    }
                 },
                 injectTurnButtons() {
                     if (!win.__cbIsBridgeChat) {
@@ -1065,17 +1092,27 @@
                     if (remainingPrompt.length === 0) {
                         AIStudioDOM.Injections.activePrefix = prefix;
                         let search = prefix.substring(1).toLowerCase();
-                        AIStudioDOM.Injections.filteredCmds = win.__cbCommands.filter(c => c.name.toLowerCase().startsWith(search));
+                        AIStudioDOM.Injections.filteredCmds = win.__cbCommands.filter(c =>
+                            c.name !== 'commit' &&
+                            (!c.promptBody || !c.promptBody.includes('{{vcs_diff}}')) &&
+                            c.name.toLowerCase().startsWith(search)
+                        );
                         if (AIStudioDOM.Injections.selectedIndex >= AIStudioDOM.Injections.filteredCmds.length) AIStudioDOM.Injections.selectedIndex = 0;
                         AIStudioDOM.Injections.updateSuggestions();
                     } else {
-                        AIStudioDOM.Injections.activePrefix = null;
-                        AIStudioDOM.Injections.updateSuggestions();
+                        AIStudioDOM.Injections.hideSuggestions();
                     }
                 } else {
-                    AIStudioDOM.Injections.activePrefix = null;
-                    AIStudioDOM.Injections.updateSuggestions();
+                    AIStudioDOM.Injections.hideSuggestions();
                 }
+            }
+        }, true);
+
+        document.addEventListener('pointerdown', (e) => {
+            if (!AIStudioDOM.Injections.activePrefix) return;
+            const box = AIStudioDOM.Injections.suggestionBox;
+            if (box && !box.contains(e.target) && e.target !== AIStudioDOM.Input.getPromptArea()) {
+                AIStudioDOM.Injections.hideSuggestions();
             }
         }, true);
 
@@ -1106,8 +1143,7 @@
                     } else if (e.key === 'Escape') {
                         e.preventDefault();
                         e.stopPropagation();
-                        AIStudioDOM.Injections.activePrefix = null;
-                        AIStudioDOM.Injections.updateSuggestions();
+                        AIStudioDOM.Injections.hideSuggestions();
                         return;
                     }
                 }

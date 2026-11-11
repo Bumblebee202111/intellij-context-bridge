@@ -213,7 +213,9 @@ class BridgeSessionService(private val project: Project) : Disposable {
     }
 
     private fun sendCommandsToTab(tabId: String, commands: List<SlashCommand>) {
-        val dtos = commands.map { SyncCommand(it.name, it.mode.name, it.promptBody) }
+        val dtos = commands
+            .filterNot { it.promptBody.contains("{{vcs_diff}}") }
+            .map { SyncCommand(it.name, it.description, it.mode.name, it.promptBody) }
         val json = Json.encodeToString(dtos)
         server.sendToTab(tabId, "[COMMANDS]$json")
     }

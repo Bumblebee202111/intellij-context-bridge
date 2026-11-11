@@ -19,6 +19,7 @@ data class SlashCommand(
 @Serializable
 data class SyncCommand(
     val name: String,
+    val description: String = "",
     val mode: String,
     val promptBody: String
 )
