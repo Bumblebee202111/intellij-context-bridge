@@ -12,7 +12,8 @@ include-files:
   - "ROADMAP.md"
   - "docs/ai-studio-web-ui.md"
 ---
-Update project documentation. Do not over-document: skip minor edits, bug fixes, or implementation details just because they were discussed in this session. Only edit files that are genuinely affected, and keep additions brief and proportional to their impact.
+Update project documentation to accurately reflect the current state of the project.
+Keep documentation concise and high-signal: refine or consolidate existing text rather than merely appending, remove outdated information, and avoid bloating high-level docs with low-level implementation details.
 - AGENTS.md: Brief AI context, tech stack baseline, and critical platform rules.
 - ARCHITECTURE.md: High-level system layers, component roles, and data flow. Keep general and flexible.
 - REQUIREMENTS.md: Core behavioral specifications, hard constraints, and non-goals. Keep general and flexible.
