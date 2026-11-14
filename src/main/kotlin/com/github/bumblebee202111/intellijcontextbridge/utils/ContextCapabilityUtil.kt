@@ -14,11 +14,22 @@ object ContextCapabilityUtil {
         return textExtensions.contains(extension) || !file.fileType.isBinary
     }
 
-    fun isSupportedMedia(extension: String): Boolean {
+    fun getMediaMimeType(extension: String): String? {
         return when (extension.lowercase()) {
-            "png", "jpg", "jpeg", "webp", "heic", "pdf", "mp4", "mp3", "wav" -> true
-            else -> false
+            "png" -> "image/png"
+            "jpg", "jpeg" -> "image/jpeg"
+            "webp" -> "image/webp"
+            "heic" -> "image/heic"
+            "pdf" -> "application/pdf"
+            "mp4" -> "video/mp4"
+            "mp3" -> "audio/mpeg"
+            "wav" -> "audio/wav"
+            else -> null
         }
+    }
+
+    fun isSupportedMedia(extension: String): Boolean {
+        return getMediaMimeType(extension) != null
     }
 
     /**

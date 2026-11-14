@@ -100,49 +100,38 @@ object PayloadGenerator {
         }
 
         val effectiveFileStates: Map<VirtualFile, ContextLevel> = readAction {
-            if (isCommit) {
-                val isolatedMap = mutableMapOf<VirtualFile, ContextLevel>()
-                if (rawCommands.none { it.contextAction == CommandContextAction.REPLACE }) {
-                    contextState.ensureInitialized()
-                    isolatedMap.putAll(contextState.fileStates)
-                }
-                for (cmd in rawCommands) {
-                    contextState.applyCommandContext(cmd, isolatedMap)
-                }
-                if (remainingPrompt.contains('@')) {
-                    for (match in FILE_MENTION_REGEX.findAll(remainingPrompt)) {
-                        ProgressManager.checkCanceled()
-                        val rawPath = match.groupValues[1].trimEnd('.', ',', ':', ';', ')', ']')
-                        if (rawPath.isNotEmpty()) {
-                            val mentionedFile = contextState.resolveFile(rawPath)
-                            if (mentionedFile != null && mentionedFile.exists()) {
-                                contextState.applyFileMention(mentionedFile, isolatedMap)
-                            }
-                        }
+            val targetMap: MutableMap<VirtualFile, ContextLevel> = if (isCommit) {
+                mutableMapOf<VirtualFile, ContextLevel>().apply {
+                    if (rawCommands.none { it.contextAction == CommandContextAction.REPLACE }) {
+                        contextState.ensureInitialized()
+                        putAll(contextState.fileStates)
                     }
                 }
-                isolatedMap
             } else {
                 contextState.ensureInitialized()
-                for (cmd in rawCommands) {
-                    if (cmd.name !in alreadyAppliedCommands) {
-                        contextState.applyCommandContext(cmd)
-                    }
+                contextState.fileStates
+            }
+
+            for (cmd in rawCommands) {
+                if (isCommit || cmd.name !in alreadyAppliedCommands) {
+                    contextState.applyCommandContext(cmd, targetMap)
                 }
-                if (remainingPrompt.contains('@')) {
-                    for (match in FILE_MENTION_REGEX.findAll(remainingPrompt)) {
-                        ProgressManager.checkCanceled()
-                        val rawPath = match.groupValues[1].trimEnd('.', ',', ':', ';', ')', ']')
-                        if (rawPath.isNotEmpty()) {
-                            val mentionedFile = contextState.resolveFile(rawPath)
-                            if (mentionedFile != null && mentionedFile.exists()) {
-                                contextState.applyFileMention(mentionedFile)
-                            }
+            }
+
+            if (remainingPrompt.contains('@')) {
+                for (match in FILE_MENTION_REGEX.findAll(remainingPrompt)) {
+                    ProgressManager.checkCanceled()
+                    val rawPath = match.groupValues[1].trimEnd('.', ',', ':', ';', ')', ']')
+                    if (rawPath.isNotEmpty()) {
+                        val mentionedFile = contextState.resolveFile(rawPath)
+                        if (mentionedFile != null && mentionedFile.exists()) {
+                            contextState.applyFileMention(mentionedFile, targetMap)
                         }
                     }
                 }
-                HashMap(contextState.fileStates)
             }
+
+            if (isCommit) targetMap else HashMap(targetMap)
         }
 
         val sortedFiles = effectiveFileStates.entries
@@ -159,73 +148,60 @@ object PayloadGenerator {
 
                 val relativePath = contextState.getRelativePath(file)
                 val previousRecord = currentCache[relativePath]
+                val extension = file.extension?.lowercase() ?: ""
                 val isText = !file.isDirectory && ContextCapabilityUtil.isTextFile(file)
 
-                val fastHash = if (isText) {
-                    contextState.getCachedHash(file, level)
-                } else {
-                    getFileHash(project, contextState, file, level)
-                }
-
-                if (fastHash != null && previousRecord?.level == level && previousRecord.hash == fastHash) {
-                    newTurn.sentFiles[relativePath] = FileStateRecord(level, fastHash, wasDeduped = true)
-                    return@readAction null
-                }
-
-                if (file.isDirectory) {
-                    val dirHash = fastHash ?: "EMPTY_DIR"
-                    newTurn.sentFiles[relativePath] = FileStateRecord(level, dirHash, wasDeduped = false)
-                    return@readAction "### \uD83D\uDCC1 `$relativePath/` (Empty Directory)\n*(This directory is empty)*\n"
-                }
-
-                val extension = file.extension?.lowercase() ?: ""
-
-                if (!isText) {
-                    val binaryHash = fastHash ?: getFileHash(project, contextState, file, level)
-                    newTurn.sentFiles[relativePath] = FileStateRecord(level, binaryHash, wasDeduped = false)
-                    val mime = getMimeType(extension)
-
-                    return@readAction if (level == ContextLevel.COMPLETE) {
-                        try {
-                            if (mime != "application/octet-stream") {
-                                val bytes = file.contentsToByteArray()
-                                val base64 = Base64.getEncoder().encodeToString(bytes)
-                                attachments.add(AiAttachment(file.name, mime, base64))
-                                "### 🖼️ `$relativePath` (Attached Media)\n*(This file has been attached to the prompt natively)*\n"
-                            } else {
-                                "### 📦 `$relativePath` (Binary File)\n*(Opaque binary file, contents excluded)*\n"
-                            }
-                        } catch (e: Exception) {
-                            "### ❌ `$relativePath` (Error reading file: ${e.message})\n"
-                        }
+                try {
+                    val cachedHash = if (isText) {
+                        contextState.getCachedHash(file, level)
                     } else {
-                        if (mime != "application/octet-stream") {
+                        getFileHash(project, contextState, file, level)
+                    }
+
+                    var extractedText: String? = null
+                    val currentHash = cachedHash ?: run {
+                        extractedText = extractTextContent(project, file, level)
+                        contextState.cacheContentHash(file, level, extractedText ?: "OMITTED_NON_CODE_SKELETON")
+                    }
+
+                    val isDeduped = previousRecord?.level == level && previousRecord.hash == currentHash
+                    newTurn.sentFiles[relativePath] = FileStateRecord(level, currentHash, wasDeduped = isDeduped)
+                    if (isDeduped) {
+                        return@readAction null
+                    }
+
+                    if (file.isDirectory) {
+                        return@readAction "### \uD83D\uDCC1 `$relativePath/` (Empty Directory)\n*(This directory is empty)*\n"
+                    }
+
+                    if (!isText) {
+                        val mime = ContextCapabilityUtil.getMediaMimeType(extension)
+                        return@readAction if (level == ContextLevel.COMPLETE) {
+                            try {
+                                if (mime != null) {
+                                    val bytes = file.contentsToByteArray()
+                                    val base64 = Base64.getEncoder().encodeToString(bytes)
+                                    attachments.add(AiAttachment(file.name, mime, base64))
+                                    "### 🖼️ `$relativePath` (Attached Media)\n*(This file has been attached to the prompt natively)*\n"
+                                } else {
+                                    "### 📦 `$relativePath` (Binary File)\n*(Opaque binary file, contents excluded)*\n"
+                                }
+                            } catch (e: Exception) {
+                                "### ❌ `$relativePath` (Error reading file: ${e.message})\n"
+                            }
+                        } else if (mime != null) {
                             "### 🖼️ `$relativePath` (Skeleton Media)\n"
                         } else {
                             "### 📦 `$relativePath` (Binary File)\n"
                         }
                     }
-                }
 
-                try {
-                    val extractedText = extractTextContent(project, file, level)
-                    val currentHash = fastHash ?: contextState.cacheContentHash(
-                        file,
-                        level,
-                        extractedText ?: "OMITTED_NON_CODE_SKELETON"
-                    )
-                    val isDeduped = previousRecord?.level == level && previousRecord.hash == currentHash
-                    newTurn.sentFiles[relativePath] = FileStateRecord(level, currentHash, wasDeduped = isDeduped)
-
-                    if (isDeduped) {
-                        return@readAction null
-                    }
-
-                    if (level != ContextLevel.COMPLETE && extractedText == null) {
+                    val textContent = if (cachedHash == null) extractedText else extractTextContent(project, file, level)
+                    if (level != ContextLevel.COMPLETE && textContent == null) {
                         "### \uD83D\uDCC4 `$relativePath` (Skeleton)\n*(File exists, contents omitted in Skeleton mode)*\n"
-                    } else if (extractedText != null) {
+                    } else if (textContent != null) {
                         val levelTag = if (level == ContextLevel.COMPLETE) "" else " (Skeleton)"
-                        "### \uD83D\uDCC4 `$relativePath`$levelTag\n```${getMarkdownLang(extension)}\n$extractedText\n```\n"
+                        "### \uD83D\uDCC4 `$relativePath`$levelTag\n```${getMarkdownLang(extension)}\n$textContent\n```\n"
                     } else {
                         null
                     }
@@ -284,20 +260,6 @@ object PayloadGenerator {
             payload = payload,
             turn = newTurn
         )
-    }
-
-    private fun getMimeType(extension: String): String {
-        return when (extension) {
-            "png" -> "image/png"
-            "jpg", "jpeg" -> "image/jpeg"
-            "webp" -> "image/webp"
-            "heic" -> "image/heic"
-            "pdf" -> "application/pdf"
-            "mp4" -> "video/mp4"
-            "mp3" -> "audio/mpeg"
-            "wav" -> "audio/wav"
-            else -> "application/octet-stream" // Unsupported binary
-        }
     }
 
     private fun getMarkdownLang(extension: String): String {
