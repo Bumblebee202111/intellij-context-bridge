@@ -20,7 +20,7 @@ The plugin consists of five decoupled layers. Implementation details for each la
 * **Capability Checker:** Evaluates file extensions and MIME types to prevent encoding errors from opaque binaries, while identifying supported media files to encode as Base64 attachments.
 
 ## 3. State & Memory Manager
-* **Session Tracker:** Maintains the lifecycle of the conversation using persistent timelines of outgoing user turns and incoming model turns, enabling undo capabilities and deep auditing.
+* **Session Tracker:** Maintains the lifecycle of the conversation using persistent timelines of outgoing user turns and incoming model turns, enabling turn editing, undo, and deep auditing.
 * **Project Configurator:** Parses local configuration files (e.g., `.aicontext`) on load to automatically route specific files and directories to their preferred context states. Defaults to restoring the exact context from the last session turn if one exists.
 * **State Engine:** Tracks context states dynamically via a fast, thread-safe in-memory cache, aggregating directory states bottom-up based on their children. Strictly ties event listeners to UI-bound disposables to prevent memory leaks.
 * **Universal Deduplication Engine:**
@@ -36,6 +36,6 @@ The plugin consists of five decoupled layers. Implementation details for each la
 * **Tool Call & Action Orchestrator:** Relies on automated native UI actions (e.g., "Copy as Markdown") to extract sanitized AI responses. Parses tool calls into a unified `AgentTool` hierarchy (read requests, file mutations, and commit message filling) and renders them as inline interactive cards in the Chat timeline for side-by-side diffing, IDE refactoring, or commit message injection.
 
 ## 5. Command Engine
-* **Slash Commands:** A user-invoked macro system for workflow state transitions (e.g., `/plan`, `/commit`, `/review-bugs`, `/cmd`). Commands can be stacked via UI tokens and are dynamically interpolated into `<applied_commands>` XML blocks before the user's manual request.
+* **Slash Commands:** A user-invoked macro system for workflow state transitions (e.g., `/aicontext`, `/plan`, `/commit`, `/review-bugs`, `/cmd`). Commands can be stacked via UI tokens and are dynamically interpolated into `<applied_commands>` XML blocks before the user's manual request.
 * **Dynamic Context Interpolation:** Supports template variables (e.g., `{{vcs_diff}}`) inside command definitions, enabling macros to pull active IDE runtime state on demand.
 * **Shadow Registry:** Commands are defined via Markdown files with YAML frontmatter. A background service loads built-in defaults and allows project-specific overrides via a local `.contextbridge/commands/` directory.

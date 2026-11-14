@@ -11,7 +11,7 @@ The system MUST support two primary context states for files:
 
 ## 2. Context Deduplication & Session History
 The system MUST track the state of the conversation to prevent context bloat and maintain synchronization with the LLM.
-* *Turn Tracking:* State is maintained as a persistent timeline of user turns, allowing users to undo or delete specific payloads if they revert a turn in the web UI.
+* *Turn Tracking:* State is maintained as a persistent timeline of user turns, allowing users to undo, edit, or delete specific payloads while preserving their working context selection.
 * *Deduplication:* The system MUST hash the extracted contents of requested files. If a file is requested at the same context state in a subsequent turn and its extracted hash is unchanged, the system MUST omit it entirely from the new payload.
 * *Ephemeral Tasks:* Specialized workflows (e.g., background commit generation) MUST execute invisibly, utilizing pre-execution snapshots to restore the user's prior model and parameter state, and bypass session history to prevent context bloat. If a required model switch fails, the workflow MUST abort auto-submission and leave the prompt unsent to protect flagship model quotas.
 * *Constraint:* The system MUST NOT generate chatty placeholders (e.g., `[File unchanged]`) in the payload for deduplicated files.

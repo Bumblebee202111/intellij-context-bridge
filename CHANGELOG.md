@@ -12,10 +12,10 @@
 - **Cross-IDE & Multi-Language Support**: Optional plugin dependencies and AST Skeleton/Graph extractors for Kotlin, Java, JavaScript, TypeScript, and Vue.
 - **Polite Userscript & Per-Model Memory**: Implicit Bridge chat detection via System Instructions, persistent per-model parameter memory, and exact state snapshot restoration.
 - **Diagnostic Bridge**: Two-way IDE-to-userscript telemetry to verify background DOM automation health under browser throttling.
-- **Slash Commands & Meta-Commands**: Stackable `/plan`, `/lore`, `/commit`, `/cmd`, and targeted `/review-*` macros with `.contextbridge/commands/` shadowing and `{{vcs_diff}}` interpolation.
+- **Slash Commands & Meta-Commands**: Stackable `/aicontext`, `/plan`, `/lore`, `/commit`, `/cmd`, and targeted `/review-*` macros with `.contextbridge/commands/` shadowing and `{{vcs_diff}}` interpolation.
 - **Resilient Tool Protocol**: Unified `AgentTool` hierarchy using namespaced `ide:` XML blocks inside Markdown code blocks and `<![CDATA[...]]>` payloads, paired with the Skeleton Patch protocol.
 - **Unified Context & Chat Workspace**: Switchable Project-style context tree and chronological chat timeline with persistent prompt composer and inline tool cards (`read_file`, `propose_edit` via native `DiffManager`, `rename_file`, `delete_file`, and `fill_commit_message`).
 - **Ephemeral Commit Workflow**: One-click AI commit message generation from VCS panels with transient model configuration, chat cleanup, and downward Swing input injection.
 - **Proactive Context Suggestions**: Background suggestion staging tree driven by active tabs, Git changes, `@` mentions, and IDF-weighted PSI usage searches with smart cache omission.
-- **Session History & Deduplication**: Persistent turn timeline with undo support and hash-based payload deduplication.
+- **Session History & Deduplication**: Persistent turn timeline with turn edit/undo support and hash-based payload deduplication.
 - **Multi-Project WebSocket Mesh**: Dynamic local port binding and hybrid title/pathname tab binding with automated native "Copy as Markdown" response extraction.
