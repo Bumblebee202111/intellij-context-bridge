@@ -75,31 +75,25 @@ class CommandRegistryService(private val project: Project, private val scope: Co
     }
 
     fun parseLeadingCommands(prompt: String): Pair<List<SlashCommand>, String> {
+        return parseCommands(prompt, LEADING_COMMAND_REGEX)
+    }
+
+    fun parseCommittedLeadingCommands(prompt: String): List<SlashCommand> {
+        return parseCommands(prompt, COMMITTED_COMMAND_REGEX).first
+    }
+
+    private fun parseCommands(prompt: String, regex: Regex): Pair<List<SlashCommand>, String> {
         var remaining = prompt.trimStart()
         val matched = mutableListOf<SlashCommand>()
 
         while (remaining.isNotEmpty()) {
-            val match = LEADING_COMMAND_REGEX.find(remaining) ?: break
+            val match = regex.find(remaining) ?: break
             val cmd = getCommand(match.groupValues[1]) ?: break
             matched.add(cmd)
             remaining = remaining.substring(match.range.last + 1).trimStart()
         }
 
         return matched to remaining
-    }
-
-    fun parseCommittedLeadingCommands(prompt: String): List<SlashCommand> {
-        var remaining = prompt.trimStart()
-        val matched = mutableListOf<SlashCommand>()
-
-        while (remaining.isNotEmpty()) {
-            val match = COMMITTED_COMMAND_REGEX.find(remaining) ?: break
-            val cmd = getCommand(match.groupValues[1]) ?: break
-            matched.add(cmd)
-            remaining = remaining.substring(match.range.last + 1).trimStart()
-        }
-
-        return matched
     }
 
     fun isAtCommandPosition(textBefore: String): Boolean {

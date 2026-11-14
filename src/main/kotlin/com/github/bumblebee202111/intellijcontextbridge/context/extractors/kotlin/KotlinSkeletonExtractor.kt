@@ -7,6 +7,7 @@ import org.jetbrains.kotlin.lexer.KtTokens
 import org.jetbrains.kotlin.psi.KtAnonymousInitializer
 import org.jetbrains.kotlin.psi.KtClassOrObject
 import org.jetbrains.kotlin.psi.KtDeclaration
+import org.jetbrains.kotlin.psi.KtDeclarationWithBody
 import org.jetbrains.kotlin.psi.KtEnumEntry
 import org.jetbrains.kotlin.psi.KtFile
 import org.jetbrains.kotlin.psi.KtNamedFunction
@@ -49,47 +50,27 @@ class KotlinSkeletonExtractor : LanguageSkeletonExtractor {
         if (declaration.hasModifier(KtTokens.PRIVATE_KEYWORD)) return null
 
         return when (declaration) {
-            is KtEnumEntry -> {
-                val body = declaration.body
-                val headerEnd = body?.textRange?.startOffset ?: declaration.textRange.endOffset
-                val headerText = declaration.containingFile.text.substring(declaration.textRange.startOffset, headerEnd).trimEnd()
-
-                val children = declaration.body?.declarations?.mapNotNull { processKtDeclaration(it, "$indent    ") } ?: emptyList()
-
-                if (children.isEmpty()) {
-                    "$indent$headerText"
-                } else {
-                    "$indent$headerText {\n${children.joinToString("\n\n")}\n$indent}"
-                }
-            }
             is KtClassOrObject -> {
                 val body = declaration.body
                 val headerEnd = body?.textRange?.startOffset ?: declaration.textRange.endOffset
                 val headerText = declaration.containingFile.text.substring(declaration.textRange.startOffset, headerEnd).trim()
 
-                val children = declaration.body?.declarations?.mapNotNull { processKtDeclaration(it, "$indent    ") } ?: emptyList()
+                val children = body?.declarations?.mapNotNull { processKtDeclaration(it, "$indent    ") } ?: emptyList()
 
                 if (body == null) {
                     "$indent$headerText"
                 } else if (children.isEmpty()) {
-                    "$indent$headerText {}"
+                    if (declaration is KtEnumEntry) "$indent$headerText" else "$indent$headerText {}"
                 } else {
                     "$indent$headerText {\n${children.joinToString("\n\n")}\n$indent}"
                 }
             }
-            is KtNamedFunction -> {
-                val body = declaration.bodyExpression
+            is KtNamedFunction, is KtSecondaryConstructor -> {
+                val body = (declaration as KtDeclarationWithBody).bodyExpression
                 val equalsToken = declaration.node.findChildByType(KtTokens.EQ)?.psi
 
                 // Safely find the exact AST boundary of the body or equals sign
                 val endOffset = equalsToken?.textRange?.startOffset ?: body?.textRange?.startOffset ?: declaration.textRange.endOffset
-                val sig = declaration.containingFile.text.substring(declaration.textRange.startOffset, endOffset).trimEnd()
-
-                "$indent$sig"
-            }
-            is KtSecondaryConstructor -> {
-                val body = declaration.bodyExpression
-                val endOffset = body?.textRange?.startOffset ?: declaration.textRange.endOffset
                 val sig = declaration.containingFile.text.substring(declaration.textRange.startOffset, endOffset).trimEnd()
 
                 "$indent$sig"

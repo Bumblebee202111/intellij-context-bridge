@@ -88,11 +88,7 @@ class ContextState(
     fun ensureInitialized() {
         if (!isInitialized) {
             restoreExternalRoots()
-            if (getLastTurn() == null) {
-                loadConfig()
-            } else {
-                restoreFromLastTurn()
-            }
+            restoreFromLastTurn()
             isInitialized = true
         }
     }
@@ -293,6 +289,7 @@ class ContextState(
     fun loadConfig() {
         val projectDir = project.guessProjectDir() ?: return
         val configFile = projectDir.findChild(".aicontext")
+        val defaultConfig = AiContextConfig(skeleton = listOf("."), complete = listOf("README.md"))
 
         val config = if (configFile != null && configFile.exists()) {
             try {
@@ -300,23 +297,24 @@ class ContextState(
                 jsonParser.decodeFromString<AiContextConfig>(configText)
             } catch (e: Exception) {
                 thisLogger().warn("Failed to parse .aicontext: ${e.message}")
-                AiContextConfig(skeleton = listOf("."), complete = listOf("README.md"))
+                defaultConfig
             }
         } else {
-            AiContextConfig(skeleton = listOf("."), complete = listOf("README.md"))
+            defaultConfig
         }
 
-        config.skeleton.forEach { path ->
-            ProgressManager.checkCanceled()
-            val file = if (path == "." || path == "/") projectDir else projectDir.findFileByRelativePath(path)
-            if (file != null && file.exists()) applyStateRecursively(file, ContextLevel.SKELETON, checkIgnore = true)
+        fun applyConfigPaths(paths: List<String>, level: ContextLevel) {
+            for (path in paths) {
+                ProgressManager.checkCanceled()
+                val file = if (path == "." || path == "/") projectDir else projectDir.findFileByRelativePath(path)
+                if (file != null && file.exists()) {
+                    applyStateRecursively(file, level, checkIgnore = true)
+                }
+            }
         }
 
-        config.complete.forEach { path ->
-            ProgressManager.checkCanceled()
-            val file = if (path == "." || path == "/") projectDir else projectDir.findFileByRelativePath(path)
-            if (file != null && file.exists()) applyStateRecursively(file, ContextLevel.COMPLETE, checkIgnore = true)
-        }
+        applyConfigPaths(config.skeleton, ContextLevel.SKELETON)
+        applyConfigPaths(config.complete, ContextLevel.COMPLETE)
 
         for (extRoot in externalRoots) {
             ProgressManager.checkCanceled()
@@ -458,10 +456,6 @@ class ContextState(
             }
         }
         return cache
-    }
-
-    fun clearFileStates() {
-        fileStates.clear()
     }
 
     fun clear() {
