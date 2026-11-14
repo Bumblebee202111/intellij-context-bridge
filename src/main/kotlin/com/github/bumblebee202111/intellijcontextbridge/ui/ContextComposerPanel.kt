@@ -7,6 +7,7 @@ import com.github.bumblebee202111.intellijcontextbridge.server.BridgeSessionServ
 import com.github.bumblebee202111.intellijcontextbridge.server.BrowserTab
 import com.github.bumblebee202111.intellijcontextbridge.state.ContextState
 import com.github.bumblebee202111.intellijcontextbridge.state.IntentMode
+import com.github.bumblebee202111.intellijcontextbridge.state.UserTurn
 import com.intellij.codeInsight.AutoPopupController
 import com.intellij.icons.AllIcons
 import com.intellij.openapi.Disposable
@@ -102,6 +103,7 @@ class ContextComposerPanel(private val project: Project) : Disposable {
                 executePayloadAction(isWsSend = bridgeSession.isBoundTabConnected())
             }
         },
+        onEditTurn = ::restoreTurnToComposer,
         onHistoryChanged = {
             refreshUi(vfsStructureChanged = true, forceMainRebuild = true)
         }
@@ -479,19 +481,8 @@ class ContextComposerPanel(private val project: Project) : Disposable {
             })
             add(object : AnAction("Undo Last", "Undo last sent prompt", AllIcons.Actions.Undo) {
                 override fun actionPerformed(e: AnActionEvent) {
-                    val turn = contextState.removeLastTurn()
-                    if (turn != null) {
-                        promptArea.text = turn.prompt
-                        contextState.scope.launch {
-                            readAction {
-                                contextState.restoreFromLastTurn()
-                            }
-                            ApplicationManager.getApplication().invokeLater({
-                                chatTimelinePanel.refresh()
-                                refreshUi(vfsStructureChanged = true, forceMainRebuild = true)
-                            }, ModalityState.nonModal())
-                        }
-                    }
+                    val turn = contextState.getLastTurn() ?: return
+                    restoreTurnToComposer(turn)
                 }
 
                 override fun update(e: AnActionEvent) {
@@ -536,6 +527,33 @@ class ContextComposerPanel(private val project: Project) : Disposable {
 
         bottomPanel.add(actionButtonPanel, BorderLayout.SOUTH)
         return bottomPanel
+    }
+
+    private fun restoreTurnToComposer(turn: UserTurn) {
+        contextState.removeTurn(turn.id)
+        historyIndex = -1
+        draftPrompt = turn.prompt
+
+        val (leadingCommands, _) = commandRegistry.parseLeadingCommands(turn.prompt)
+        lastAppliedCommands = leadingCommands.map { it.name }
+        appliedCommandNames = commandRegistry.parseCommittedLeadingCommands(turn.prompt).map { it.name }
+
+        promptArea.text = turn.prompt
+        if (turn.mode == IntentMode.EDIT) {
+            editRadio.isSelected = true
+        } else {
+            askRadio.isSelected = true
+        }
+
+        contextState.scope.launch {
+            readAction {
+                contextState.restoreFromTurn(turn)
+            }
+            ApplicationManager.getApplication().invokeLater({
+                chatTimelinePanel.refresh()
+                refreshUi(vfsStructureChanged = true, forceMainRebuild = true)
+            }, ModalityState.nonModal())
+        }
     }
 
     private fun setupPromptHistoryShortcuts() {

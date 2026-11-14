@@ -331,12 +331,15 @@ class ContextState(
             loadConfig()
             return
         }
+        restoreFromTurn(lastTurn)
+    }
 
+    fun restoreFromTurn(turn: UserTurn) {
         val projectDir = project.guessProjectDir()
 
         fileStates.clear()
         var externalChanged = false
-        for ((path, record) in lastTurn.sentFiles) {
+        for ((path, record) in turn.sentFiles) {
             ProgressManager.checkCanceled()
             val file = resolveFile(path)
             if (file != null && file.exists()) {

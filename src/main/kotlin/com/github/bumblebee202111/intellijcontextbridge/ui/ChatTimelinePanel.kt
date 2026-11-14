@@ -13,9 +13,6 @@ import com.github.bumblebee202111.intellijcontextbridge.state.ModelTurn
 import com.github.bumblebee202111.intellijcontextbridge.state.UserTurn
 import com.github.bumblebee202111.intellijcontextbridge.vcs.CommitBridgeService
 import com.intellij.icons.AllIcons
-import com.intellij.openapi.application.ApplicationManager
-import com.intellij.openapi.application.ModalityState
-import com.intellij.openapi.application.readAction
 import com.intellij.openapi.components.service
 import com.intellij.openapi.fileTypes.FileTypeManager
 import com.intellij.openapi.project.Project
@@ -29,7 +26,6 @@ import com.intellij.ui.components.panels.VerticalLayout
 import com.intellij.util.ui.JBFont
 import com.intellij.util.ui.JBUI
 import com.intellij.util.ui.UIUtil
-import kotlinx.coroutines.launch
 import java.awt.BorderLayout
 import java.awt.Color
 import java.awt.Dimension
@@ -59,7 +55,7 @@ private sealed interface TimelineItem {
     val timestamp: Long
     val sortOrder: Int
 
-    data class User(val turn: UserTurn, val isLatestUserTurn: Boolean) : TimelineItem {
+    data class User(val turn: UserTurn) : TimelineItem {
         override val timestamp: Long get() = turn.timestamp
         override val sortOrder: Int get() = 0
     }
@@ -74,10 +70,10 @@ class ChatTimelinePanel(
     private val project: Project,
     private val onStageReadFiles: (paths: List<String>) -> Unit,
     private val onSendRequestedFiles: (paths: List<String>) -> Unit,
+    private val onEditTurn: (turn: UserTurn) -> Unit,
     private val onHistoryChanged: () -> Unit
 ) {
     private val contextState = project.service<ContextState>()
-    private val scope = contextState.scope
     private val dateFormat = SimpleDateFormat("HH:mm:ss")
 
     private val viewedEditTools = mutableSetOf<String>()
@@ -121,8 +117,8 @@ class ChatTimelinePanel(
         }
 
         val items = buildList {
-            userTurns.forEachIndexed { index, turn ->
-                add(TimelineItem.User(turn, isLatestUserTurn = index == userTurns.lastIndex))
+            userTurns.forEach { turn ->
+                add(TimelineItem.User(turn))
             }
             modelTurns.forEach { turn ->
                 add(TimelineItem.Model(turn))
@@ -131,7 +127,7 @@ class ChatTimelinePanel(
 
         for (item in items) {
             when (item) {
-                is TimelineItem.User -> timelineContainer.add(buildUserTurnCard(item.turn, item.isLatestUserTurn))
+                is TimelineItem.User -> timelineContainer.add(buildUserTurnCard(item.turn))
                 is TimelineItem.Model -> timelineContainer.add(buildAiTurnCard(item.turn))
             }
         }
@@ -147,7 +143,7 @@ class ChatTimelinePanel(
         }
     }
 
-    private fun buildUserTurnCard(turn: UserTurn, isLatestTurn: Boolean): JComponent {
+    private fun buildUserTurnCard(turn: UserTurn): JComponent {
         val card = JPanel(VerticalLayout(JBUI.scale(6))).apply {
             background = JBColor.namedColor("EditorPane.background", UIUtil.getPanelBackground())
             border = BorderFactory.createCompoundBorder(
@@ -179,30 +175,33 @@ class ChatTimelinePanel(
             add(timeLabel)
         }
 
-        val deleteLink = ActionLink("Delete") {
-            contextState.removeTurn(turn.id)
-            if (isLatestTurn) {
-                scope.launch {
-                    readAction {
-                        contextState.restoreFromLastTurn()
-                    }
-                    ApplicationManager.getApplication().invokeLater({
-                        refresh(scrollToBottom = false)
-                        onHistoryChanged()
-                    }, ModalityState.nonModal())
-                }
-            } else {
+        val rightHeader = JPanel(FlowLayout(FlowLayout.RIGHT, JBUI.scale(8), 0)).apply {
+            isOpaque = false
+
+            val editLink = ActionLink("Edit") {
+                onEditTurn(turn)
+            }.apply {
+                font = JBFont.small()
+                foreground = JBUI.CurrentTheme.ContextHelp.FOREGROUND
+                toolTipText = "Restore this turn's prompt and context to the composer"
+            }
+
+            val deleteLink = ActionLink("Delete") {
+                contextState.removeTurn(turn.id)
                 refresh(scrollToBottom = false)
                 onHistoryChanged()
+            }.apply {
+                font = JBFont.small()
+                foreground = JBUI.CurrentTheme.ContextHelp.FOREGROUND
+                toolTipText = "Delete this turn from session history"
             }
-        }.apply {
-            font = JBFont.small()
-            foreground = JBUI.CurrentTheme.ContextHelp.FOREGROUND
-            toolTipText = "Delete this turn from session history"
+
+            add(editLink)
+            add(deleteLink)
         }
 
         header.add(leftHeader, BorderLayout.WEST)
-        header.add(deleteLink, BorderLayout.EAST)
+        header.add(rightHeader, BorderLayout.EAST)
         card.add(header)
 
         if (turn.prompt.isNotBlank()) {
