@@ -32,7 +32,7 @@ class CommandRegistryService(private val project: Project, private val scope: Co
         private set
 
     private val builtInManifest = listOf(
-        "plan.md", "impl.md", "debug.md", "review.md", "review-bugs.md", "review-simplify.md", "review-arch.md", "review-product.md", "test.md", "lore.md", "research.md", "commit.md", "cmd.md"
+        "aicontext.md", "plan.md", "impl.md", "debug.md", "review.md", "review-bugs.md", "review-simplify.md", "review-arch.md", "review-product.md", "test.md", "lore.md", "research.md", "commit.md", "cmd.md"
     )
 
     init {
