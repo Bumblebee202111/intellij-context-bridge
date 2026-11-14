@@ -31,6 +31,7 @@ import com.intellij.util.ui.JBUI
 import com.intellij.util.ui.UIUtil
 import kotlinx.coroutines.launch
 import java.awt.BorderLayout
+import java.awt.Color
 import java.awt.Dimension
 import java.awt.FlowLayout
 import java.awt.LayoutManager
@@ -39,6 +40,7 @@ import java.io.File
 import java.text.SimpleDateFormat
 import java.util.Date
 import javax.swing.BorderFactory
+import javax.swing.Icon
 import javax.swing.JButton
 import javax.swing.JComponent
 import javax.swing.JPanel
@@ -70,7 +72,7 @@ private sealed interface TimelineItem {
 
 class ChatTimelinePanel(
     private val project: Project,
-    private val onStageReadFiles: (paths: List<String>, switchToTree: Boolean) -> Unit,
+    private val onStageReadFiles: (paths: List<String>) -> Unit,
     private val onSendRequestedFiles: (paths: List<String>) -> Unit,
     private val onHistoryChanged: () -> Unit
 ) {
@@ -239,10 +241,8 @@ class ChatTimelinePanel(
         val isExpanded = expandedContextTurns.contains(turn.id)
         val arrow = if (isExpanded) "▾" else "▸"
         val toggleLink = ActionLink("$arrow Context: $totalSent sent$sentBreakdown$cachedSuffix") {
-            if (expandedContextTurns.contains(turn.id)) {
+            if (!expandedContextTurns.add(turn.id)) {
                 expandedContextTurns.remove(turn.id)
-            } else {
-                expandedContextTurns.add(turn.id)
             }
             refresh(scrollToBottom = false)
         }.apply {
@@ -306,10 +306,8 @@ class ChatTimelinePanel(
         val rightHeader = JPanel(FlowLayout(FlowLayout.RIGHT, JBUI.scale(8), 0)).apply {
             isOpaque = false
             val rawToggle = ActionLink(if (isRaw) "Show Formatted" else "Raw Markdown") {
-                if (rawModeTurns.contains(turn.id)) {
+                if (!rawModeTurns.add(turn.id)) {
                     rawModeTurns.remove(turn.id)
-                } else {
-                    rawModeTurns.add(turn.id)
                 }
                 refresh(scrollToBottom = false)
             }.apply {
@@ -379,7 +377,7 @@ class ChatTimelinePanel(
             val inspectBtn = JButton("Inspect in Tree").apply {
                 isOpaque = false
                 addActionListener {
-                    onStageReadFiles(paths, true)
+                    onStageReadFiles(paths)
                 }
             }
             val sendBtn = JButton("Approve & Send").apply {
@@ -415,16 +413,8 @@ class ChatTimelinePanel(
     private fun buildEditToolCard(turnId: String, toolIdx: Int, tool: EditFileTool): JComponent {
         val toolKey = "$turnId:$toolIdx:${tool.filePath}"
         val isViewed = viewedEditTools.contains(toolKey)
-
-        val box = createToolCardContainer()
-        val topRow = JPanel(BorderLayout(JBUI.scale(6), 0)).apply { isOpaque = false }
-
         val fileName = File(tool.filePath).name
         val fileTypeIcon = FileTypeManager.getInstance().getFileTypeByFileName(fileName).icon ?: AllIcons.Actions.Edit
-        val pathLabel = JBLabel(tool.filePath, fileTypeIcon, JBLabel.LEFT).apply {
-            font = JBFont.regular().asBold()
-        }
-        topRow.add(pathLabel, BorderLayout.CENTER)
 
         val diffBtn = JButton(if (isViewed) "✓ Diff Opened" else "Open Diff", AllIcons.Actions.Diff).apply {
             addActionListener {
@@ -433,83 +423,85 @@ class ChatTimelinePanel(
                 IdeToolExecutor.openEditDiff(project, contextState, tool)
             }
         }
-        topRow.add(diffBtn, BorderLayout.EAST)
-        box.add(topRow)
 
-        if (tool.explanation.isNotBlank()) {
-            box.add(createWrappedTextArea(tool.explanation, isSecondary = true))
-        }
-
-        return box
+        return buildActionToolCard(
+            title = tool.filePath,
+            icon = fileTypeIcon,
+            button = diffBtn,
+            details = tool.explanation
+        )
     }
 
     private fun buildDeleteToolCard(tool: DeleteFileTool): JComponent {
-        val box = createToolCardContainer()
-        val topRow = JPanel(BorderLayout(JBUI.scale(6), 0)).apply { isOpaque = false }
-
-        val title = JBLabel("Delete ${tool.filePath}", AllIcons.Actions.GC, JBLabel.LEFT).apply {
-            font = JBFont.regular().asBold()
-            foreground = JBUI.CurrentTheme.Label.errorForeground()
-        }
-        topRow.add(title, BorderLayout.CENTER)
-
         val deleteBtn = JButton("Safe Delete...").apply {
             addActionListener {
                 IdeToolExecutor.executeDeleteTool(project, contextState, tool)
             }
         }
-        topRow.add(deleteBtn, BorderLayout.EAST)
-        box.add(topRow)
 
-        if (tool.explanation.isNotBlank()) {
-            box.add(createWrappedTextArea(tool.explanation, isSecondary = true))
-        }
-
-        return box
+        return buildActionToolCard(
+            title = "Delete ${tool.filePath}",
+            icon = AllIcons.Actions.GC,
+            button = deleteBtn,
+            details = tool.explanation,
+            titleColor = JBUI.CurrentTheme.Label.errorForeground()
+        )
     }
 
     private fun buildRenameToolCard(tool: RenameFileTool): JComponent {
-        val box = createToolCardContainer()
-        val topRow = JPanel(BorderLayout(JBUI.scale(6), 0)).apply { isOpaque = false }
-
-        val title = JBLabel("${tool.sourcePath} → ${tool.targetPath}", AllIcons.Actions.RefactoringBulb, JBLabel.LEFT).apply {
-            font = JBFont.regular().asBold()
-        }
-        topRow.add(title, BorderLayout.CENTER)
-
         val renameBtn = JButton("Rename...").apply {
             addActionListener {
                 IdeToolExecutor.executeRenameTool(project, contextState, tool)
             }
         }
-        topRow.add(renameBtn, BorderLayout.EAST)
-        box.add(topRow)
 
-        if (tool.explanation.isNotBlank()) {
-            box.add(createWrappedTextArea(tool.explanation, isSecondary = true))
-        }
-
-        return box
+        return buildActionToolCard(
+            title = "${tool.sourcePath} → ${tool.targetPath}",
+            icon = AllIcons.Actions.RefactoringBulb,
+            button = renameBtn,
+            details = tool.explanation
+        )
     }
 
     private fun buildCommitToolCard(tool: FillCommitMessageTool): JComponent {
+        val applyBtn = JButton("Fill Commit Message").apply {
+            addActionListener {
+                project.service<CommitBridgeService>().injectCommitMessage(tool.message)
+            }
+        }
+
+        return buildActionToolCard(
+            title = "Commit Message",
+            icon = AllIcons.Actions.Commit,
+            button = applyBtn,
+            details = tool.message
+        )
+    }
+
+    private fun buildActionToolCard(
+        title: String,
+        icon: Icon,
+        button: JButton,
+        details: String = "",
+        titleColor: Color? = null
+    ): JComponent {
         val box = createToolCardContainer()
         val topRow = JPanel(BorderLayout(JBUI.scale(6), 0)).apply { isOpaque = false }
 
-        val title = JBLabel("Commit Message", AllIcons.Actions.Commit, JBLabel.LEFT).apply {
+        val titleLabel = JBLabel(title, icon, JBLabel.LEFT).apply {
             font = JBFont.regular().asBold()
-        }
-        topRow.add(title, BorderLayout.CENTER)
-
-        val applyBtn = JButton("Fill Commit Message").apply {
-            addActionListener {
-                project.getService(CommitBridgeService::class.java).injectCommitMessage(tool.message)
+            if (titleColor != null) {
+                foreground = titleColor
             }
         }
-        topRow.add(applyBtn, BorderLayout.EAST)
+        topRow.add(titleLabel, BorderLayout.CENTER)
+        topRow.add(button, BorderLayout.EAST)
         box.add(topRow)
 
-        box.add(createWrappedTextArea(tool.message, isSecondary = true))
+        if (details.isNotBlank()) {
+            box.add(createWrappedTextArea(details, isSecondary = true))
+        }
+
         return box
     }
 

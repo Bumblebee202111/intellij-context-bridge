@@ -221,6 +221,15 @@ class ContextState(
         return found
     }
 
+    fun stageAiReadRequests(paths: List<String>): Set<VirtualFile> {
+        val requestedFiles = promoteFiles(paths)
+        if (requestedFiles.isNotEmpty()) {
+            pendingAiRequests.clear()
+            pendingAiRequests.addAll(requestedFiles)
+        }
+        return requestedFiles
+    }
+
     fun applyCommandContext(
         command: SlashCommand,
         targetMap: MutableMap<VirtualFile, ContextLevel> = fileStates

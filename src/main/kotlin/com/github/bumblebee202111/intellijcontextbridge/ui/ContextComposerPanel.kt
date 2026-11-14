@@ -92,11 +92,15 @@ class ContextComposerPanel(private val project: Project) : Disposable {
 
     private val chatTimelinePanel = ChatTimelinePanel(
         project = project,
-        onStageReadFiles = { paths, switchToTree ->
-            stageReadFiles(paths, switchToTree)
+        onStageReadFiles = { paths ->
+            handleReadToolAction(paths, stagePending = true) {
+                switchView(VIEW_CONTEXT)
+            }
         },
         onSendRequestedFiles = { paths ->
-            approveAndSendReadFiles(paths)
+            handleReadToolAction(paths, stagePending = false) {
+                executePayloadAction(isWsSend = bridgeSession.isBoundTabConnected())
+            }
         },
         onHistoryChanged = {
             refreshUi(vfsStructureChanged = true, forceMainRebuild = true)
@@ -233,37 +237,18 @@ class ContextComposerPanel(private val project: Project) : Disposable {
         }
     }
 
-    private fun stageReadFiles(paths: List<String>, switchToTree: Boolean) {
+    private fun handleReadToolAction(
+        paths: List<String>,
+        stagePending: Boolean,
+        onSuccess: () -> Unit
+    ) {
         contextState.scope.launch {
             val requestedFiles = readAction {
-                val promoted = contextState.promoteFiles(paths)
-                if (promoted.isNotEmpty()) {
-                    contextState.pendingAiRequests.clear()
-                    contextState.pendingAiRequests.addAll(promoted)
+                if (stagePending) {
+                    contextState.stageAiReadRequests(paths)
+                } else {
+                    contextState.promoteFiles(paths)
                 }
-                promoted
-            }
-
-            ApplicationManager.getApplication().invokeLater({
-                if (requestedFiles.isNotEmpty()) {
-                    if (switchToTree) {
-                        switchView(VIEW_CONTEXT)
-                    }
-                    refreshUi()
-                } else if (switchToTree) {
-                    Messages.showWarningDialog(
-                        "The AI requested files, but none were found in the project.\n\nPaths: ${paths.joinToString()}",
-                        "Tool Call: read_file"
-                    )
-                }
-            }, ModalityState.nonModal())
-        }
-    }
-
-    private fun approveAndSendReadFiles(paths: List<String>) {
-        contextState.scope.launch {
-            val requestedFiles = readAction {
-                contextState.promoteFiles(paths)
             }
 
             ApplicationManager.getApplication().invokeLater({
@@ -274,7 +259,7 @@ class ContextComposerPanel(private val project: Project) : Disposable {
                     )
                     return@invokeLater
                 }
-                executePayloadAction(isWsSend = bridgeSession.isBoundTabConnected())
+                onSuccess()
             }, ModalityState.nonModal())
         }
     }

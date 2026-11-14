@@ -83,11 +83,7 @@ class BridgeSessionService(private val project: Project) : Disposable {
         if (readPaths.isNotEmpty()) {
             contextState.scope.launch {
                 readAction {
-                    val requestedFiles = contextState.promoteFiles(readPaths)
-                    if (requestedFiles.isNotEmpty()) {
-                        contextState.pendingAiRequests.clear()
-                        contextState.pendingAiRequests.addAll(requestedFiles)
-                    }
+                    contextState.stageAiReadRequests(readPaths)
                 }
                 notifyResponseProcessed()
             }
