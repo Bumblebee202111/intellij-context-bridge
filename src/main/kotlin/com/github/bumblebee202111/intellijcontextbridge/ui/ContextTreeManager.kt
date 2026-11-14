@@ -80,10 +80,7 @@ class ContextTreeManager(
     }
 
     private val nodeStateCache = ConcurrentHashMap<DefaultMutableTreeNode, AggregatedState>()
-    private var isInitialExpandDone = false
-    private var hadPendingNode = false
-    private var hadSuggestedNode = false
-    private var hadExternalNode = false
+    private var activeSectionKeys = emptySet<String>()
 
     private var currentRequestedNode: DefaultMutableTreeNode? = null
     private var currentSuggestedNode: DefaultMutableTreeNode? = null
@@ -313,8 +310,7 @@ class ContextTreeManager(
                     if (e.clickCount == 1) {
                         if (e.x >= bounds.x && e.x < bounds.x + 28) {
                             applyNodeStateAsync {
-                                val nextLevel = getNextToggleLevel(node, file)
-                                applyStateToNode(node, nextLevel)
+                                applyStateToNode(node, getNextToggleLevel(node))
                             }
                             e.consume()
                         }
@@ -347,32 +343,22 @@ class ContextTreeManager(
                     return
                 }
 
-                if (keyCode == KeyEvent.VK_SPACE ||
-                    keyCode == KeyEvent.VK_S ||
-                    keyCode == KeyEvent.VK_F ||
-                    keyCode == KeyEvent.VK_BACK_SPACE ||
-                    keyCode == KeyEvent.VK_DELETE
-                ) {
+                val levelResolver: ((DefaultMutableTreeNode) -> ContextLevel)? = when (keyCode) {
+                    KeyEvent.VK_SPACE -> ::getNextToggleLevel
+                    KeyEvent.VK_S -> { _ -> ContextLevel.SKELETON }
+                    KeyEvent.VK_F -> { _ -> ContextLevel.COMPLETE }
+                    KeyEvent.VK_BACK_SPACE, KeyEvent.VK_DELETE -> { _ -> ContextLevel.NONE }
+                    else -> null
+                }
+
+                if (levelResolver != null) {
                     applyNodeStateAsync {
                         var structureChanged = false
                         for (path in paths) {
                             val node = path.lastPathComponent as? DefaultMutableTreeNode ?: continue
-                            val nodeData = node.userObject as? NodeData ?: continue
-                            val file = nodeData.file
-
-                            val changed = when (keyCode) {
-                                KeyEvent.VK_SPACE -> {
-                                    val nextLevel = getNextToggleLevel(node, file)
-                                    applyStateToNode(node, nextLevel)
-                                }
-                                KeyEvent.VK_S -> applyStateToNode(node, ContextLevel.SKELETON)
-                                KeyEvent.VK_F -> applyStateToNode(node, ContextLevel.COMPLETE)
-                                KeyEvent.VK_BACK_SPACE, KeyEvent.VK_DELETE -> {
-                                    applyStateToNode(node, ContextLevel.NONE)
-                                }
-                                else -> false
+                            if (applyStateToNode(node, levelResolver(node))) {
+                                structureChanged = true
                             }
-                            if (changed) structureChanged = true
                         }
                         structureChanged
                     }
@@ -482,7 +468,7 @@ class ContextTreeManager(
         }
     }
 
-    fun clearCache() {
+    private fun clearCache() {
         nodeStateCache.clear()
     }
 
@@ -490,14 +476,9 @@ class ContextTreeManager(
         return getAggregatedState(node).level
     }
 
-    fun getNextToggleLevel(node: DefaultMutableTreeNode, file: VirtualFile?): ContextLevel {
+    private fun getNextToggleLevel(node: DefaultMutableTreeNode): ContextLevel {
         val currentLevel = getComputedLevel(node)
-        val nodeData = node.userObject as? NodeData
-        val maxLevel = if (nodeData == null || file == null || (nodeData.isDirectory && !nodeData.isEmptyDirectory)) {
-            ContextLevel.COMPLETE
-        } else {
-            nodeData.maxLevel
-        }
+        val maxLevel = (node.userObject as? NodeData)?.maxLevel ?: ContextLevel.COMPLETE
         return ContextCapabilityUtil.getNextLevel(currentLevel, maxLevel)
     }
 
@@ -541,16 +522,16 @@ class ContextTreeManager(
         return result
     }
 
-    fun applyStateToNode(node: DefaultMutableTreeNode, level: ContextLevel): Boolean {
-        val nodeData = node.userObject as? NodeData
-        val file = nodeData?.file
+    private fun applyStateToNode(node: DefaultMutableTreeNode, level: ContextLevel): Boolean {
+        val nodeData = node.userObject as? NodeData ?: return false
+        val file = nodeData.file
         val currentLevel = getComputedLevel(node)
         var structureChanged = false
 
         if (level == ContextLevel.NONE && currentLevel == ContextLevel.NONE) {
             if (file != null && contextState.removeExternalRoot(file)) {
                 structureChanged = true
-            } else if (file == null && nodeData?.displayName == EXTERNAL_ROOT_NAME && contextState.clearExternalRoots()) {
+            } else if (file == null && nodeData.displayName == EXTERNAL_ROOT_NAME && contextState.clearExternalRoots()) {
                 structureChanged = true
             }
         }
@@ -625,31 +606,31 @@ class ContextTreeManager(
         return groupNode
     }
 
-    fun buildRequestedFilesNode(
+    private fun buildRequestedFilesNode(
         projectDir: VirtualFile?,
         requestedFiles: Set<VirtualFile>
     ): DefaultMutableTreeNode? {
         return buildFlatFileGroupNode(
-            title = ContextTreeManager.Companion.PENDING_REQUESTS_ROOT_NAME,
+            title = PENDING_REQUESTS_ROOT_NAME,
             icon = AllIcons.Nodes.ConfigFolder,
             projectDir = projectDir,
             files = requestedFiles
         )
     }
 
-    fun buildSuggestedFilesNode(
+    private fun buildSuggestedFilesNode(
         projectDir: VirtualFile?,
         suggestions: Set<VirtualFile>
     ): DefaultMutableTreeNode? {
         return buildFlatFileGroupNode(
-            title = ContextTreeManager.Companion.SUGGESTED_ROOT_NAME,
+            title = SUGGESTED_ROOT_NAME,
             icon = AllIcons.Actions.IntentionBulb,
             projectDir = projectDir,
             files = suggestions
         )
     }
 
-    fun buildProjectNode(
+    private fun buildProjectNode(
         projectDir: VirtualFile?,
         showSelectedOnly: Boolean
     ): DefaultMutableTreeNode? {
@@ -673,7 +654,7 @@ class ContextTreeManager(
         return projectNode
     }
 
-    fun buildExternalContextNode(showSelectedOnly: Boolean): DefaultMutableTreeNode? {
+    private fun buildExternalContextNode(showSelectedOnly: Boolean): DefaultMutableTreeNode? {
         val validExternalRoots = contextState.externalRoots
             .filter { it.isValid }
             .sortedWith(compareBy({ !it.isDirectory }, { it.name }, { it.path }))
@@ -733,17 +714,15 @@ class ContextTreeManager(
     }
 
     @Suppress("UnsafeVfsRecursion")
-    fun buildFileTree(
+    private fun buildFileTree(
         dir: VirtualFile,
         showSelectedOnly: Boolean,
-        allowedLeaves: Set<VirtualFile>? = null,
         isRoot: Boolean = false
     ): DefaultMutableTreeNode? {
         ProgressManager.checkCanceled()
         if (FileFilterUtil.isIgnored(project, dir)) return null
 
         fun passesSelection(file: VirtualFile): Boolean {
-            if (allowedLeaves != null) return allowedLeaves.contains(file)
             return !showSelectedOnly || contextState.getLevel(file) != ContextLevel.NONE
         }
 
@@ -756,29 +735,25 @@ class ContextTreeManager(
         for (child in children) {
             ProgressManager.checkCanceled()
             if (child.isDirectory) {
-                val childNode = buildFileTree(child, showSelectedOnly, allowedLeaves, false)
+                val childNode = buildFileTree(child, showSelectedOnly, isRoot = false)
                 if (childNode != null) {
                     validChildNodes.add(childNode)
                 }
-            } else {
-                if (allowedLeaves != null && !allowedLeaves.contains(child)) continue
-
-                if (passesSelection(child)) {
-                    val maxLevel = ContextCapabilityUtil.getMaxLevel(child)
-                    val icon = child.fileType.icon ?: AllIcons.FileTypes.Any_type
-                    validChildNodes.add(
-                        DefaultMutableTreeNode(
-                            NodeData(
-                                file = child,
-                                displayName = child.name,
-                                isDirectory = false,
-                                isEmptyDirectory = false,
-                                maxLevel = maxLevel,
-                                icon = icon
-                            )
+            } else if (passesSelection(child)) {
+                val maxLevel = ContextCapabilityUtil.getMaxLevel(child)
+                val icon = child.fileType.icon ?: AllIcons.FileTypes.Any_type
+                validChildNodes.add(
+                    DefaultMutableTreeNode(
+                        NodeData(
+                            file = child,
+                            displayName = child.name,
+                            isDirectory = false,
+                            isEmptyDirectory = false,
+                            maxLevel = maxLevel,
+                            icon = icon
                         )
                     )
-                }
+                )
             }
         }
 
@@ -814,7 +789,7 @@ class ContextTreeManager(
         return node
     }
 
-    fun updateWorkspaceModel(
+    private fun updateWorkspaceModel(
         tree: Tree,
         updateRequested: Boolean,
         requestedNode: DefaultMutableTreeNode?,
@@ -845,25 +820,15 @@ class ContextTreeManager(
         tree.model = DefaultTreeModel(newRoot)
 
         val pathsToSelect = mutableListOf<TreePath>()
-        var pendingNodePath: TreePath? = null
-        var suggestedNodePath: TreePath? = null
-        var projectNodePath: TreePath? = null
-        var externalNodePath: TreePath? = null
+        val currentSectionKeys = mutableSetOf<String>()
 
         fun traverse(node: DefaultMutableTreeNode, path: TreePath) {
             val nodeData = node.userObject as? NodeData
             if (nodeData != null) {
-                if (path.pathCount == 2) {
-                    when (nodeData.displayName) {
-                        PENDING_REQUESTS_ROOT_NAME -> pendingNodePath = path
-                        SUGGESTED_ROOT_NAME -> suggestedNodePath = path
-                        EXTERNAL_ROOT_NAME -> externalNodePath = path
-                        else -> if (nodeData.file != null) projectNodePath = path
-                    }
-                }
                 val key = getPathKey(path)
                 if (key != null) {
-                    if (expandedKeys.contains(key)) {
+                    val isNewSection = path.pathCount == 2 && currentSectionKeys.add(key) && key !in activeSectionKeys
+                    if (isNewSection || expandedKeys.contains(key)) {
                         tree.expandPath(path)
                     }
                     if (selectedKeys.contains(key)) {
@@ -878,38 +843,7 @@ class ContextTreeManager(
         }
 
         traverse(newRoot, TreePath(newRoot))
-
-        if (pendingNodePath != null) {
-            if (!hadPendingNode) {
-                tree.expandPath(pendingNodePath)
-                hadPendingNode = true
-            }
-        } else {
-            hadPendingNode = false
-        }
-
-        if (suggestedNodePath != null) {
-            if (!hadSuggestedNode) {
-                tree.expandPath(suggestedNodePath)
-                hadSuggestedNode = true
-            }
-        } else {
-            hadSuggestedNode = false
-        }
-
-        if (externalNodePath != null) {
-            if (!hadExternalNode) {
-                tree.expandPath(externalNodePath)
-                hadExternalNode = true
-            }
-        } else {
-            hadExternalNode = false
-        }
-
-        if (!isInitialExpandDone && projectNodePath != null) {
-            tree.expandPath(projectNodePath)
-            isInitialExpandDone = true
-        }
+        activeSectionKeys = currentSectionKeys
 
         if (pathsToSelect.isNotEmpty()) {
             tree.selectionPaths = pathsToSelect.toTypedArray()
