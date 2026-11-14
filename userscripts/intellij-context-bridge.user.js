@@ -248,6 +248,11 @@
                     setter.call(element, value);
                     element.dispatchEvent(new Event('input', {bubbles: true}));
                     element.dispatchEvent(new Event('change', {bubbles: true}));
+                },
+                closeDialog(dialog = document.querySelector('mat-dialog-container')) {
+                    const closeBtn = dialog?.querySelector('button[aria-label="Close panel"], button[data-test-close-button]');
+                    if (closeBtn) closeBtn.click();
+                    else document.querySelector('.cdk-overlay-backdrop')?.click();
                 }
             },
             Chat: {
@@ -256,12 +261,15 @@
                     if (h1 && h1.textContent.trim()) return h1.textContent.trim();
                     return document.title.replace(' - Google AI Studio', '').trim() || 'New Chat';
                 },
-                async deleteLastTwoTurns(count = 2) {
+                getTurnMenuButton(turnElement) {
+                    return turnElement.querySelector('button[aria-label="Open options"], ms-chat-turn-options button');
+                },
+                async deleteLastTurns(count = 2) {
                     for (let i = 0; i < count; i++) {
                         const turns = document.querySelectorAll('.chat-turn-container');
                         if (turns.length === 0) break;
                         const lastTurn = turns[turns.length - 1];
-                        const menuBtn = lastTurn.querySelector('button[aria-label="Open options"]') || lastTurn.querySelector('ms-chat-turn-options button');
+                        const menuBtn = this.getTurnMenuButton(lastTurn);
                         if (menuBtn) {
                             menuBtn.click();
                             const menuPanel = await AIStudioDOM.Utils.waitForElement('.mat-mdc-menu-panel', 2000);
@@ -284,7 +292,7 @@
                     }
                 },
                 async extractViaNativeCopy(turnElement) {
-                    const menuBtn = turnElement.querySelector('button[aria-label="Open options"]') || turnElement.querySelector('ms-chat-turn-options button');
+                    const menuBtn = this.getTurnMenuButton(turnElement);
                     if (!menuBtn) return null;
                     menuBtn.click();
 
@@ -345,9 +353,7 @@
                     }
 
                     if (!option) {
-                        const closeBtn = document.querySelector('mat-dialog-container button[data-test-close-button], mat-dialog-container button[aria-label="Close panel"]');
-                        if (closeBtn) closeBtn.click();
-                        else document.querySelector('.cdk-overlay-backdrop')?.click();
+                        AIStudioDOM.Utils.closeDialog();
                         await new Promise(r => setTimeout(r, 300));
                         return false;
                     }
@@ -434,7 +440,7 @@
                     return btn.querySelector('.spin') !== null || btn.textContent.includes('Stop');
                 },
                 getPromptArea() {
-                    return document.querySelector('textarea[formcontrolname="promptText"]') || document.querySelector('textarea[aria-label="Enter a prompt"]');
+                    return document.querySelector('textarea[formcontrolname="promptText"], textarea[aria-label="Enter a prompt"]');
                 },
                 setPromptText(text) {
                     const textarea = this.getPromptArea();
@@ -566,8 +572,7 @@
                             await new Promise(r => setTimeout(r, 800));
                         }
 
-                        const closeBtn = dialog.querySelector('button[aria-label="Close panel"], button[data-test-close-button]');
-                        if (closeBtn) closeBtn.click();
+                        AIStudioDOM.Utils.closeDialog(dialog);
 
                         await new Promise(r => setTimeout(r, 500));
                     }
@@ -801,24 +806,16 @@
                         document.querySelectorAll('.cb-send-to-ide-btn').forEach(btn => btn.style.display = 'inline-flex');
                     }
 
-                    const completedTurns = Array.from(allModelTurns).filter(turn => turn.querySelector('button[aria-label="Good response"]') !== null);
-                    const lastCompletedTurn = completedTurns[completedTurns.length - 1] || null;
+                    const completedTurns = new Set(
+                        Array.from(allModelTurns).filter(turn => turn.querySelector('button[aria-label="Good response"]') !== null)
+                    );
+                    const completedArray = Array.from(completedTurns);
+                    const lastCompletedTurn = completedArray[completedArray.length - 1] || null;
 
                     allModelTurns.forEach(turn => {
-                        if (turn === lastCompletedTurn) {
-                            if (!turn.classList.contains('cb-latest-turn')) {
-                                turn.classList.add('cb-latest-turn');
-                            }
-                        } else {
-                            if (turn.classList.contains('cb-latest-turn')) {
-                                turn.classList.remove('cb-latest-turn');
-                            }
-                        }
+                        turn.classList.toggle('cb-latest-turn', turn === lastCompletedTurn);
 
-                        if (turn.querySelector('.cb-send-to-ide-btn')) return;
-
-                        const hasThumbUp = turn.querySelector('button[aria-label="Good response"]') !== null;
-                        if (!hasThumbUp) return;
+                        if (turn.querySelector('.cb-send-to-ide-btn') || !completedTurns.has(turn)) return;
 
                         const isLoading = turn.querySelector('ms-chat-loading-indicator') !== null;
                         if (isLoading) return;
@@ -999,8 +996,7 @@
                             const dialog = await AIStudioDOM.Utils.waitForElement('mat-dialog-container', 3000);
                             if (!dialog) throw new Error("Dialog did not appear");
                             await new Promise(r => setTimeout(r, 500));
-                            const closeBtn = dialog.querySelector('button[aria-label="Close panel"], button[data-test-close-button]');
-                            if (closeBtn) closeBtn.click();
+                            AIStudioDOM.Utils.closeDialog(dialog);
                             await new Promise(r => setTimeout(r, 500));
 
                             const dialogStillOpen = document.querySelector('mat-dialog-container');
@@ -1062,6 +1058,7 @@
                         ws.onmessage = (event) => {
                             if (event.data.startsWith('[BOUND]')) {
                                 win.__cbIsBound = true;
+                                lastActivePort = port;
                                 const parts = event.data.split('|', 2);
                                 if (parts.length > 1 && parts[1].trim() !== '') {
                                     win.__cbProjectName = parts[1].trim();
@@ -1071,10 +1068,13 @@
                                 return;
                             }
                             if (event.data === '[UNBOUND]') {
-                                win.__cbIsBound = false;
-                                win.__cbProjectName = 'IntelliJ';
-                                updateStatusPill();
-                                updateUiElements();
+                                if (lastActivePort === null || lastActivePort === port) {
+                                    lastActivePort = null;
+                                    win.__cbIsBound = false;
+                                    win.__cbProjectName = 'IntelliJ';
+                                    updateStatusPill();
+                                    updateUiElements();
+                                }
                                 return;
                             }
                             if (event.data.startsWith('[COMMANDS]')) {
@@ -1094,6 +1094,9 @@
 
                         ws.onclose = () => {
                             activeSockets.delete(port);
+                            if (lastActivePort === port) {
+                                lastActivePort = null;
+                            }
                             if (wasOpen) {
                                 updateStatusPill();
                             }
@@ -1117,7 +1120,7 @@
             if (!win.__cbIsBridgeChat) return;
 
             const textarea = e.target;
-            if (textarea.tagName === 'TEXTAREA' && (textarea.getAttribute('formcontrolname') === 'promptText' || textarea.getAttribute('aria-label') === 'Enter a prompt')) {
+            if (textarea === AIStudioDOM.Input.getPromptArea()) {
                 let val = textarea.value;
 
                 if (val.includes('<user_prompt mode="EDIT">')) {
@@ -1147,8 +1150,6 @@
                         AIStudioDOM.Injections.activePrefix = prefix;
                         let search = prefix.substring(1).toLowerCase();
                         AIStudioDOM.Injections.filteredCmds = win.__cbCommands.filter(c =>
-                            c.name !== 'commit' &&
-                            (!c.promptBody || !c.promptBody.includes('{{vcs_diff}}')) &&
                             c.name.toLowerCase().startsWith(search)
                         );
                         if (AIStudioDOM.Injections.selectedIndex >= AIStudioDOM.Injections.filteredCmds.length) AIStudioDOM.Injections.selectedIndex = 0;
@@ -1174,7 +1175,7 @@
             if (!win.__cbIsBridgeChat) return;
 
             const textarea = e.target;
-            if (textarea.tagName === 'TEXTAREA' && (textarea.getAttribute('formcontrolname') === 'promptText' || textarea.getAttribute('aria-label') === 'Enter a prompt')) {
+            if (textarea === AIStudioDOM.Input.getPromptArea()) {
 
                 if (AIStudioDOM.Injections.activePrefix && AIStudioDOM.Injections.filteredCmds.length > 0) {
                     if (e.key === 'ArrowDown') {
@@ -1347,7 +1348,7 @@
                 onCleanup: async (addedTurns) => {
                     if (addedTurns > 0) {
                         showToast('🧹 Cleaning up session...', 'var(--color-v3-accent-1)', 0);
-                        await AIStudioDOM.Chat.deleteLastTwoTurns(addedTurns);
+                        await AIStudioDOM.Chat.deleteLastTurns(addedTurns);
                     }
                     showToast('⚙️ Restoring Settings...', 'var(--color-v3-accent-1)', 0);
                     await AIStudioDOM.Preferences.restoreSnapshot();
