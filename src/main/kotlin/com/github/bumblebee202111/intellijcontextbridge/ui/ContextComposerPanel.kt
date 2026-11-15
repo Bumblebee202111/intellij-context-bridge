@@ -447,7 +447,7 @@ class ContextComposerPanel(private val project: Project) : Disposable {
             }
         })
 
-        setupPromptHistoryShortcuts()
+        setupPromptShortcuts()
 
         ButtonGroup().apply {
             add(askRadio)
@@ -461,7 +461,7 @@ class ContextComposerPanel(private val project: Project) : Disposable {
         }
 
         val promptContainer = JPanel(BorderLayout()).apply {
-            border = IdeBorderFactory.createTitledBorder("Prompt (Ctrl+Up for history)")
+            border = IdeBorderFactory.createTitledBorder("Prompt (Ctrl+Enter to send, Ctrl+Up for history)")
             add(intentPanel, BorderLayout.NORTH)
             add(promptArea, BorderLayout.CENTER)
         }
@@ -556,7 +556,18 @@ class ContextComposerPanel(private val project: Project) : Disposable {
         }
     }
 
-    private fun setupPromptHistoryShortcuts() {
+    private fun setupPromptShortcuts() {
+        object : AnAction() {
+            override fun actionPerformed(e: AnActionEvent) {
+                if (!loadingIcon.isVisible) {
+                    executePayloadAction(isWsSend = bridgeSession.isBoundTabConnected())
+                }
+            }
+        }.registerCustomShortcutSet(
+            CustomShortcutSet.fromString("control ENTER", "meta ENTER"),
+            promptArea
+        )
+
         object : AnAction() {
             override fun actionPerformed(e: AnActionEvent) {
                 val history = contextState.getPromptHistory()
