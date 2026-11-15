@@ -174,6 +174,8 @@ class BridgeSessionService(private val project: Project) : Disposable {
         notifyStateChanged()
     }
 
+    // Pathname and title update in separate steps during the first turn, so one anchors the binding while the other changes.
+    // A simultaneous change of both indicates navigation to a different chat.
     private fun handleTabHandshake(tab: BrowserTab) {
         val state = contextState.state
 
