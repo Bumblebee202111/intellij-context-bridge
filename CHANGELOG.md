@@ -13,7 +13,7 @@
 - **Polite Userscript & Per-Model Memory**: Implicit Bridge chat detection via System Instructions, persistent per-model parameter memory, and exact state snapshot restoration.
 - **Diagnostic Bridge**: Two-way IDE-to-userscript telemetry to verify background DOM automation health under browser throttling.
 - **Slash Commands & Meta-Commands**: Stackable `/aicontext`, `/plan`, `/lore`, `/commit`, `/cmd`, and targeted `/review-*` macros with `.contextbridge/commands/` shadowing and `{{vcs_diff}}` interpolation.
-- **Resilient Tool Protocol**: Unified `AgentTool` hierarchy using namespaced `ide:` XML blocks inside Markdown code blocks and `<![CDATA[...]]>` payloads, paired with the Skeleton Patch protocol.
+- **Resilient Tool Protocol**: Unified `AgentTool` hierarchy using namespaced `ide:` XML blocks inside Markdown code blocks and `<![CDATA[...]]>` payloads, paired with context-anchored diff hunks.
 - **Unified Context & Chat Workspace**: Switchable Project-style context tree and chronological chat timeline with persistent prompt composer and inline tool cards (`read_file`, `propose_edit` via native `DiffManager`, `rename_file`, `delete_file`, and `fill_commit_message`).
 - **Ephemeral Commit Workflow**: One-click AI commit message generation from VCS panels with transient model configuration, chat cleanup, and downward Swing input injection.
 - **Proactive Context Suggestions**: Background suggestion staging tree driven by active tabs, Git changes, `@` mentions, and IDF-weighted PSI usage searches with smart cache omission.

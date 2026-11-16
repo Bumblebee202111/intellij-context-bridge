@@ -173,19 +173,14 @@ object IdeToolExecutor {
         leftVisible: IntRange,
         rightVisible: IntRange
     ): Boolean {
-        val start2 = change.getStartLine(Side.RIGHT)
-        val end2 = change.getEndLine(Side.RIGHT)
-        return if (end2 > start2) {
-            val last2 = end2 - 1
-            (start2 >= rightVisible.first && last2 <= rightVisible.last) ||
-                (start2 <= rightVisible.first && last2 >= rightVisible.last)
-        } else {
-            val start1 = change.getStartLine(Side.LEFT)
-            val end1 = change.getEndLine(Side.LEFT)
-            val last1 = if (end1 > start1) end1 - 1 else start1
-            (start1 >= leftVisible.first && last1 <= leftVisible.last) ||
-                (start1 <= leftVisible.first && last1 >= leftVisible.last)
-        }
+        return isRangeVisible(change.getStartLine(Side.LEFT), change.getEndLine(Side.LEFT), leftVisible) &&
+            isRangeVisible(change.getStartLine(Side.RIGHT), change.getEndLine(Side.RIGHT), rightVisible)
+    }
+
+    private fun isRangeVisible(startLine: Int, endLine: Int, visible: IntRange): Boolean {
+        val lastLine = if (endLine > startLine) endLine - 1 else startLine
+        return (startLine >= visible.first && lastLine <= visible.last) ||
+            (startLine <= visible.first && lastLine >= visible.last)
     }
 
     private fun getVisibleLineRange(editor: Editor): IntRange {
