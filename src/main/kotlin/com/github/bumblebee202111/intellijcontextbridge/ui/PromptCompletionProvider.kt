@@ -80,6 +80,10 @@ class PromptCompletionProvider(
     private val onFileMentionSelected: (VirtualFile) -> Unit
 ) : TextFieldWithAutoCompletionListProvider<PromptCompletionItem>(emptyList()) {
 
+    companion object {
+        private const val MAX_EXTERNAL_MENTION_ITEMS = 5000
+    }
+
     @Volatile
     private var cachedFileMentionItems: List<PromptCompletionItem.FileMention> = emptyList()
 
@@ -120,30 +124,40 @@ class PromptCompletionProvider(
             )
         }
 
-        fun visit(dir: VirtualFile, baseDir: VirtualFile, prefix: String = "") {
+        fun visit(
+            dir: VirtualFile,
+            baseDir: VirtualFile,
+            isExternal: Boolean,
+            prefix: String = "",
+            maxItems: Int = Int.MAX_VALUE
+        ) {
             ProgressManager.checkCanceled()
+            if (result.size >= maxItems) return
             for (child in dir.children) {
                 ProgressManager.checkCanceled()
-                if (FileFilterUtil.isIgnored(project, child)) continue
+                if (result.size >= maxItems) return
+                if (FileFilterUtil.isBulkExcluded(project, child, isExternal)) continue
                 val rel = VfsUtilCore.getRelativePath(child, baseDir) ?: continue
                 val fullRel = if (prefix.isEmpty()) rel else "$prefix/$rel"
                 addItem(child, fullRel)
                 if (child.isDirectory) {
-                    visit(child, baseDir, prefix)
+                    visit(child, baseDir, isExternal, prefix, maxItems)
                 }
             }
         }
 
         if (projectDir != null && projectDir.isValid) {
-            visit(projectDir, projectDir)
+            visit(projectDir, projectDir, isExternal = false)
         }
 
+        val externalCap = result.size + MAX_EXTERNAL_MENTION_ITEMS
         for (extRoot in externalRoots) {
             ProgressManager.checkCanceled()
-            if (!extRoot.isValid) continue
+            if (result.size >= externalCap) break
+            if (!extRoot.isValid || FileFilterUtil.isHiddenFromTree(extRoot)) continue
             addItem(extRoot, extRoot.name)
             if (extRoot.isDirectory) {
-                visit(extRoot, extRoot, prefix = extRoot.name)
+                visit(extRoot, extRoot, isExternal = true, prefix = extRoot.name, maxItems = externalCap)
             }
         }
 

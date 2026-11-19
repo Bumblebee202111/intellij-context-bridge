@@ -1,24 +1,38 @@
 package com.github.bumblebee202111.intellijcontextbridge.utils
 
+import com.intellij.openapi.fileTypes.FileTypeManager
 import com.intellij.openapi.project.Project
 import com.intellij.openapi.roots.ProjectFileIndex
 import com.intellij.openapi.vcs.changes.ChangeListManager
 import com.intellij.openapi.vfs.VirtualFile
 
 object FileFilterUtil {
-    /**
-     * Returns true if the file should be ignored based on .gitignore or IDE exclusion rules.
-     */
-    fun isIgnored(project: Project, file: VirtualFile): Boolean {
-        // 1. Check if it's explicitly excluded by the IDE (e.g., 'build' folders)
-        if (ProjectFileIndex.getInstance(project).isExcluded(file)) return true
+    private val EXTERNAL_HEAVY_DIR_NAMES = setOf(
+        ".git", ".gradle", ".idea", ".kotlin", ".intellijPlatform",
+        ".venv", "venv", "node_modules", "build", "dist", "out", "target",
+        "Pods", "DerivedData", ".build", ".dart_tool", ".next", ".nuxt", "__pycache__"
+    )
 
-        // 2. Check if it's ignored by Git (.gitignore)
-        if (ChangeListManager.getInstance(project).isIgnoredFile(file)) return true
+    fun isHiddenFromTree(file: VirtualFile): Boolean {
+        if (file.isDirectory && file.name == ".git") return true
+        return FileTypeManager.getInstance().isFileIgnored(file)
+    }
 
-        // 3. Hide hidden directories (like .git) just to keep the tree clean, but allow hidden files (like .aicontext)
-        if (file.isDirectory && file.name.startsWith(".")) return true
+    fun isProjectExcluded(project: Project, file: VirtualFile): Boolean {
+        return ProjectFileIndex.getInstance(project).isExcluded(file)
+    }
 
-        return false
+    fun isExternalHeavyDir(file: VirtualFile): Boolean {
+        return file.isDirectory && file.name in EXTERNAL_HEAVY_DIR_NAMES
+    }
+
+    fun isBulkExcluded(project: Project, file: VirtualFile, isExternal: Boolean = false): Boolean {
+        if (isHiddenFromTree(file)) return true
+        return if (isExternal) {
+            isExternalHeavyDir(file)
+        } else {
+            ProjectFileIndex.getInstance(project).isExcluded(file) ||
+                ChangeListManager.getInstance(project).isIgnoredFile(file)
+        }
     }
 }

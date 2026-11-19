@@ -25,7 +25,9 @@ data class NodeData(
     val isEmptyDirectory: Boolean = false,
     val maxLevel: ContextLevel = ContextLevel.COMPLETE,
     val icon: Icon? = null,
-    val locationHint: String? = null
+    val locationHint: String? = null,
+    val isExcluded: Boolean = false,
+    val isLazyPlaceholder: Boolean = false
 )
 
 class StateIcon(private val level: ContextLevel) : Icon {
@@ -120,11 +122,13 @@ class ContextTreeCellRenderer(
 
             icon = rowIcon
 
-            if (level == ContextLevel.COMPLETE) {
-                append(nodeData.displayName, SimpleTextAttributes.REGULAR_BOLD_ATTRIBUTES)
-            } else {
-                append(nodeData.displayName)
+            val textAttributes = when {
+                nodeData.isExcluded && level == ContextLevel.COMPLETE -> SimpleTextAttributes.GRAYED_BOLD_ATTRIBUTES
+                nodeData.isExcluded -> SimpleTextAttributes.GRAYED_ATTRIBUTES
+                level == ContextLevel.COMPLETE -> SimpleTextAttributes.REGULAR_BOLD_ATTRIBUTES
+                else -> SimpleTextAttributes.REGULAR_ATTRIBUTES
             }
+            append(nodeData.displayName, textAttributes)
             if (nodeData.locationHint != null) {
                 append("  ${nodeData.locationHint}", SimpleTextAttributes.GRAYED_SMALL_ATTRIBUTES)
             }
@@ -139,7 +143,7 @@ class ContextTreeCellRenderer(
                 append("  ${nodeData.locationHint}", SimpleTextAttributes.GRAYED_SMALL_ATTRIBUTES)
             }
         } else {
-            append(value.toString())
+            append(value.toString(), SimpleTextAttributes.GRAYED_ATTRIBUTES)
         }
     }
 }

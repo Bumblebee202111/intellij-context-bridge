@@ -245,12 +245,15 @@ class ContextComposerPanel(private val project: Project) : Disposable {
         onSuccess: () -> Unit
     ) {
         contextState.scope.launch {
+            val resolved = contextState.resolvePathsRefreshing(paths)
             val requestedFiles = readAction {
-                if (stagePending) {
-                    contextState.stageAiReadRequests(paths)
-                } else {
-                    contextState.promoteFiles(paths)
-                }
+                contextState.addOrStageFiles(
+                    files = resolved,
+                    stage = stagePending,
+                    clearStaged = false,
+                    promoteDirsToProjectRoot = true,
+                    selectExternalDirs = true
+                ).affectedFiles
             }
 
             ApplicationManager.getApplication().invokeLater({
@@ -330,7 +333,7 @@ class ContextComposerPanel(private val project: Project) : Disposable {
                     val editor = FileEditorManager.getInstance(project).selectedTextEditor
                     val file = editor?.document?.let { FileDocumentManager.getInstance().getFile(it) }
                     if (file != null) {
-                        treeManager.attachExternalFiles { listOf(file) }
+                        treeManager.attachAndStageFiles { listOf(file) }
                     } else {
                         Messages.showInfoMessage("No active editor found.", "Add Active File")
                     }
@@ -347,7 +350,7 @@ class ContextComposerPanel(private val project: Project) : Disposable {
                         description = "Select files or folders to include in Context Bridge"
                     }
                     FileChooser.chooseFiles(descriptor, project, null) { files ->
-                        treeManager.attachExternalFiles { files }
+                        treeManager.attachAndStageFiles(promoteDirsToProjectRoot = false) { files }
                     }
                 }
             })
@@ -620,7 +623,7 @@ class ContextComposerPanel(private val project: Project) : Disposable {
         historyIndex = -1
         draftPrompt = ""
 
-        contextState.pendingAiRequests.clear()
+        contextState.stagedFiles.clear()
         setGeneratingState(true)
 
         contextState.scope.launch {

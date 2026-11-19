@@ -22,7 +22,7 @@ import kotlin.math.sqrt
 object ContextSuggestionEngine {
 
     private fun isEligible(project: Project, file: VirtualFile): Boolean {
-        return file.isValid && !file.isDirectory && !FileFilterUtil.isIgnored(project, file)
+        return file.isValid && !file.isDirectory && !FileFilterUtil.isBulkExcluded(project, file)
     }
 
     suspend fun calculateSuggestions(project: Project, contextState: ContextState): Set<VirtualFile> {

@@ -82,8 +82,15 @@ class BridgeSessionService(private val project: Project) : Disposable {
 
         if (readPaths.isNotEmpty()) {
             contextState.scope.launch {
+                val resolved = contextState.resolvePathsRefreshing(readPaths)
                 readAction {
-                    contextState.stageAiReadRequests(readPaths)
+                    contextState.addOrStageFiles(
+                        files = resolved,
+                        stage = true,
+                        clearStaged = false,
+                        promoteDirsToProjectRoot = true,
+                        selectExternalDirs = true
+                    )
                 }
                 notifyResponseProcessed()
             }
