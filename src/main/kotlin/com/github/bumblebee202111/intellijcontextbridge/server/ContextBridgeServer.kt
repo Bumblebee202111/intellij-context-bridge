@@ -4,9 +4,11 @@ import com.intellij.openapi.Disposable
 import com.intellij.openapi.components.Service
 import com.intellij.openapi.diagnostic.thisLogger
 import com.intellij.openapi.util.Disposer
+import io.ktor.http.HttpStatusCode
 import io.ktor.server.application.*
 import io.ktor.server.cio.*
 import io.ktor.server.engine.*
+import io.ktor.server.response.*
 import io.ktor.server.routing.*
 import io.ktor.server.websocket.*
 import io.ktor.websocket.*
@@ -15,6 +17,7 @@ import kotlinx.coroutines.launch
 import java.net.ServerSocket
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.CopyOnWriteArrayList
+import java.util.concurrent.atomic.AtomicBoolean
 import kotlin.time.Duration.Companion.seconds
 
 data class BrowserTab(
@@ -29,6 +32,7 @@ data class BrowserTab(
 @Service(Service.Level.APP)
 class ContextBridgeServer(private val scope: CoroutineScope) : Disposable {
 
+    private val started = AtomicBoolean(false)
     private var server: EmbeddedServer<CIOApplicationEngine, CIOApplicationEngine.Configuration>? = null
 
     private val activeTabs = ConcurrentHashMap<String, BrowserTab>()
@@ -68,7 +72,7 @@ class ContextBridgeServer(private val scope: CoroutineScope) : Disposable {
     fun isTabConnected(tabId: String?): Boolean = tabId != null && activeTabs.containsKey(tabId)
 
     fun start() {
-        if (server != null) return
+        if (!started.compareAndSet(false, true)) return
 
         scope.launch {
             var assignedPort: Int? = null
@@ -85,6 +89,7 @@ class ContextBridgeServer(private val scope: CoroutineScope) : Disposable {
 
             if (assignedPort == null) {
                 thisLogger().error("Failed to start ContextBridgeServer: All ports 37373-37382 are in use.")
+                started.set(false)
                 return@launch
             }
 
@@ -98,6 +103,16 @@ class ContextBridgeServer(private val scope: CoroutineScope) : Disposable {
                     }
 
                     routing {
+                        post("/mcp") {
+                            McpHandler.handlePost(call)
+                        }
+                        get("/mcp") {
+                            call.respond(HttpStatusCode.MethodNotAllowed)
+                        }
+                        delete("/mcp") {
+                            call.respond(HttpStatusCode.MethodNotAllowed)
+                        }
+
                         webSocket("/ai-bridge") {
                             var currentTabId: String? = null
                             try {
@@ -145,6 +160,7 @@ class ContextBridgeServer(private val scope: CoroutineScope) : Disposable {
             } catch (e: Exception) {
                 thisLogger().error("ContextBridgeServer crashed during startup on port $assignedPort: ${e.message}")
                 server = null
+                started.set(false)
             }
         }
     }
@@ -170,6 +186,7 @@ class ContextBridgeServer(private val scope: CoroutineScope) : Disposable {
     override fun dispose() {
         server?.stop(1000, 2000)
         server = null
+        started.set(false)
         activeTabs.clear()
         tabSessions.clear()
         notifyTabsChanged()

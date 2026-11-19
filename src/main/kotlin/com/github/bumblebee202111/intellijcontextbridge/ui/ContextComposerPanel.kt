@@ -176,6 +176,11 @@ class ContextComposerPanel(private val project: Project) : Disposable {
                 refreshUi()
             }, ModalityState.nonModal())
         }
+        contextState.addContextChangeListener(this) {
+            ApplicationManager.getApplication().invokeLater({
+                refreshUi(vfsStructureChanged = true, forceMainRebuild = true)
+            }, ModalityState.nonModal())
+        }
         commandRegistry.addChangeListener(this) {
             ApplicationManager.getApplication().invokeLater({
                 promptCompletionProvider.refreshItems()

@@ -4,6 +4,7 @@ import com.github.bumblebee202111.intellijcontextbridge.commands.CommandContextA
 import com.github.bumblebee202111.intellijcontextbridge.commands.SlashCommand
 import com.github.bumblebee202111.intellijcontextbridge.utils.ContextCapabilityUtil
 import com.github.bumblebee202111.intellijcontextbridge.utils.FileFilterUtil
+import com.intellij.openapi.Disposable
 import com.intellij.openapi.application.readAction
 import com.intellij.openapi.components.PersistentStateComponent
 import com.intellij.openapi.components.Service
@@ -13,6 +14,7 @@ import com.intellij.openapi.diagnostic.thisLogger
 import com.intellij.openapi.progress.ProgressManager
 import com.intellij.openapi.project.Project
 import com.intellij.openapi.project.guessProjectDir
+import com.intellij.openapi.util.Disposer
 import com.intellij.openapi.vfs.LocalFileSystem
 import com.intellij.openapi.vfs.VfsUtilCore
 import com.intellij.openapi.vfs.VirtualFile
@@ -22,6 +24,7 @@ import java.io.File
 import java.security.MessageDigest
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.CopyOnWriteArrayList
+import kotlin.collections.remove
 
 data class SeedGraphCacheEntry(
     val modificationStamp: Long,
@@ -98,6 +101,8 @@ class ContextState(
     // Files staged from AI read requests, clipboard paste, drag-and-drop, or external tools
     val stagedFiles: MutableSet<VirtualFile> = ConcurrentHashMap.newKeySet()
 
+    private val contextChangeListeners = CopyOnWriteArrayList<() -> Unit>()
+
     // Transient cache to prevent re-hashing unmodified files during UI renders
     private val hashCache = ConcurrentHashMap<VirtualFile, HashCacheEntry>()
 
@@ -158,6 +163,15 @@ class ContextState(
         if (stagedFiles.isEmpty()) return false
         stagedFiles.clear()
         return true
+    }
+
+    fun addContextChangeListener(parentDisposable: Disposable, listener: () -> Unit) {
+        contextChangeListeners.add(listener)
+        Disposer.register(parentDisposable) { contextChangeListeners.remove(listener) }
+    }
+
+    fun notifyContextChanged() {
+        contextChangeListeners.forEach { it() }
     }
 
     fun getLevel(file: VirtualFile): ContextLevel {
